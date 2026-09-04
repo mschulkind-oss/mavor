@@ -36,6 +36,20 @@
     "ffmpeg", // WAV conversion / test fixture generation
     // Speech-to-text
     "whisper-cpp", // provides whisper-cli; models downloaded separately
+    // GPU benchmarking. The nixpkgs whisper-cpp is CPU-only — it loads
+    // libggml-cpu-*.so and nothing else — so measuring the GPU path means
+    // building whisper.cpp ourselves with -DGGML_VULKAN=ON. cmake/ninja build
+    // it, shaderc's glslc compiles GGML's compute shaders, and mesa supplies
+    // the RADV ICD that turns the passed-through /dev/dri node into a Vulkan
+    // device. vulkan-tools is for `vulkaninfo`, which is how we prove the
+    // device is really there before trusting a number.
+    "cmake",
+    "ninja",
+    "shaderc",
+    "vulkan-headers",
+    "vulkan-loader",
+    "vulkan-tools",
+    "mesa",
     // Process supervisor for the dev/test harness
     "hivemind",
     // Build / task runner used by the project's justfile
