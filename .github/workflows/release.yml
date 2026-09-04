@@ -15,21 +15,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      # The overlay is CGO against GTK4 and gtk4-layer-shell, so the binary
-      # is built on the target platform rather than cross-compiled. mavor only
-      # runs under a Wayland compositor, so linux/amd64 is the whole matrix.
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgtk-4-dev \
-            libgtk4-layer-shell-dev \
-            libglib2.0-dev \
-            libcairo2-dev \
-            libpango1.0-dev \
-            libgirepository1.0-dev \
-            pkg-config
-
       - uses: jdx/mise-action@v2
         with:
           version: latest
@@ -38,13 +23,19 @@ jobs:
       - name: Quality gate
         run: just check-ci
 
-      - name: Build release binary
+      # Pure Go, so every target cross-compiles from one runner. mavor needs a
+      # Wayland compositor, which is why the matrix is Linux only rather than
+      # every platform Go can emit.
+      - name: Build release binaries
         run: |
           mkdir -p dist
-          go build \
-            -ldflags "-X main.Commit=${GITHUB_REF_NAME} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            -o dist/mavor ./cmd/mavor
-          tar -C dist -czf "dist/mavor_${GITHUB_REF_NAME}_linux_amd64.tar.gz" mavor
+          stamp="-X main.Commit=${GITHUB_REF_NAME} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
+              go build -ldflags "$stamp" -o "dist/mavor" ./cmd/mavor
+            tar -C dist -czf "dist/mavor_${GITHUB_REF_NAME}_linux_${arch}.tar.gz" mavor
+            rm dist/mavor
+          done
           (cd dist && sha256sum *.tar.gz > checksums.txt)
 
       - name: Create GitHub release
@@ -54,4 +45,5 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" \
             --generate-notes \
             dist/mavor_${GITHUB_REF_NAME}_linux_amd64.tar.gz \
+            dist/mavor_${GITHUB_REF_NAME}_linux_arm64.tar.gz \
             dist/checksums.txt

@@ -9,6 +9,8 @@ import (
 	"html/template"
 	"image"
 	"image/png"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -131,9 +133,9 @@ func TestUIStorybookReport(t *testing.T) {
 	// phase and the committed report churns for no reason.
 	t.Setenv("MAVOR_OVERLAY_STATIC", "1")
 
-	ov, err := overlay.NewGTK(topMargin)
+	ov, err := overlay.NewDefault(topMargin, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
-		t.Fatalf("overlay.NewGTK: %v", err)
+		t.Fatalf("overlay.NewDefault: %v", err)
 	}
 	defer ov.Close()
 

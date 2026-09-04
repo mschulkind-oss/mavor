@@ -40,7 +40,7 @@ For high-level architecture see [`how-mavor-works.md`](./design/how-mavor-works.
                   │   └──────┬──────┘└──────┬───────────┘   │
                   │          │              │               │
                   │   ┌──────▼──────┐┌──────▼───────────┐   │
-                  │   │ GTK4 HUD    ││  output.Emitter  │   │
+                  │   │ layer HUD   ││  output.Emitter  │   │
                   │   │ Overlay     ││ (wtype + wl-copy)│   │
                   │   └─────────────┘└──────────────────┘   │
                   └─────────────────────────────────────────┘
@@ -50,7 +50,7 @@ For high-level architecture see [`how-mavor-works.md`](./design/how-mavor-works.
 
 1. **Activation:** Keypress signals `mavor start` (push-to-talk) or `mavor toggle`. Daemon enters `recording`.
 2. **Audio Capture & Ducking:** Audio capture initializes via PipeWire (`parec`). If configured, background media streams (Spotify, Firefox) are automatically ducked.
-3. **Live HUD Waveform:** The GTK4 layer-shell HUD overlay appears 8px below Waybar, rendering a live volume waveform meter across 6 discrete energy levels (0% to 100%).
+3. **Live HUD Waveform:** The layer-shell HUD overlay appears 8px below Waybar, rendering a live volume waveform meter across 6 discrete energy levels (0% to 100%).
 4. **VAD Gating & Transcription:** On release (`mavor stop` / second `toggle`), Silero VAD evaluates speech frames. If speech is detected, the selected speech-to-text (STT) engine (in-process `sherpa-onnx` CGO, `whisper-cli`, or warm HTTP server) executes transcription.
 5. **Output Emission:** `wtype` types text directly into the focused window while `wl-copy` updates the Wayland clipboard. Temporary recording files in `/tmp/mavor-recordings/` are immediately purged.
 
@@ -115,7 +115,6 @@ engine = "cli"     # Options: "cli" (default), "sherpa", or "server"
 | Package / Tool | Component | Purpose |
 |---|---|---|
 | `sway` / wlroots | Compositor | Layer-shell floating HUD overlay & window management |
-| `gtk4`, `gtk4-layer-shell` | GUI Library | HUD overlay with real-time waveform animation |
 | `pipewire`, `pulseaudio-utils` | Audio Stack | Audio recording (`parec`) and volume ducking (`pactl`) |
 | `wtype` | Virtual Keyboard | Synthetic keystroke injection into focused window |
 | `wl-clipboard` | Clipboard | `wl-copy` synchronization for instant pasting |
@@ -126,7 +125,7 @@ engine = "cli"     # Options: "cli" (default), "sherpa", or "server"
 - Go ≥ 1.26
 - `just` task runner
 - CGO compiler (`gcc` or `clang`)
-- Development headers: `gtk4.dev`, `gtk4-layer-shell.dev`, `glib.dev`, `cairo.dev`, `pango.dev`, `pkg-config`
+- No development headers. The default build is pure Go (`CGO_ENABLED=0`); only the optional `sherpa` build tag needs a C toolchain.
 
 ---
 
@@ -150,15 +149,17 @@ Installs the binary to `~/.local/bin/mavor` and sets up the systemd user service
 $ just deploy
 ```
 
-### Headless / Minimal Build (`nogtk`)
+### Cross-compiling
 
-If building on a headless server or environments without GTK4 headers:
+The default build is pure Go, so a binary for another architecture needs no
+toolchain beyond Go itself:
 
 ```console
-$ go build -tags nogtk -o bin/mavor ./cmd/mavor
+$ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/mavor-arm64 ./cmd/mavor
 ```
 
-`mavor` automatically falls back to a silent Noop overlay when compiled with `nogtk`.
+The `sherpa` build tag is the exception: it links the in-process ONNX
+recognizers through cgo and must be built on the target architecture.
 
 ---
 
@@ -403,7 +404,7 @@ $ just done       # Pre-commit quality verification
 | `model "base.en" not found` | Model file has not been downloaded | Run `mavor models pull base.en` |
 | `sherpa model "parakeet" not found` | Parakeet ONNX model archive not extracted | Run `mavor models pull parakeet` |
 | `toggle: connect: no such file or directory` | Daemon is not running or socket mismatch | Run `mavor daemon -v` or `mavor doctor` to inspect status |
-| Overlay does not appear | Compositor lacks layer-shell support or `nogtk` build used | Ensure Sway/wlroots session is active; check binary build tags |
+| Overlay does not appear | Compositor does not implement `wlr-layer-shell` | Ensure a wlroots session (sway, hyprland, river) is active; `mavor daemon -v` logs the reason it fell back to a silent overlay |
 | Audio volume does not duck | `duck_audio = true` not set in `config.toml` | Set `duck_audio = true` and check `duck_streams` in config |
 | Ghost words typed during silence | Silence hallucination without VAD | Ensure Silero VAD is active or use in-process `sherpa` engine |
 | Text typed in wrong window | Focus shifted during transcription | Keep window focused until overlay closes |

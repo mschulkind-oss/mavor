@@ -1,7 +1,9 @@
-// Package overlay shows a small status pill at the top of the screen via
-// gtk4-layer-shell. It exposes the Overlay interface so the daemon can be
-// driven by a Noop / Mock implementation in unit tests; the real GTK4
-// implementation lives in overlay_gtk.go behind the `cgo` build tag.
+// Package overlay shows a small status pill at the top of the screen on a
+// wlr-layer-shell surface, drawn pixel by pixel in Go.
+//
+// The Overlay interface is the seam: the daemon can be driven by Noop or Mock
+// in unit tests, the painter in paint.go turns state into an image with no
+// compositor involved, and overlay_wl.go is the only part that speaks Wayland.
 package overlay
 
 import "math"
@@ -167,6 +169,16 @@ func dotCircle(w, h int, rise float64) (cx, cy, r float64) {
 	}
 	return cx, cy, r
 }
+
+// Waveform column layout: how many samples the trace holds and how wide each
+// column is.
+const (
+	// waveCols is how many samples the trace holds. At the daemon's ~33 Hz
+	// level cadence this is about 1.4 seconds of history.
+	waveCols     = 46
+	waveColWidth = 3 // 2 px bar + 1 px gap
+	waveBarWidth = 2
+)
 
 // pillHeight is the rendered height of the recording pill: the canvas plus its
 // padding, since the canvas is the row's tallest element.

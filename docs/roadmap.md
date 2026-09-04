@@ -145,11 +145,9 @@ design docs deleted.
 so it should work — but it has never executed. Treat the workflow as unverified
 until a run goes green.
 
-**Next step:** watch the first Actions run. `libgtk4-layer-shell-dev` is the
-most likely failure: it is not in the default Ubuntu repositories before 24.10,
-and `ubuntu-latest` is currently 24.04. The fallbacks are a PPA, building
-gtk4-layer-shell from source in the workflow, or running the quality gate under
-`-tags nogtk`.
+**Next step:** watch the first Actions run. The workflow no longer installs any
+system packages — the build is pure Go — so the remaining risk is the mise
+toolchain step rather than anything distro-specific.
 
 Same caveat for `.github/workflows/release.yml`, which additionally has never
 built a release artifact.
@@ -163,9 +161,9 @@ so the screenshot assertions and the real-whisper path are only ever exercised
 by hand.
 
 `test-int` additionally cannot run under `-race`: the detector's `checkptr`
-aborts inside `KarpelesLab/weak`, a transitive dependency of the `gotk4`
-bindings, before any test executes. That is a third-party CGO issue, not ours,
-but it means the integration path has no race coverage.
+aborted inside a transitive cgo dependency of the GTK bindings. That dependency
+is gone with the overlay rewrite, so this should be retried: the integration
+path may now have race coverage available to it for the first time.
 
 **Next step:** decide whether CI grows a Wayland service container, or whether
 these stay local-only and CI covers unit tests alone.

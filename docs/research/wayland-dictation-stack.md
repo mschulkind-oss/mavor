@@ -39,7 +39,7 @@ Verified **[SRC]** against the working tree, 2026-08-15 (~3.2k lines Go):
 | Transcription | `whisper-cli -m <model> -f <wav> -otxt -nt -np`, reads the `<wav>.txt` sidecar | `internal/speech/speech.go` |
 | Hotkey | none of its own — sway `bindsym $mod+grave exec mavor toggle` → `mavor toggle` → JSON over `$XDG_RUNTIME_DIR/mavor.sock` | `README.md`, `internal/ipc/ipc.go` |
 | State model | 3-state FSM `Idle → Recording → Transcribing → Idle`; toggle during `Transcribing` is a deliberate no-op | `internal/state/state.go` |
-| Status UI | GTK4 + `gtk4-layer-shell` full-width bar on the `top` layer, no exclusive zone, `KeyboardModeNone` | `internal/overlay/overlay_gtk.go` |
+| Status UI | `wlr-layer-shell` bar on the `top` layer, no exclusive zone, no keyboard interactivity, painted in Go | `internal/overlay/`, `internal/wayland/` |
 | Config | 4 keys: `top_margin`, `model`, `model_dir`, `socket` | `internal/config/config.go` |
 
 Notable absences relative to the field (see §5): no device selection, no
@@ -524,16 +524,29 @@ deliberate no-op, so a wedged transcription cannot be escaped. Add
 
 ### 4.1 Layer-shell overlay — status quo
 
-`gtk4-layer-shell` (the C library, `wmww/gtk4-layer-shell`) is healthy: 329
+> [!NOTE]
+> **Resolved, 2026-09-04.** The risk this section identified was acted on: the
+> C library and its binding are both gone, replaced by a hand-written Wayland
+> client in `internal/wayland`. The analysis below is kept because it is what
+> drove that decision, and because its central observation — that the API
+> surface is small enough for the dependency to be worth more than it costs —
+> is exactly what made the replacement cheap.
+
+`gtk4-layer-shell` (the C library, `wmww/gtk4-layer-shell`) was healthy: 329
 stars, v1.3.0 released 2025-10-29, pushed 2026-08-12 **[API 2026-08-15]**.
 
-The **Go binding is the fragile link**: `diamondburned/gotk4-layer-shell`, 1
-star, last pushed 2024-01-09, and `go.mod` pins the pseudo-version
+The **Go binding was the fragile link**: `diamondburned/gotk4-layer-shell`, 1
+star, last pushed 2024-01-09, and `go.mod` pinned the pseudo-version
 `v0.0.0-20240109211357-6efa9f6dc438` — i.e. the tip of an effectively dormant
-repo. Its parent `diamondburned/gotk4` is fine (689 stars, pushed 2026-08-09).
-The exposure is bounded — layer-shell's API surface is ~8 functions and hasn't
-broken — but it is worth knowing that a GTK4 or layer-shell ABI change would
-land on an unmaintained shim **[INF]**.
+repo. The exposure was bounded — layer-shell's API surface is ~8 functions and
+hasn't broken — but a GTK4 or layer-shell ABI change would have landed on an
+unmaintained shim **[INF]**.
+
+Two costs turned out to matter more than the maintenance risk. The binding is
+cgo, which forbade cross-compilation and static linking, and so blocked every
+distribution channel except building from source; and `libgtk4-layer-shell-dev`
+is absent from Ubuntu LTS, which broke CI outright. Speaking the protocol
+directly costs 20 requests and 8 events.
 
 Genuine strengths of the current design worth preserving: `top` layer, no
 exclusive zone (windows don't reflow), `KeyboardModeNone` (never steals focus),

@@ -368,7 +368,7 @@ Five properties, roughly in order of importance:
    makes an explicit, per-utterance choice with muscle memory, and there is no
    ambient "is this thing phoning home right now?" question. This maps cleanly
    onto the existing IPC: `{"action":"toggle","profile":"cloud"}`.
-4. **The overlay must show it.** The GTK pill already distinguishes Recording
+4. **The overlay must show it.** The pill already distinguishes Recording
    from Transcribing. A cloud profile should be *visually unmistakable* —
    different colour, and the provider name in the pill. If the user can't tell at
    a glance which backend is armed, per-profile backends are theatre. This is
@@ -779,7 +779,7 @@ model   = "base.en"
 backend      = "groq"
 model        = "whisper-large-v3-turbo"
 api_key_env  = "GROQ_API_KEY"      # env var name, never the key itself
-dictionary   = ["wlroots", "PipeWire", "gtk4-layer-shell"]
+dictionary   = ["wlroots", "PipeWire", "layer-shell"]
 postprocess  = "none"
 ```
 

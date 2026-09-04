@@ -19,10 +19,10 @@ On Arch Linux / NixOS / Debian / Fedora:
 
 ```bash
 # Arch Linux
-sudo pacman -S sway waybar gtk4 gtk4-layer-shell wtype wl-clipboard pipewire pulseaudio-utils whisper-cpp
+sudo pacman -S sway waybar wtype wl-clipboard pipewire pulseaudio-utils whisper-cpp
 
 # Nix / NixOS (or run inside a dev shell)
-nix-shell -p sway waybar gtk4 gtk4-layer-shell wtype wl-clipboard pipewire pulseaudio whisper-cpp
+nix-shell -p sway waybar wtype wl-clipboard pipewire pulseaudio whisper-cpp
 ```
 
 ---

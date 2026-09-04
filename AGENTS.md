@@ -16,7 +16,7 @@ User Keybind ($mod+grave)
     ├── audio.Recorder (parec / PipeWire audio capture) + audio.VAD
     ├── audio.Ducker (automatic background media ducking via pactl)
     ├── speech.Transcriber (in-process sherpa-onnx CGO / whisper.cpp / HTTP server)
-    ├── overlay.Overlay (GTK4 layer-shell floating HUD with live audio waveform)
+    ├── overlay.Overlay (wlr-layer-shell HUD, painted in Go, live waveform)
     └── output.Emitter (wtype synthetic keyboard injection + wl-copy)
 ```
 
@@ -26,7 +26,8 @@ User Keybind ($mod+grave)
 - `internal/state/` — Thread-safe FSM tracking daemon lifecycle state.
 - `internal/audio/` — Audio capture via `parec` / PipeWire stream, volume meter, VAD gating, and audio ducking.
 - `internal/speech/` — Pluggable speech-to-text (STT) engines (`whisper-cli`, in-process `sherpa-onnx` CGO, remote HTTP server).
-- `internal/overlay/` — GTK4 layer-shell HUD overlay with real-time audio waveform and transcription preview.
+- `internal/overlay/` — Layer-shell HUD: `paint.go` turns state into pixels with no compositor involved, `overlay_wl.go` puts them on screen.
+- `internal/wayland/` — Minimal hand-written Wayland client: the wire protocol, wlr-layer-shell, and shared-memory buffers. No cgo.
 - `internal/ipc/` — JSON-over-Unix-socket IPC server and client.
 - `internal/output/` — Synthetic keystroke typing (`wtype`) and clipboard synchronization (`wl-copy`).
 - `internal/history/` — Append-only JSONL log of completed transcripts, for recovery when typing does not land.
@@ -36,8 +37,11 @@ User Keybind ($mod+grave)
 
 ## Build Tags
 
-- `cgo && !nogtk` (default): GTK4 layer-shell overlay compiled in. Requires `gtk4`, `gtk4-layer-shell`, `glib-2.0` headers.
-- `nogtk`: Omits GTK4 overlay; daemon uses `noop.Overlay` for headless environments.
+The default build is pure Go and needs no system headers: `CGO_ENABLED=0`
+works, and so does cross-compilation.
+
+- `sherpa`: links the in-process sherpa-onnx recognizers. The one variant that
+  needs cgo, and so the one that cannot be cross-compiled.
 - `integration`: Enables the headless Sway + PipeWire integration test harness.
 - `e2e`: Enables end-to-end transcription tests with real downloaded models.
 
@@ -82,7 +86,8 @@ User Keybind ($mod+grave)
 - `just test-int` — Run headless Wayland integration tests (`go test -tags=integration ./test/integration/...`).
 - `just test-e2e` — Run real whisper transcription test.
 - `just storybook` — Generate UI Storybook HTML report with real headless screenshots (`test/reports/ui-storybook.html`).
-- `just build` — Compile static binary to `bin/mavor`.
+- `just build` — Compile the static, pure-Go binary to `bin/mavor`.
+- `just build-sherpa` — Compile with the in-process sherpa-onnx engines (cgo).
 - `just install` — Compile and copy binary to `~/.local/bin/mavor`.
 - `just deploy` — Install binary and set up systemd user service.
 - `just doctor` — Run environment health check (`mavor doctor`).

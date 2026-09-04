@@ -16,7 +16,7 @@ $mod + ` ──▶  ⟳ Transcribing…             (in-process CGO / whisper.cp
 
 CLI subcommands:
 
-- `mavor daemon` — long-lived process. Owns the GTK4 overlay, audio capture,
+- `mavor daemon` — long-lived process. Owns the overlay, audio capture,
   the speech-to-text (STT) engine, PipeWire audio ducking, and a Unix-socket
   IPC server.
 - `mavor start` / `mavor stop` — push-to-talk keybind controls (hold to speak).
@@ -122,7 +122,7 @@ exec mavor daemon
 bindsym $mod+grave exec mavor toggle
 ```
 
-The overlay uses gtk4-layer-shell on the `top` layer and does **not** request
+The overlay is a `wlr-layer-shell` surface on the `top` layer and does **not** request
 an exclusive zone, which means two things: it floats over your content without
 resizing windows, and the compositor places it *inside* the space other bars
 have reserved. `top_margin` is therefore a gap below Waybar, not an offset from
@@ -263,7 +263,8 @@ cmd/mavor/                   # CLI entrypoint & subcommands (daemon, doctor, con
 internal/state/              # Idle ⇄ Recording ⇄ Transcribing FSM
 internal/audio/              # Recorder interface + parec impl + VAD + PipeWire ducking
 internal/speech/             # Pluggable STT engines (whisper-cli, sherpa-onnx CGO, HTTP server)
-internal/overlay/            # GTK4 layer-shell HUD overlay + live audio meter + Noop
+internal/overlay/            # Layer-shell HUD: paint.go renders, overlay_wl.go presents
+internal/wayland/            # Minimal hand-written Wayland client (wire protocol, layer-shell, shm)
 internal/ipc/                # JSON-over-Unix-socket protocol
 internal/output/             # wtype + wl-copy dispatch
 internal/config/             # XDG_CONFIG_HOME/mavor/config.toml loader with ~/$VAR expansion
@@ -273,9 +274,12 @@ test/integration/            # headless sway + audio-stack test harness
 
 ### Build tags
 
-- `cgo && !nogtk` (default): GTK4 overlay is compiled in. Requires
-  `gtk4`, `gtk4-layer-shell`, `gobject-introspection-1.0` dev outputs.
-- `nogtk`: skip GTK; daemon falls back to a Noop overlay (silent operation).
+The default build is pure Go. `CGO_ENABLED=0` works, cross-compilation works,
+and no system development headers are needed to build it.
+
+- `sherpa`: link the in-process sherpa-onnx recognizers. This is the only
+  variant that needs cgo, and therefore the only one that cannot be
+  cross-compiled.
 - `integration`: build the headless-sway test harness.
 - `e2e`: opt in to tests that exercise real whisper-cli + a downloaded model.
 
@@ -303,11 +307,13 @@ much of the heavy lifting they do:
 
 **Desktop integration**
 
-- [gotk4](https://github.com/diamondburned/gotk4) and
-  [gotk4-layer-shell](https://github.com/diamondburned/gotk4-layer-shell) — Go
-  bindings for [GTK4](https://gitlab.gnome.org/GNOME/gtk) and
-  [gtk4-layer-shell](https://github.com/wmww/gtk4-layer-shell), which is what
-  lets the overlay be a layer-shell surface instead of a window.
+- [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) and the
+  [wlr-layer-shell](https://github.com/swaywm/wlr-protocols) protocol — what
+  lets the overlay be an anchored surface rather than a window your tiler has
+  to place. mavor speaks the protocol directly rather than through a library.
+- [golang.org/x/image](https://pkg.go.dev/golang.org/x/image) — the rasterizer
+  the pill is drawn with, and the Go font it is typeset in. Embedding the font
+  is what makes the overlay render identically on every machine.
 - [wtype](https://github.com/atx/wtype) — synthetic keystrokes over
   `virtual-keyboard-unstable-v1`.
 - [wl-clipboard](https://github.com/bugaevc/wl-clipboard) — `wl-copy` and
@@ -323,14 +329,12 @@ much of the heavy lifting they do:
 
 | Module | License |
 |---|---|
-| [`github.com/diamondburned/gotk4/pkg`](https://github.com/diamondburned/gotk4) | MPL-2.0 |
-| [`github.com/diamondburned/gotk4-layer-shell/pkg`](https://github.com/diamondburned/gotk4-layer-shell) | MPL-2.0 |
+| [`golang.org/x/image`](https://pkg.go.dev/golang.org/x/image) | BSD-3-Clause |
+| [`golang.org/x/sys`](https://pkg.go.dev/golang.org/x/sys) | BSD-3-Clause |
 | [`github.com/k2-fsa/sherpa-onnx-go`](https://github.com/k2-fsa/sherpa-onnx-go) | Apache-2.0 |
 | [`github.com/k2-fsa/sherpa-onnx-go-linux`](https://github.com/k2-fsa/sherpa-onnx-go-linux) | Apache-2.0 |
 | [`github.com/pelletier/go-toml/v2`](https://github.com/pelletier/go-toml) | MIT |
-| [`github.com/KarpelesLab/weak`](https://github.com/KarpelesLab/weak) | MIT |
-| [`go4.org/unsafe/assume-no-moving-gc`](https://github.com/go4org/unsafe-assume-no-moving-gc) | BSD-3-Clause |
-| [`golang.org/x/sync`](https://cs.opensource.google/go/x/sync) | BSD-3-Clause |
+| [`golang.org/x/text`](https://pkg.go.dev/golang.org/x/text) | BSD-3-Clause |
 
 **Testing**
 

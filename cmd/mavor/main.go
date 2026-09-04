@@ -180,7 +180,7 @@ func runDaemon(args []string) error {
 	}
 
 	recDir := filepath.Join(os.TempDir(), "mavor-recordings")
-	ov, err := overlay.NewDefault(cfg.TopMargin)
+	ov, err := overlay.NewDefault(cfg.TopMargin, logger)
 	if err != nil {
 		logger.Warn("overlay unavailable, falling back to noop", "err", err)
 		ov = &overlay.Noop{}

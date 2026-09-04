@@ -68,7 +68,8 @@ Five load-bearing principles I can read out of the code as written:
 - **P4. Every external dependency is behind an interface with a mock in the
   same file.** `audio.MockRecorder`, `speech.Mock`, `output.Mock`, `overlay.Noop`
   all ship in the production package, not in `_test.go` files.
-- **P5. Degrade, don't die.** Missing GTK → Noop overlay (`main.go:113-117`);
+- **P5. Degrade, don't die.** No compositor, or one without layer-shell → Noop
+  overlay (`main.go:184-187`);
   `wtype` failure → clipboard still gets the text (`output.go:52-65`); output
   error → the cycle still completes (`daemon.go:143-149`).
 
@@ -133,10 +134,10 @@ mostly means "silently do nothing and log it where nobody is looking."
 │             │                    └─────────┬──────────┘ └─────┬──────┘│
 └─────────────┼──────────────────────────────┼──────────────────┼───────┘
               ▼                              ▼                  ▼
-     GTK4 + gtk4-layer-shell        whisper-cli (exec)     wtype (exec)
-     own GTK main loop on a         reads  rec-N.wav       wl-copy (exec)
+     wlr-layer-shell surface       whisper-cli (exec)     wtype (exec)
+     painted in Go on its own       reads  rec-N.wav       wl-copy (exec)
      goroutine                      writes rec-N.wav.txt   BOTH, always
-     (overlay_gtk.go:107-120)               ▲              (output.go:59-64)
+     (overlay_wl.go)                        ▲              (output.go:59-64)
                                             │
      parec (exec) ──────────────────────────┘  ← the WAV file on disk is the
      launched by audio.Recorder above          ONLY channel between capture
@@ -152,7 +153,7 @@ mostly means "silently do nothing and log it where nobody is looking."
 | `internal/audio` | 199 | `parec` process lifecycle, WAV paths | `os/exec`, `syscall` |
 | `internal/speech` | 117 | `whisper-cli` process, sidecar read | `os/exec` |
 | `internal/output` | 98 | `wtype` + `wl-copy` | `os/exec` |
-| `internal/overlay` | 66 + 239 (gtk) | the status pill | gotk4, gtk4-layer-shell (cgo) |
+| `internal/overlay` | 66 + 330 (paint) + 250 (wl) | the status pill | `internal/wayland`, `golang.org/x/image` |
 | `internal/ipc` | 125 | socket protocol, stale-socket handling | `net`, `encoding/json` |
 | `internal/config` | 102 | four fields, XDG resolution | go-toml |
 | `cmd/mavor` | 233 | subcommand dispatch, model download, **the wiring decisions** | everything |
@@ -216,8 +217,8 @@ never locked while a side effect runs.
 runs, on the IPC connection's goroutine:
 
 1. `d.overlay.Show(overlay.Recording)` (`daemon.go:99`, mapping at
-   `daemon.go:154-162`). In the GTK build this marshals onto the GTK main loop
-   via `coreglib.IdleAdd` and **blocks until it has run** (`overlay_gtk.go:210-225`).
+   `daemon.go:154-162`). The layer-shell overlay posts this to its render
+   goroutine and returns without waiting.
 2. `d.recorder.Start(ctx)` (`daemon.go:107`), synchronously.
 
 `ParecRecorder.Start` (`audio.go:71`) refuses a double start (`audio.go:74-76`),
@@ -229,7 +230,7 @@ SIGINTs the process when `ctx` is done (`audio.go:98-103`).
 
 Only after all that does `Apply` return, `handleRequest` return, and the JSON
 response `{"state":"recording"}` get written. **The user's `mavor toggle` blocks
-on the GTK marshal and the `parec` fork/exec.** Its 2-second budget is the only
+on the `parec` fork/exec.** Its 2-second budget is the only
 thing bounding that.
 
 `mavor toggle` prints `recording` (`main.go:163`) and exits.
@@ -343,8 +344,8 @@ subscribes.
 
 **I1. `state.Machine` is the sole owner of the state word.** No component holds
 a copy. `daemon.Daemon` has no state fields beyond its five injected
-collaborators (`daemon.go:25-33`). The overlay caches a `current Visual`
-(`overlay_gtk.go:37`) but only writes it, never reads it back for decisions.
+collaborators (`daemon.go:25-33`). The overlay keeps a `Scene` describing what it is
+drawing, but only writes it, never reads it back for decisions.
 
 **I2. Three call sites may call `Apply`, and they are all in `internal/daemon`.**
 `handleRequest` on a toggle (`daemon.go:84`); `onTransition` on a recorder-start
@@ -374,8 +375,8 @@ Each step is necessary:
   wl-copy after the binary exits."
 - Only then `overlay.Close()` (`daemon.go:76`), which matters because the
   transcription goroutine's final `Apply` triggers `overlay.Show(Hidden)`.
-  Closing first would make that call error (`overlay_gtk.go:203-206`) or, worse,
-  block (§10, R5).
+  Closing first would make that call error, since a closed overlay refuses
+  posts.
 
 **I6. `ParecRecorder` guards its own single-capture invariant** with a mutex and
 a nil check (`audio.go:74-76`), independently of the FSM. Two overlapping
@@ -504,13 +505,13 @@ Close() error
 with `Visual ∈ {Hidden, Recording, Transcribing}` (`overlay.go:12-19`).
 
 *Abstracts:* the user-visible status indicator. This is the seam with the most
-machinery behind it: the GTK4 implementation (`overlay_gtk.go`, 239 lines) runs
-its own GTK main loop on a goroutine (`overlay_gtk.go:107-120`), injects CSS
-(`overlay_gtk.go:44-99`), anchors Top+Left+Right via layer-shell with **no
-exclusive zone** so it floats over content instead of pushing Waybar around
-(`overlay_gtk.go:144-151`, and the comment at `:151` says so explicitly), and
-marshals every `Show` onto the GTK thread with `IdleAdd`
-(`overlay_gtk.go:211-225`).
+machinery behind it, split in two so that most of it needs no compositor:
+`paint.go` is a pure function from a `Scene` to an image, and `overlay_wl.go`
+owns a `wlr-layer-shell` surface and puts that image on screen through
+`internal/wayland`. The surface is anchored to the top edge with **no exclusive
+zone**, so it floats over content instead of pushing a bar around, and requests
+no keyboard interactivity, so it cannot take focus from whatever is being
+dictated into.
 
 *Second implementation:* `Noop` already is one (`overlay.go:45-66`). A
 `notify-send` overlay or a Waybar-module writer would be a few dozen lines.
@@ -520,11 +521,10 @@ marshals every `Show` onto the GTK thread with `IdleAdd`
 1. **`Visual` is a closed enum that carries no data.** It cannot express
    elapsed recording time, audio level, an error, a partial transcript, or
    "which model is loading". Every richer UI idea dies at this type.
-2. **`Show` is synchronous and blocking in the GTK case** — it waits on the GTK
-   main loop (`overlay_gtk.go:224`). Since `Show` is called from the FSM
-   listener, which is called from the IPC handler goroutine, a wedged GTK loop
-   wedges the toggle response. The 2-second client budget (`main.go:156`) is the
-   only backstop.
+2. **`Show` is asynchronous, so failure is invisible to the caller.** It posts
+   to the render goroutine and returns, which means a wedged compositor can
+   never wedge the toggle path — but it also means an overlay that has stopped
+   painting reports success on every call. The error surfaces only at `Close`.
 3. **There is no "the daemon has a problem" visual.** `Hidden` is the only
    terminal state, so failure and success look identical from the user's chair.
 
@@ -541,10 +541,10 @@ ov, err := overlay.NewDefault(cfg.TopMargin)
 ```
 
 `config.Config` has exactly four fields (`config.go:17-31`) — `top_margin`,
-`model`, `model_dir`, `socket` — and none of them names a backend. The only
-implementation switch that exists is a **compile-time** one: the `overlay`
-package's `NewDefault` is defined twice, once under `cgo && !nogtk`
-(`factory_gtk.go:8-10`) and once under `!cgo || nogtk` (`factory_noop.go:8-10`).
+`model`, `model_dir`, `socket` — and none of them names a backend. The overlay
+no longer has a compile-time switch either: there is one implementation, and
+the fallback to `Noop` is a runtime decision taken when the compositor turns
+out not to support layer-shell (`main.go:184-187`).
 
 So the honest summary of §6 is: **these are excellent test seams and not yet
 extension points.** Making any of them user-selectable requires a factory keyed
@@ -673,8 +673,8 @@ Three real build tags plus one that does nothing:
 
 | Tag | Files | Effect |
 |---|---|---|
-| `cgo && !nogtk` (default) | `overlay_gtk.go:1`, `factory_gtk.go:1` | real GTK4 overlay; needs gtk4, gtk4-layer-shell, gobject-introspection |
-| `!cgo \|\| nogtk` | `factory_noop.go:1` | `NewDefault` returns `&Noop{}`; daemon runs silently |
+| *(none)* | — | the default build is pure Go: the overlay, the Wayland client and the whisper-cli engine all compile without cgo |
+| `sherpa` | `sherpa_cgo.go:1`, `build_tags_sherpa.go:1` | links in-process sherpa-onnx recognizers; the only variant needing cgo, and so the only one that cannot be cross-compiled |
 | `integration` | all five files in `test/integration/` | headless-Sway harness |
 | `e2e` | **none** | see below |
 
@@ -765,7 +765,7 @@ where the shaping happens.
 | R2 | **Concurrent toggles can deliver listener callbacks out of order.** `Apply` serializes the state word under the lock but releases it before running listeners (`state.go:79-83`), so two racing toggles can run `onTransition(Transcribing)` before `onTransition(Recording)` — meaning `recorder.Stop()` before `recorder.Start()`. | `state.go:68-85`, `ipc.go:68` (one goroutine per connection) | Unreachable at human keypress speed, and `Recorder` errors safely if it happens (`audio.go:112-114`). If it ever matters, serialize side effects on a single dispatch goroutine rather than running them on the caller's. |
 | R3 | **Unbounded, personal data accumulation** in `$TMPDIR/mavor-recordings` — every dictation's audio *and* text kept forever (§7.9). | `main.go:112`, `audio.go:80`, `speech.go:111`; no `os.Remove` covering that dir | Decide a retention policy (OQ-3). Cheapest honest version: delete both files after a successful emit, keep them on failure. |
 | R4 | **Silent failure is the default user experience.** Six of the failure modes in §7 look identical from the user's chair: the pill disappears and nothing is typed. | `daemon.go:99-151` — every error path ends at a logger | Needs an error `Visual` (OQ-2). The overlay is the only channel that exists. |
-| R5 | **`overlay.Show` blocks on the GTK main loop from the IPC handler goroutine.** A wedged or quit GTK loop hangs the toggle response; the `closed` check and the `IdleAdd` wait are separated by an unlocked window (`overlay_gtk.go:201-225`), so a `Show` racing `Close` can wait on a `done` channel nothing will close. | `overlay_gtk.go:210-225`, `daemon.go:99` | Ordering (I5) prevents it today. If the overlay grows richer, give `Show` a timeout or make it fire-and-forget. |
+| R5 | **`overlay.Show` cannot report a failure to draw.** It posts to the render goroutine and returns nil, so a compositor that has stopped accepting frames looks identical to one that is working. The error is held until `Close`. | `overlay_wl.go` (`post`, `Close`) | Deliberate: this is what stops a wedged compositor from wedging the toggle path. If the overlay ever becomes load-bearing, surface the error asynchronously instead. |
 | R6 | **The whisper sidecar contract is unverified against the real binary** — the only tests are fakes written to match the assumption, and the `e2e` tag that would check it is documented but empty (§8). | `speech.go:111-116`, `speech_test.go:39-43`, `harness.go:271-281`, no `//go:build e2e` anywhere | Write one `e2e`-tagged test that runs the real `whisper-cli` against a real `tiny.en` and a 1-second fixture. The `justfile` recipe already exists and downloads the model. |
 | R7 | **Two exported sentinel errors are dead**, and their doc comments assert behavior the code does not have. | `ipc.ErrAddrInUse` (`ipc.go:123-125`), `daemon.ErrNotRunning` (`daemon.go:164-166`) | Either return them (and let callers `errors.Is`) or delete them. Today they are a trap for the next person who tries to match on them. |
 
@@ -860,7 +860,7 @@ lands on top of the current shape.
    uniform constructor signature and a config sub-table for its own options
    (model paths, API keys, device names) — a real amount of machinery for a
    single-user tool. The stakes: this decides whether "add a cloud whisper
-   backend" is a config change or a recompile, and whether `nogtk` stays the
+   backend" is a config change or a recompile, and whether the Noop fallback stays the
    only switch in the system.
 
    _Leaning:_ Don't build a registry. Add the *specific* config fields you
@@ -875,7 +875,7 @@ lands on top of the current shape.
 6. **OQ-6. Is `mavor toggle` allowed to be slow?**
 
    The first toggle's IPC response is not written until `overlay.Show` has
-   round-tripped through the GTK main loop *and* `parec` has been forked
+   round-tripped through the overlay *and* `parec` has been forked
    (§3 step 3), because side effects run inline on the listener, which runs
    inline on the handler goroutine. The client budget is 2 seconds
    (`main.go:156`), after which the user's keypress reports failure even though
@@ -884,7 +884,7 @@ lands on top of the current shape.
    `handleRequest`'s returned state is the state *after* side effects were
    attempted — which is exactly what makes the integration tests deterministic.
 
-   _Leaning:_ Leave it synchronous. The latency is a fork/exec plus a GTK idle
+   _Leaning:_ Leave it synchronous. The latency is a fork/exec plus a channel
    callback — single-digit milliseconds in practice — and the determinism is
    worth more than the margin. But if the recorder ever grows a slow start
    (device negotiation, a network backend), this flips immediately, so it is

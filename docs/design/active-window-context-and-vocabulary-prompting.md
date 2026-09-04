@@ -392,7 +392,7 @@ When an IDE or terminal window is focused, the context engine extracts dynamic t
 
 1. **Active Branch Name:** `git rev-parse --abbrev-ref HEAD` (e.g., `feature/vocab-prompting`).
 2. **Recent Commit Identifiers:** Extracts nouns and identifiers from `git log -n 5 --oneline`.
-3. **Workspace File Basenames:** Scans project root for active filenames (e.g., `state.go`, `ducking.go`, `overlay_gtk.go`).
+3. **Workspace File Basenames:** Scans project root for active filenames (e.g., `state.go`, `ducking.go`, `overlay_wl.go`).
 4. **Safety & Budget Controls:**
    - Git operations are executed with a strict 30 ms timeout budget: `context.WithTimeout(ctx, 30*time.Millisecond)`.
    - Extracted dynamic tokens are filtered through an alphanumeric identifier regex (`^[a-zA-Z0-9_\-\.]{3,30}$`).

@@ -45,7 +45,7 @@ This document explores how real developers, writers, and automated test agents i
 - Trying to dictate while background music is playing through external speakers. Without audio ducking enabled, speaker audio bleeds into the microphone stream.
 
 **What makes this work:**
-- The GTK4 layer-shell overlay sets `LayerShellKeyboardModeNone`, ensuring keyboard focus never leaves Neovim.
+- The layer-shell overlay requests no keyboard interactivity, so focus never leaves Neovim.
 - The dual `wtype` + `wl-copy` output guarantees that even if a specialized terminal drops synthetic keystrokes, the transcript is immediately available in the clipboard via `p` or `Ctrl+V`.
 
 ---
@@ -164,7 +164,7 @@ This document explores how real developers, writers, and automated test agents i
    - Captures pixel-accurate `grim` screenshots and generates an HTML visual storybook report at `test/reports/ui-storybook.html` (produced by `just storybook`; not committed).
 
 3. Aria verifies:
-   - **Overlay Margin:** GTK4 Layer Shell bar floats 8px below Waybar without overlapping or stealing input focus.
+   - **Overlay Margin:** The layer-shell bar floats 8px below Waybar without overlapping or stealing input focus.
    - **Audio Meter States:** Visual waveform accurately transitions across 6 discrete energy levels.
    - **Output Verification:** `wl-paste` accurately matches the simulated audio transcription.
 

@@ -17,7 +17,7 @@ summary: "The name search that settled on mavor: the criteria, the shortlist dra
 `mavor` is a low-latency voice-to-text dictation daemon and CLI: hold a key,
 speak, and the words are typed into whatever window has focus. It runs
 in-process Sherpa-ONNX and whisper.cpp engines over a PipeWire capture stream,
-streams tokens live into a GTK4 HUD overlay, and emits the result as synthetic
+streams tokens live into a layer-shell HUD overlay, and emits the result as synthetic
 keystrokes.
 
 **William Mavor**'s *Universal Stenography* (1780) went through edition after

@@ -4,14 +4,14 @@ author: "Matthew Schulkind"
 date: 2026-08-16
 status: accepted
 tags: [design, architecture, engine, mavor, performance, vulkan, whisper, parakeet, vad, wayland, accuracy]
-summary: "Comprehensive architecture and empirical benchmark document for the mavor daemon covering open acoustic models (Whisper, Parakeet-TDT, Moonshine, SenseVoice, Zipformer), runtime engines (CLI, Server, CGO, ExecuTorch, IREE), real spoken audio thread scaling, verbatim Word Error Rate (WER) evaluations, and GTK4 layer-shell transparent overlay design."
+summary: "Comprehensive architecture and empirical benchmark document for the mavor daemon covering open acoustic models (Whisper, Parakeet-TDT, Moonshine, SenseVoice, Zipformer), runtime engines (CLI, Server, CGO, ExecuTorch, IREE), real spoken audio thread scaling, verbatim Word Error Rate (WER) evaluations, and layer-shell transparent overlay design."
 ---
 
 # Empirical Local Speech-to-Text Architecture: Open Models, Multi-Engine Runtimes, Real Audio Scaling, and Acoustic Accuracy
 
 **Status:** ACCEPTED (2026-08-16). Fully implemented and verified in in-tree test suites.
 
-**The short version.** Modern voice dictation requires balancing three competing axes: **model accuracy** (verbatim transcription, casing, and punctuation), **inference latency** (time to first token and total response time), and **system safety** (crash isolation, zero UI regressions, and zero phantom hallucinations). Rather than binding `mavor` to a single fixed engine, `mavor` adopts a **pluggable multi-engine architecture** with automated model catalog management (`mavor models pull`), a zero-latency Silero VAD gate (<0.52 ms), background audio ducking, and a completely transparent GTK4 layer-shell floating HUD.
+**The short version.** Modern voice dictation requires balancing three competing axes: **model accuracy** (verbatim transcription, casing, and punctuation), **inference latency** (time to first token and total response time), and **system safety** (crash isolation, zero UI regressions, and zero phantom hallucinations). Rather than binding `mavor` to a single fixed engine, `mavor` adopts a **pluggable multi-engine architecture** with automated model catalog management (`mavor models pull`), a zero-latency Silero VAD gate (<0.52 ms), background audio ducking, and a completely transparent layer-shell floating HUD.
 
 **Reads with:** [`how-mavor-works.md`](./how-mavor-works.md) (current internal daemon architecture), [`open-weight-models-and-runtimes.md`](../research/open-weight-models-and-runtimes.md) (open-weight models and runtime survey), [`model_transcription_comparison.md`](../reports/model_transcription_comparison.md) (empirical model comparison report), [`roadmap.md`](../../roadmap.md) (living project roadmap).
 
@@ -31,7 +31,7 @@ flowchart TD
         FSM -->|Start| Ducker["Audio Ducker<br/>(pactl sink attenuation to 20%)"]
         FSM -->|Start| Rec["PipeWire / parec Recorder<br/>(internal/audio)"]
         Rec --> VAD["Silero VAD Gate<br/>(0.52ms scan; discard silence)"]
-        FSM -->|Level Updates| HUD["GTK4 Layer-Shell Overlay<br/>(100% Transparent, USER CSS)"]
+        FSM -->|Level Updates| HUD["Layer-Shell Overlay<br/>(transparent, painted in Go)"]
     end
 
     subgraph Engines ["Multi-Engine Inference Matrix (internal/speech)"]
@@ -174,36 +174,29 @@ $$\tau_{\text{token}} = \frac{T_{\text{infer}}}{N_{\text{tokens}}} \quad (\text{
 
 ---
 
-## 6. GTK4 Layer-Shell Floating Overlay Design
+## 6. Layer-Shell Floating Overlay Design
 
-To guarantee zero visual glitches (eliminating opaque white backgrounds) across all Wayland compositors:
+The overlay is a `wlr-layer-shell` surface that mavor paints itself, pixel by
+pixel, through a hand-written Wayland client (`internal/wayland`). There is no
+widget toolkit involved, which removes the whole class of problem this section
+used to document: opaque toolkit backgrounds bleeding through a surface meant
+to be transparent, and per-machine variation in whichever font a family name
+resolved to.
 
-1. **CSS Specificity & Style Provider Priority**:
-   - Set style provider priority to `gtk.STYLE_PROVIDER_PRIORITY_USER` (`800`) to strictly override default Adwaita `#ffffff` window container backgrounds.
-2. **Transparent Selectors with `!important`**:
-   ```css
-   window,
-   window.background,
-   window.csd,
-   window.solid-csd,
-   .background,
-   .csd,
-   decoration,
-   .mavor-window,
-   .mavor-container,
-   stack {
-     background: transparent !important;
-     background-color: transparent !important;
-     box-shadow: none !important;
-     border: none !important;
-     outline: none !important;
-   }
-   ```
-3. **Wayland Layer-Shell Placement**:
-   - `LayerShellLayerTop`: Floats over active windows without grabbing exclusive keyboard focus.
-   - `LayerShellEdgeTop`: Anchored with `topMargin = 32px` directly beneath the desktop status bar (Waybar/Swaybar).
+The surface is created with three properties that make it a good citizen of a
+tiling session:
 
----
+1. **Layer `top`, no exclusive zone.** It floats above normal windows without
+   reserving space, so it never pushes a bar or a tiled layout around.
+2. **No keyboard interactivity.** The compositor is told the surface will never
+   want focus, so dictating into a window cannot be interrupted by the
+   indicator that says dictation is happening.
+3. **A margin from the anchored edge**, so it sits clear of a bar rather than
+   under it.
+
+Rendering is a pure function from state to an image (`internal/overlay/paint.go`),
+which is what lets every visual state be tested without a compositor at all; the
+Wayland half only has to move bytes into a shared-memory buffer.
 
 ## 7. Next-Generation Edge Runtimes Beyond ONNX
 

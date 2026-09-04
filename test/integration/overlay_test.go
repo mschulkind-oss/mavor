@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"image"
 	"image/png"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -95,45 +97,66 @@ func TestOverlayWithoutWaybarStillFloats(t *testing.T) {
 // the oldest sample falls off the left edge. Regression for the "only the
 // live column moved" bug where the shift kept index 0 pinned and overwrote
 // the tail instead of scrolling.
-func TestWaveformRingScrolls(t *testing.T) {
-	// Shared, not per-test: this test builds an overlay in-process, and the
-	// GTK application it starts must not outlive its compositor.
+func TestWaveformReachesTheScreen(t *testing.T) {
 	h := sharedCompositor(t)
 	t.Setenv("XDG_RUNTIME_DIR", h.XDGRuntime)
 	t.Setenv("WAYLAND_DISPLAY", h.WaylandDisp)
-	t.Setenv("DBUS_SESSION_BUS_ADDRESS", h.DBusAddr)
-	t.Setenv("GDK_BACKEND", "wayland")
 
-	ov, err := overlay.NewGTK(testTopMargin)
+	ov, err := overlay.NewDefault(testTopMargin, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
-		t.Fatalf("overlay.NewGTK: %v", err)
+		t.Fatalf("overlay.NewDefault: %v", err)
 	}
 	defer ov.Close()
 
-	// Map the window (as the daemon does on Show(Recording)) so Close's
-	// window.Destroy runs against a realized surface.
+	// The ring's scrolling is unit-tested against shiftWave; what only a real
+	// compositor can show is that SetLevel is wired through to pixels at all.
+	bright := func() int {
+		img, err := png.Decode(bytes.NewReader(h.Grim()))
+		if err != nil {
+			t.Fatalf("decode screenshot: %v", err)
+		}
+		n := 0
+		b := img.Bounds()
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			for x := b.Min.X; x < b.Max.X; x++ {
+				r, g, bl, _ := img.At(x, y).RGBA()
+				if r>>8 > 200 && g>>8 > 200 && bl>>8 > 200 {
+					n++
+				}
+			}
+		}
+		return n
+	}
+
 	if err := ov.Show(overlay.Recording); err != nil {
 		t.Fatalf("Show(Recording): %v", err)
 	}
+	waitForOverlay(t, h)
+	silent := bright()
 
-	const ringLen = 46
-	// Feed ringLen+2 values so the ring is full and the first two fall off.
-	for i := 0; i < ringLen+2; i++ {
-		if err := ov.SetLevel(float64(i+1) / 100.0); err != nil {
+	for i := 0; i < 3*waveColsForTest; i++ {
+		if err := ov.SetLevel(1.0); err != nil {
 			t.Fatalf("SetLevel: %v", err)
 		}
 	}
+	waitForOverlay(t, h)
+	loud := bright()
 
-	wave := ov.Wave()
-	if len(wave) != ringLen {
-		t.Fatalf("Wave() len = %d, want %d", len(wave), ringLen)
+	if loud <= silent {
+		t.Errorf("full-scale audio drew %d bright pixels, silence drew %d — SetLevel is not reaching the surface", loud, silent)
 	}
-	for i, v := range wave {
-		want := float64(i+3) / 100.0 // 0.01 and 0.02 fell off the left edge
-		if v != want {
-			t.Fatalf("wave[%d] = %v, want %v (ring: %v)", i, v, want, wave)
-		}
-	}
+}
+
+// waveColsForTest mirrors the overlay's ring length. Duplicated rather than
+// exported: the number is a drawing detail, not API.
+const waveColsForTest = 46
+
+// waitForOverlay gives the render goroutine a moment to put its next frame on
+// screen. The overlay repaints on its own animation tick, so there is no
+// synchronous handle to wait on from outside the package.
+func waitForOverlay(t *testing.T, h *Harness) {
+	t.Helper()
+	time.Sleep(250 * time.Millisecond)
 }
 
 type rowBand struct{ start, end int }

@@ -56,18 +56,19 @@ doctor:
     @go run ./cmd/mavor doctor
 
 # Build the binary into ./bin/mavor. Self-sufficient: pulls module deps and
-# the default whisper model so the result is immediately runnable.
+# the default whisper model so the result is immediately runnable. Pure Go —
+# no cgo, no system headers.
 build: (_ensure-model default_model)
     @mkdir -p bin
     go mod download
-    @echo "Compiling mavor (CGO GTK4/Layer-Shell bindings may take 1-2m on first build)..."
-    go build -ldflags '{{ldflags}}' -v -o bin/mavor ./cmd/mavor
+    CGO_ENABLED=0 go build -ldflags '{{ldflags}}' -v -o bin/mavor ./cmd/mavor
 
-# Build a fast, lightweight binary without GTK4 overlay (instant compile).
-build-nogtk:
+# Build with the in-process sherpa-onnx engines linked in. This is the one
+# variant that needs cgo, and so the one that cannot be cross-compiled.
+build-sherpa: (_ensure-model default_model)
     @mkdir -p bin
-    go build -tags nogtk -ldflags '{{ldflags}}' -v -o bin/mavor ./cmd/mavor
-    @echo "Built lightweight mavor (nogtk) at bin/mavor"
+    go build -tags sherpa -ldflags '{{ldflags}}' -v -o bin/mavor ./cmd/mavor
+    @echo "Built mavor with sherpa-onnx (cgo) at bin/mavor"
 
 # Install the binary to ~/.local/bin/mavor.
 install: build

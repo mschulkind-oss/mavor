@@ -374,3 +374,36 @@ func (b *Buffer) Close() error {
 	}
 	return err
 }
+
+// Resize asks the compositor for a new surface size and waits for it to
+// confirm. A layer surface must be re-configured before a differently-sized
+// buffer may be attached.
+func (s *Surface) Resize(width, height int) error {
+	// zwlr_layer_surface_v1.set_size(width:uint, height:uint)
+	b := newBuilder(s.layer, 0)
+	b.putUint(uint32(width))
+	b.putUint(uint32(height))
+	if err := s.d.conn.send(b); err != nil {
+		return err
+	}
+	s.configured = false
+	if err := s.Commit(); err != nil {
+		return err
+	}
+	return s.WaitConfigure()
+}
+
+// AttachNothing unmaps the surface. Attaching a null buffer is the protocol's
+// way of taking a surface off screen without destroying it, which is what the
+// overlay does between dictations.
+func (s *Surface) AttachNothing() error {
+	// wl_surface.attach(buffer:object, x:int, y:int) with a null buffer
+	b := newBuilder(s.surface, 1)
+	b.putObject(0)
+	b.putInt(0)
+	b.putInt(0)
+	if err := s.d.conn.send(b); err != nil {
+		return err
+	}
+	return s.Commit()
+}
