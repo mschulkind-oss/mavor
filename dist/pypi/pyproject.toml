@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68.0", "setuptools-scm>=8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mavor"
+dynamic = ["version"]
+description = "Low-latency voice dictation — hotkey to talk, text typed into the focused window"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+authors = [
+    { name = "Matt Schulkind" },
+]
+keywords = ["dictation", "speech-to-text", "voice", "wayland", "whisper", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/mschulkind-oss/mavor"
+Repository = "https://github.com/mschulkind-oss/mavor"
+Issues = "https://github.com/mschulkind-oss/mavor/issues"
+
+[project.scripts]
+mavor = "mavor.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools_scm]
+root = "../.."

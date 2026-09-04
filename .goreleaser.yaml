@@ -1,5 +1,8 @@
 version: 2
 project_name: mavor
+# Build output goes in its own subdirectory because dist/ is a source tree
+# here: dist/pypi holds the PyPI wrapper. Only the generated half is ignored.
+dist: dist/goreleaser
 
 before:
   hooks:

@@ -120,7 +120,7 @@ release version:
     just check-ci
     git tag "v{{version}}"
     git push origin "v{{version}}"
-    @echo "pushed v{{version}} — release.yml takes it from here"
+    echo "pushed v{{version}} — release.yml takes it from here"
 
 # Download a whisper model into the cache (no-op if already present).
 _ensure-model name:

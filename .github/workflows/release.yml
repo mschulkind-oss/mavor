@@ -27,3 +27,33 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+  publish-pypi:
+    needs: goreleaser
+    runs-on: ubuntu-latest
+    # PyPI trusted publishing (OIDC), pinned at
+    # pypi.org/manage/project/mavor/settings/publishing to this workflow
+    # filename. No token to rotate.
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # setuptools-scm derives the version from the tag, so the tag has to
+          # be in the clone.
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Copy README and LICENSE
+        run: cp README.md LICENSE dist/pypi/
+
+      - name: Build wheel
+        run: uv build
+        working-directory: dist/pypi
+
+      - name: Publish to PyPI
+        run: uv publish dist/* --check-url https://pypi.org/simple/
+        working-directory: dist/pypi
