@@ -55,7 +55,9 @@ brews:
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     homepage: "https://github.com/mschulkind-oss/mavor"
-    description: "Low-latency voice dictation for Wayland — hotkey to talk, text typed into the focused window"
+    # Under 80 characters: brew style's FormulaAudit/Desc rejects longer, and
+    # the previous wording was 92.
+    description: "Low-latency voice dictation — hotkey to talk, text lands in the focused window"
     license: "Apache-2.0"
     directory: Formula
     # All three are in homebrew/core with Linux bottles, so the formula can

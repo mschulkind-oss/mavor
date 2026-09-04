@@ -1,6 +1,9 @@
 # mavor Developer Guide for Agents
 
-`mavor` is a low-latency voice-to-text dictation daemon and CLI.
+`mavor` is a low-latency voice-to-text dictation daemon and CLI. Transcription
+is entirely local — no cloud API, no account, no telemetry — and that is a
+property worth preserving: the only outbound request in the program is
+`mavor models pull`.
 
 Its first and current backend is Linux on a wlroots Wayland compositor — sway,
 Hyprland, river, Wayfire, niri, labwc — which is what `wlr-layer-shell` (the

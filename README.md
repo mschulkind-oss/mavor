@@ -1,10 +1,10 @@
 # mavor — low-latency voice dictation
 
 Tap a hotkey, talk, tap again. The transcribed text is typed into whatever
-window has focus and copied to the clipboard. A small "● Recording" pill
-appears at the top of the screen — clear of Waybar — while you speak, with
-a live audio waveform meter, and flips to an amber indicator while whisper.cpp or
-Sherpa-ONNX runs.
+window has focus and copied to the clipboard. Everything runs locally — your
+voice never leaves the machine. A small "● Recording" pill appears at the top
+of the screen, clear of your bar, while you speak, with a live audio waveform
+meter, and flips to an amber indicator while whisper.cpp or Sherpa-ONNX runs.
 
 ```
 $mod + ` ──▶  ● Recording   ▂▃▅▆          (HUD overlay with live audio meter)
@@ -56,8 +56,18 @@ catalog — size, languages, whether it streams — and `mavor models pull` puts
 where the engine will find it. Trying a new model should cost a minute, not an
 afternoon.
 
+**Everything runs on your machine.** Your voice never leaves it. Transcription
+is whisper.cpp or sherpa-onnx running locally against a model on your own disk
+— there is no cloud API behind it, no account, no API key, and nothing to sign
+up for. The only network call in the program is `mavor models pull`, which you
+invoke, to fetch a model from Hugging Face or a GitHub release. The `server`
+engine posts to an endpoint you configure, and that endpoint defaults to a Unix
+socket: it is a `whisper-server` you run yourself to keep a model warm, not a
+vendor. No telemetry, no analytics, no crash reporting. Unplug the network
+after `mavor setup` and dictation still works.
+
 **Minimal and unintrusive.** No tray icon, no window, no background service
-listening for a wake word, no telemetry. A daemon that idles until you press a
+listening for a wake word. A daemon that idles until you press a
 key, a floating pill that appears while you speak and disappears when you stop,
 and text in the window you were already typing in. It holds the microphone only
 between `start` and `stop`, and the one piece of UI it draws is deliberately
