@@ -13,7 +13,7 @@ summary: "Design and evaluation specification for ahead-of-time (AOT) compiled s
 
 **The short version.** While ONNX Runtime and GGML are today's dominant local engines, the on-device ML ecosystem is shifting toward **compiler-driven AOT (Ahead-of-Time) execution** (IREE via MLIR/LLVM) and **PyTorch 2.0 direct export** (ExecuTorch). This doc specifies how `mavor` evaluates and integrates these modern runtimes alongside our existing Go daemon.
 
-**Reads with:** [`local-engine-benchmarks-and-architecture.md`](./local-engine-benchmarks-and-architecture.md) (multi-engine benchmarks), [`open-weight-models-and-runtimes.md`](../research/open-weight-models-and-runtimes.md) (runtime landscape).
+**Reads with:** [`model-benchmarks.md`](../reports/model-benchmarks.md) (measured engine and model benchmarks), [`open-weight-models-and-runtimes.md`](../research/open-weight-models-and-runtimes.md) (runtime landscape).
 
 ---
 

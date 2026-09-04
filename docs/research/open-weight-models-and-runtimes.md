@@ -15,7 +15,6 @@ Sibling docs in this tree:
 - [`hosted-stt-and-postprocessing.md`](./hosted-stt-and-postprocessing.md) — Hosted/cloud speech-to-text (STT) APIs (Groq, OpenAI, Deepgram) and LLM post-processing.
 - [`wayland-dictation-stack.md`](./wayland-dictation-stack.md) — Wayland input injection, hotkey dispatch, and desktop compositor integration.
 - [`how-mavor-works.md`](../design/how-mavor-works.md) — Current internal architecture of `mavor`.
-- [`local-engine-benchmarks-and-architecture.md`](../design/local-engine-benchmarks-and-architecture.md) — Multi-engine benchmarking and process supervision architecture.
 
 ---
 
