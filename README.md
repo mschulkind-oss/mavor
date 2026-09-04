@@ -237,6 +237,15 @@ release assets and unpack into `model_dir/sherpa/<name>/`.
 
 ## Development
 
+### Dev container
+
+`yolo-jail.jsonc` is a committed [yolo-jail](https://github.com/mschulkind-oss/yolo-jail)
+definition: `yolo` from the repo root drops you in a container with the whole
+toolchain already present — sway and waybar for the headless integration tests,
+grim for the screenshot assertions, PipeWire and `pulseaudio` utilities for
+audio capture, `wtype` and `wl-clipboard`, and `whisper-cpp`. Optional; nothing
+in the build depends on it.
+
 `just --list` for the full set. The interesting ones:
 
 | target          | what it runs                                                  |

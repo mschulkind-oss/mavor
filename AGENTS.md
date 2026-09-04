@@ -43,6 +43,15 @@ User Keybind ($mod+grave)
 - `internal/daemon/` — Main daemon event loop wiring all subsystems.
 - `test/integration/` — Headless Wayland/Sway test harness, screenshot verification, and storybook report.
 
+## Dev Container
+
+`yolo-jail.jsonc` at the repo root defines the container the project is
+developed in, and is committed so it is the same for everyone. It carries the
+integration harness's dependencies — sway, waybar, grim, PipeWire, `wtype`,
+`wl-clipboard`, `whisper-cpp` — which is why `just test-int` and `just storybook`
+work in here with no host setup. Edit it via the `configuring-the-jail` skill;
+changing `packages` forces an image rebuild and needs a human to restart.
+
 ## Build Tags
 
 The default build is pure Go and needs no system headers: `CGO_ENABLED=0`

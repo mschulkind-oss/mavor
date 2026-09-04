@@ -1,0 +1,134 @@
+{
+  // ───────────────────────────────────────────────────────────────
+  // YOLO Jail workspace config.  First-time agents: run `yolo --help`
+  // for an overview of commands, `yolo config-ref` for the full field
+  // reference, and `yolo check` after every edit to this file.
+  // ───────────────────────────────────────────────────────────────
+  // Container runtime: "podman", "docker", or "container" (Apple)
+  // (also settable via YOLO_RUNTIME env var)
+  // "runtime": "podman",
+  // Extra nix packages to include in the jail image.
+  // Names must match nixpkgs attribute names (search at https://search.nixos.org/packages).
+  // The image rebuilds only when this list changes.
+  "packages": [
+    // Wayland compositor (used headless for tests; also lets devs preview)
+    "sway",
+    "waybar",
+    "wayland",
+    "wayland-protocols",
+    "xkeyboard-config",
+    // Wayland tools
+    "grim", // screenshots (test assertions)
+    "slurp", // region selection (debugging)
+    "wtype", // synthetic typing into focused window
+    "wl-clipboard", // wl-copy / wl-paste
+    // No GUI toolkit. The overlay speaks wlr-layer-shell directly and is
+    // painted in Go, so there is no GTK4, cairo, pango or gobject-introspection
+    // here and no .dev outputs to supply headers — mavor's own source contains
+    // no cgo at all. pkg-config stays for the optional `sherpa` build tag,
+    // which is the one variant that still compiles C.
+    "pkg-config",
+    // Audio stack (headless-capable via null-sink + virtual sources)
+    "pipewire",
+    "wireplumber",
+    "pulseaudio", // pactl + parec utilities
+    "dbus",
+    "ffmpeg", // WAV conversion / test fixture generation
+    // Speech-to-text
+    "whisper-cpp", // provides whisper-cli; models downloaded separately
+    // Process supervisor for the dev/test harness
+    "hivemind",
+    // Build / task runner used by the project's justfile
+    "just",
+    // Homebrew's own commands (`brew style`, `brew audit`) refuse to run
+    // without Ruby 4, and it cannot bootstrap its portable Ruby here: it
+    // probes /etc/os-release and /usr/bin/ldd to detect glibc, neither of
+    // which exists on NixOS. The attribute has to be version-pinned — plain
+    // `ruby` is 3.4 and brew rejects it.
+    "ruby_4_0"
+  ],
+  "loopholes": {
+    "journal": {
+      "enabled": true
+    }
+  },
+  // security: tool shims injected into the jail's PATH.  Defaults (no
+  // config needed): grep is blocked only for recursive usage (``-r``,
+  // ``-R``, ``--recursive``, ``-rn`` etc. — pipe filters and
+  // single-file greps pass through); find is blocked unconditionally.
+  // Override only if you want custom rules — the defaults are sane.
+  // "security": {
+  //   "blocked_tools": [
+  //     {
+  //       "name": "grep",
+  //       // Only block when argv contains one of these shell-glob
+  //       // patterns.  Omit to block unconditionally.
+  //       "block_flags": ["--recursive", "-r", "-R", "-*[rR]*"]
+  //     },
+  //     "find",           // string form → unconditional block
+  //     "curl"            // add your own tools here
+  //   ]
+  // },
+  "network": {
+    // "bridge" (default) or "host"
+    "mode": "bridge",
+    // Ports to publish in bridge mode ["Host:Container"]
+    // "ports": ["8000:8000"]
+    // Forward host ports into the jail (appear on localhost inside container)
+    // "forward_host_ports": [5432, "8080:9090"]
+  },
+  // Extra host paths to mount read-only into the jail for context.
+  // Each entry is a host path (mounted at /ctx/<basename>) or "host:container".
+  // Pass --mount/-m on `yolo init` to populate this automatically, e.g.
+  //   yolo init -m ~/code/shared-lib -m ~/notes
+  "mounts": [
+    //   "~/code/other-repo",
+    //   "~/code/shared-lib:/ctx/shared-lib"
+  ],
+  // Extra environment variables set inside the jail.
+  // Keys are variable names, values are strings.
+  // "env": {"DATABASE_URL": "postgres://localhost/dev", "DEBUG": "1"}
+  // Extra tools to install via mise (key: tool name, value: version string).
+  // Default: {"neovim": "stable"} — override in user or workspace config.
+  // "mise_tools": {"neovim": "nightly", "typst": "latest"}
+  // Additional language servers for Copilot and Gemini.
+  // Defaults (always present): python (pyright), typescript, go (gopls).
+  // Add new servers or override defaults. Binary must be on PATH (e.g., via mise_tools).
+  // "lsp_servers": {
+  //   "rust": {
+  //     "command": "rust-analyzer",
+  //     "args": [],
+  //     "fileExtensions": {".rs": "rust"}
+  //   }
+  // }
+  //
+  // Enable built-in MCP server presets by name.
+  // Available presets: chrome-devtools, sequential-thinking
+  // "mcp_presets": ["chrome-devtools", "sequential-thinking"]
+  // Additional custom MCP servers for Copilot and Gemini.
+  // Add custom servers or set a preset/inherited server to null to disable it.
+  // Binary must be on PATH or absolute.
+  // "mcp_servers": {
+  //   "my-custom": {
+  //     "command": "/workspace/scripts/my-mcp-server.py",
+  //     "args": []
+  //   }
+  // }
+  // AMD ROCm / Vulkan GPU passthrough.
+  // Passes /dev/kfd and /dev/dri render nodes into the jail for ROCm/Vulkan compute.
+  "gpu": {
+    "enabled": true,
+    "vendor": "amd",
+    "mode": "devices",
+    "devices": "all"
+  }
+  // Container resource limits.
+  // On Apple Container: applied as VM hardware limits (defaults: half host CPUs/RAM).
+  // On Docker/Podman: applied as --cpus/--memory flags (no defaults — inherits VM limits).
+  // On Linux: also feeds cgroup delegation for in-container yolo-cglimit.
+  // "resources": {
+  //   "memory": "8g",            // Max memory (b/k/m/g suffix). OOM-killed if exceeded.
+  //   "cpus": 4,                 // CPU limit (decimal). e.g. 4, 2.5, "0.5"
+  //   "pids_limit": 4096         // Max processes (Docker/Podman only). Prevents fork bombs.
+  // }
+}
