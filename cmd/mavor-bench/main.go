@@ -22,6 +22,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -59,6 +60,26 @@ type options struct {
 	mdOut      string
 	skipGPU    bool
 	skipSherpa bool
+	render     bool
+}
+
+// rerender rewrites the Markdown from a results file. It deliberately does
+// not recompute anything: if a number in the report disagrees with the JSON,
+// that is a rendering bug, and re-deriving values here would hide it.
+func rerender(jsonPath, mdPath string) error {
+	data, err := os.ReadFile(jsonPath)
+	if err != nil {
+		return fmt.Errorf("reading results to re-render: %w", err)
+	}
+	var r report
+	if err := json.Unmarshal(data, &r); err != nil {
+		return fmt.Errorf("parsing %s: %w", jsonPath, err)
+	}
+	if err := writeMarkdown(mdPath, &r); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "re-rendered %s from %s\n", mdPath, jsonPath)
+	return nil
 }
 
 func run() error {
@@ -77,7 +98,15 @@ func run() error {
 	flag.StringVar(&o.mdOut, "markdown", "docs/reports/model-benchmarks.md", "where to write the rendered report")
 	flag.BoolVar(&o.skipGPU, "no-gpu", false, "skip the GPU column even if a GPU build was given")
 	flag.BoolVar(&o.skipSherpa, "no-sherpa", false, "skip the sherpa engines even if built in")
+	flag.BoolVar(&o.render, "render", false, "re-render the Markdown from an existing results JSON without running anything")
 	flag.Parse()
+
+	// Re-rendering exists because the report's prose changes far more often
+	// than its numbers do, and a full sweep is an hour of CPU. The JSON is
+	// the artifact; the Markdown is a view of it.
+	if o.render {
+		return rerender(o.jsonOut, o.mdOut)
+	}
 
 	if o.reference == "" {
 		o.reference = o.audio + ".txt"

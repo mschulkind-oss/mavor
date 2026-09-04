@@ -1,0 +1,1030 @@
+{
+  "machine": {
+    "timestamp": "2026-09-04T22:44:25.886489982Z",
+    "hostname": "51c3a55038be",
+    "os": "linux",
+    "arch": "amd64",
+    "cpu_model": "Intel(R) Core(TM) i7-8700K CPU @ 3.70GHz",
+    "cpu_logical_cores": 12,
+    "mem_total_kb": 65761072,
+    "gpu_name": "AMD Radeon RX 9060 XT (RADV GFX1200)",
+    "gpu_driver": "radv",
+    "vulkan_api_version": "1.4.354",
+    "mavor_commit": "cd69dbd",
+    "go_version": "go1.26.3"
+  },
+  "audio": "test/fixtures/real_speech.wav",
+  "audio_seconds": 20,
+  "reference_transcript": "Lux is in the pit. He cannot sit still and he runs up. Lux gets to the top in a puff of dust. It is not dim, the grass is tall and wide, and a duck hops. Lux hops up on top of a big rock. He is glad. Then Jeremy runs up the patch.",
+  "runs_per_cell": 3,
+  "threads": 6,
+  "model_dir": "/home/agent/.cache/mavor/models",
+  "stream_chunk_ms": 100,
+  "whisper_cpu_backends": [
+    "CPU"
+  ],
+  "whisper_gpu_backends": [
+    "Vulkan"
+  ],
+  "results": [
+    {
+      "model": "tiny",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "stock",
+        "binary": "whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 1049.625854,
+      "rtf": 0.052481292699999994,
+      "peak_rss_kb": 200872,
+      "transcript": "Lux is in the pit. He cannot sit still and he runs up. Lux gets to the top in a puff of dust. It is not dim. The grass is tall and wide and a duck hops. Lux hops up on top of a big rock. He is glad. Then Jeremy runs up the path.",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0.14545454545454545,
+      "capitalization_f1": 0.9090909090909091
+    },
+    {
+      "model": "tiny",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 1036.031144,
+      "rtf": 0.0518015572,
+      "peak_rss_kb": 226188,
+      "transcript": "Lux is in the pit. He cannot sit still and he runs up. Lux gets to the top in a puff of dust. It is not dim. The grass is tall and wide and a duck hops. Lux hops up on top of a big rock. He is glad. Then Jeremy runs up the path.",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0.14545454545454545,
+      "capitalization_f1": 0.9090909090909091
+    },
+    {
+      "model": "tiny",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "gpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 426.221621,
+      "rtf": 0.021311081050000003,
+      "peak_rss_kb": 123920,
+      "transcript": "Lux is in the pit. He cannot sit still and he runs up. Lux gets to the top in a puff of dust. It is not dim. The grass is tall and wide and a duck hops. Lux hops up on top of a big rock. He is glad. Then Jeremy runs up the path.",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0.14545454545454545,
+      "capitalization_f1": 0.9090909090909091
+    },
+    {
+      "model": "tiny.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "stock",
+        "binary": "whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 968.060429,
+      "rtf": 0.04840302145,
+      "peak_rss_kb": 201684,
+      "transcript": "Lux is in the pit. He cannot sit still and he runs up. Lux gets to the top in a puff of dust. It is not dim, the grass is tall and wide and a duck hops. Lux hops up on top of a big rock. He is glad. Then Jeremy runs up the path.",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0.14545454545454545,
+      "capitalization_f1": 1
+    },
+    {
+      "model": "tiny.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 919.52269,
+      "rtf": 0.0459761345,
+      "peak_rss_kb": 225792,
+      "transcript": "Lux is in the pit. He cannot sit still and he runs up. Lux gets to the top in a puff of dust. It is not dim, the grass is tall and wide and a duck hops. Lux hops up on top of a big rock. He is glad. Then Jeremy runs up the path.",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0.14545454545454545,
+      "capitalization_f1": 1
+    },
+    {
+      "model": "tiny.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "gpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 408.012949,
+      "rtf": 0.02040064745,
+      "peak_rss_kb": 109724,
+      "transcript": "Lux is in the pit. He cannot sit still and he runs up. Lux gets to the top in a puff of dust. It is not dim, the grass is tall and wide and a duck hops. Lux hops up on top of a big rock. He is glad. Then Jeremy runs up the path.",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0.14545454545454545,
+      "capitalization_f1": 1
+    },
+    {
+      "model": "base",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "stock",
+        "binary": "whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 1761.586493,
+      "rtf": 0.08807932465,
+      "peak_rss_kb": 312448,
+      "transcript": "Lux is in the pit. He cannot sit still and he runs up. Lux gets to the top in a puff of dust. It is not dim. The grass is tall and wide and a duck hops. Lux hops up on top of a big rock. He is glad. Then Jeremy runs up the path.",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0.14545454545454545,
+      "capitalization_f1": 0.9090909090909091
+    },
+    {
+      "model": "base",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 1823.838301,
+      "rtf": 0.09119191505,
+      "peak_rss_kb": 334228,
+      "transcript": "Lux is in the pit. He cannot sit still and he runs up. Lux gets to the top in a puff of dust. It is not dim. The grass is tall and wide and a duck hops. Lux hops up on top of a big rock. He is glad. Then Jeremy runs up the path.",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0.14545454545454545,
+      "capitalization_f1": 0.9090909090909091
+    },
+    {
+      "model": "base",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "gpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 485.696507,
+      "rtf": 0.02428482535,
+      "peak_rss_kb": 123508,
+      "transcript": "Lux is in the pit. He cannot sit still and he runs up. Lux gets to the top in a puff of dust. It is not dim. The grass is tall and wide and a duck hops. Lux hops up on top of a big rock. He is glad. Then Jeremy runs up the path.",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0.14545454545454545,
+      "capitalization_f1": 0.9090909090909091
+    },
+    {
+      "model": "base.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "stock",
+        "binary": "whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 1470.021583,
+      "rtf": 0.07350107915,
+      "peak_rss_kb": 312156,
+      "transcript": "Lux is in the pit. He cannot sit still and he runs up. Lux gets to the top in a puff of dust. It is not dim, the grass is tall and wide, and a duck hops. Lux hops up on top of a big rock. He is glad. Then Jeremy runs up the patch.",
+      "wer": 0,
+      "cer": 0,
+      "punctuation_density": 0.16363636363636364,
+      "capitalization_f1": 1
+    },
+    {
+      "model": "base.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 1563.81816,
+      "rtf": 0.078190908,
+      "peak_rss_kb": 335524,
+      "transcript": "Lux is in the pit. He cannot sit still and he runs up. Lux gets to the top in a puff of dust. It is not dim, the grass is tall and wide, and a duck hops. Lux hops up on top of a big rock. He is glad. Then Jeremy runs up the patch.",
+      "wer": 0,
+      "cer": 0,
+      "punctuation_density": 0.16363636363636364,
+      "capitalization_f1": 1
+    },
+    {
+      "model": "base.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "gpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 508.15077,
+      "rtf": 0.0254075385,
+      "peak_rss_kb": 123452,
+      "transcript": "Lux is in the pit. He cannot sit still and he runs up. Lux gets to the top in a puff of dust. It is not dim, the grass is tall and wide, and a duck hops. Lux hops up on top of a big rock. He is glad. Then Jeremy runs up the patch.",
+      "wer": 0,
+      "cer": 0,
+      "punctuation_density": 0.16363636363636364,
+      "capitalization_f1": 1
+    },
+    {
+      "model": "small",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "stock",
+        "binary": "whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 5132.246847,
+      "rtf": 0.25661234235,
+      "peak_rss_kb": 786372,
+      "transcript": "Lux is in the pit. He cannot sit still and he runs up. Lux gets to the top in a puff of dust. It is not dim, the grass is tall and wide and a duck hops. Lux hops up on top of a big rock. He is glad. Then Jeremy runs up the path.",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0.14545454545454545,
+      "capitalization_f1": 1
+    },
+    {
+      "model": "small",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 5051.09311,
+      "rtf": 0.2525546555,
+      "peak_rss_kb": 810912,
+      "transcript": "Lux is in the pit. He cannot sit still and he runs up. Lux gets to the top in a puff of dust. It is not dim, the grass is tall and wide and a duck hops. Lux hops up on top of a big rock. He is glad. Then Jeremy runs up the path.",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0.14545454545454545,
+      "capitalization_f1": 1
+    },
+    {
+      "model": "small",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "gpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 763.971842,
+      "rtf": 0.0381985921,
+      "peak_rss_kb": 146992,
+      "transcript": "Lux is in the pit. He cannot sit still and he runs up. Lux gets to the top in a puff of dust. It is not dim, the grass is tall and wide and a duck hops. Lux hops up on top of a big rock. He is glad. Then Jeremy runs up the path.",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0.14545454545454545,
+      "capitalization_f1": 1
+    },
+    {
+      "model": "small.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "stock",
+        "binary": "whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 4492.087873,
+      "rtf": 0.22460439365,
+      "peak_rss_kb": 790808,
+      "transcript": "Lux is in the pit. He cannot sit still and he runs up. Lux gets to the top in a puff of dust. It is not dim. The grass is tall and wide and a duck hops. Lux hops up on top of a big rock. He is glad. Then Jeremy runs up the path.",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0.14545454545454545,
+      "capitalization_f1": 0.9090909090909091
+    },
+    {
+      "model": "small.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 4346.923867,
+      "rtf": 0.21734619335,
+      "peak_rss_kb": 811792,
+      "transcript": "Lux is in the pit. He cannot sit still and he runs up. Lux gets to the top in a puff of dust. It is not dim. The grass is tall and wide and a duck hops. Lux hops up on top of a big rock. He is glad. Then Jeremy runs up the path.",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0.14545454545454545,
+      "capitalization_f1": 0.9090909090909091
+    },
+    {
+      "model": "small.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "gpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 743.179325,
+      "rtf": 0.037158966249999995,
+      "peak_rss_kb": 146676,
+      "transcript": "Lux is in the pit. He cannot sit still and he runs up. Lux gets to the top in a puff of dust. It is not dim. The grass is tall and wide and a duck hops. Lux hops up on top of a big rock. He is glad. Then Jeremy runs up the path.",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0.14545454545454545,
+      "capitalization_f1": 0.9090909090909091
+    },
+    {
+      "model": "medium",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "stock",
+        "binary": "whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 15927.170246,
+      "rtf": 0.7963585123,
+      "peak_rss_kb": 2137800,
+      "transcript": "Lux is in the pit. He cannot sit still, and he runs up. Lux gets to the top in a puff of dust. It is not dim, the grass is tall and wide, and a duck hops. Lux hops up on top of a big rock. He is glad. Then Jeremy runs up the path.",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0.18181818181818182,
+      "capitalization_f1": 1
+    },
+    {
+      "model": "medium",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 15746.528653,
+      "rtf": 0.7873264326499999,
+      "peak_rss_kb": 2125452,
+      "transcript": "Lux is in the pit. He cannot sit still, and he runs up. Lux gets to the top in a puff of dust. It is not dim, the grass is tall and wide, and a duck hops. Lux hops up on top of a big rock. He is glad. Then Jeremy runs up the path.",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0.18181818181818182,
+      "capitalization_f1": 1
+    },
+    {
+      "model": "medium",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "gpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 1592.821989,
+      "rtf": 0.07964109945,
+      "peak_rss_kb": 178464,
+      "transcript": "Lux is in the pit. He cannot sit still, and he runs up. Lux gets to the top in a puff of dust. It is not dim, the grass is tall and wide, and a duck hops. Lux hops up on top of a big rock. He is glad. Then Jeremy runs up the path.",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0.18181818181818182,
+      "capitalization_f1": 1
+    },
+    {
+      "model": "medium.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "stock",
+        "binary": "whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 15125.061794,
+      "rtf": 0.7562530896999999,
+      "peak_rss_kb": 2130360,
+      "transcript": "Lux is in the pit he cannot sit still and he runs up Lux gets to the top in a puff of dust it is not dim the grass is tall and wide and a duck hops Lux hops up on top of a big rock he is glad then Jeremy runs up the path",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0,
+      "capitalization_f1": 0.5714285714285715
+    },
+    {
+      "model": "medium.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 15121.644118,
+      "rtf": 0.7560822059000001,
+      "peak_rss_kb": 2123720,
+      "transcript": "Lux is in the pit he cannot sit still and he runs up Lux gets to the top in a puff of dust it is not dim the grass is tall and wide and a duck hops Lux hops up on top of a big rock he is glad then Jeremy runs up the path",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0,
+      "capitalization_f1": 0.5714285714285715
+    },
+    {
+      "model": "medium.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "gpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 1571.138504,
+      "rtf": 0.0785569252,
+      "peak_rss_kb": 178528,
+      "transcript": "Lux is in the pit he cannot sit still and he runs up Lux gets to the top in a puff of dust it is not dim the grass is tall and wide and a duck hops Lux hops up on top of a big rock he is glad then Jeremy runs up the path",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0,
+      "capitalization_f1": 0.5714285714285715
+    },
+    {
+      "model": "large-v3",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "stock",
+        "binary": "whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 35418.568596,
+      "rtf": 1.7709284298,
+      "peak_rss_kb": 4000176,
+      "transcript": "lux is in the pit he cannot sit still and he runs up lux gets to the top in a puff of dust it is not dim the grass is tall and wide and a duck hops lux hops up on top of a big rock he is glad then jeremy runs up the path",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "large-v3",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 34618.830255,
+      "rtf": 1.7309415127499999,
+      "peak_rss_kb": 4002284,
+      "transcript": "lux is in the pit he cannot sit still and he runs up lux gets to the top in a puff of dust it is not dim the grass is tall and wide and a duck hops lux hops up on top of a big rock he is glad then jeremy runs up the path",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "large-v3",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "gpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 5006.285852,
+      "rtf": 0.2503142926,
+      "peak_rss_kb": 211496,
+      "transcript": "lux is in the pit he cannot sit still and he runs up lux gets to the top in a puff of dust it is not dim the grass is tall and wide and a duck hops lux hops up on top of a big rock he is glad then jeremy runs up the path",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "large-v3-turbo",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "stock",
+        "binary": "whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 18150.499022,
+      "rtf": 0.9075249510999999,
+      "peak_rss_kb": 1857572,
+      "transcript": "lux is in the pit he cannot sit still and he runs up lux gets to the top in a puff of dust it is not dim the grass is tall and wide and a duck hops lux hops up on top of a big rock he is glad then jeremy runs up the path",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "large-v3-turbo",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 18950.800469,
+      "rtf": 0.94754002345,
+      "peak_rss_kb": 1885256,
+      "transcript": "lux is in the pit he cannot sit still and he runs up lux gets to the top in a puff of dust it is not dim the grass is tall and wide and a duck hops lux hops up on top of a big rock he is glad then jeremy runs up the path",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "large-v3-turbo",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "gpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 1324.999364,
+      "rtf": 0.0662499682,
+      "peak_rss_kb": 210980,
+      "transcript": "lux is in the pit he cannot sit still and he runs up lux gets to the top in a puff of dust it is not dim the grass is tall and wide and a duck hops lux hops up on top of a big rock he is glad then jeremy runs up the path",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "distil-large-v3",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "stock",
+        "binary": "whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 17940.804152,
+      "rtf": 0.8970402076000001,
+      "peak_rss_kb": 1699284,
+      "transcript": "lux is in the pit he cannot sit still and he runs up lux gets to the top in a puff of dust it is not dim the grass is tall and wide and a duck hops lux hops up on top of a big rock he is glad then jeremy runs up the path",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "distil-large-v3",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 16215.881507,
+      "rtf": 0.8107940753499999,
+      "peak_rss_kb": 1695220,
+      "transcript": "lux is in the pit he cannot sit still and he runs up lux gets to the top in a puff of dust it is not dim the grass is tall and wide and a duck hops lux hops up on top of a big rock he is glad then jeremy runs up the path",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "distil-large-v3",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "gpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 1194.120024,
+      "rtf": 0.059706001200000004,
+      "peak_rss_kb": 211032,
+      "transcript": "lux is in the pit he cannot sit still and he runs up lux gets to the top in a puff of dust it is not dim the grass is tall and wide and a duck hops lux hops up on top of a big rock he is glad then jeremy runs up the path",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "parakeet",
+      "family": "NeMo",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 0,
+      "failed": true,
+      "error": "/workspace/sherpa-onnx/csrc/offline-transducer-model.cc:InitDecoder:303 'vocab_size' does not exist in the metadata",
+      "total_ms": 0,
+      "rtf": 0,
+      "peak_rss_kb": 0,
+      "transcript": "",
+      "wer": 0,
+      "cer": 0,
+      "punctuation_density": 0,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "parakeet",
+      "family": "NeMo",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "streaming"
+      },
+      "runs": 0,
+      "failed": true,
+      "error": "/workspace/sherpa-onnx/csrc/offline-transducer-model.cc:InitDecoder:303 'vocab_size' does not exist in the metadata",
+      "total_ms": 0,
+      "rtf": 0,
+      "peak_rss_kb": 0,
+      "transcript": "",
+      "wer": 0,
+      "cer": 0,
+      "punctuation_density": 0,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "parakeet-tdt-0.6b",
+      "family": "NeMo",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 0,
+      "failed": true,
+      "error": "/workspace/sherpa-onnx/csrc/offline-transducer-model.cc:InitDecoder:303 'vocab_size' does not exist in the metadata",
+      "total_ms": 0,
+      "rtf": 0,
+      "peak_rss_kb": 0,
+      "transcript": "",
+      "wer": 0,
+      "cer": 0,
+      "punctuation_density": 0,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "parakeet-unified-en",
+      "family": "NeMo",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 0,
+      "failed": true,
+      "error": "/workspace/sherpa-onnx/csrc/offline-transducer-model.cc:InitDecoder:303 'vocab_size' does not exist in the metadata",
+      "total_ms": 0,
+      "rtf": 0,
+      "peak_rss_kb": 0,
+      "transcript": "",
+      "wer": 0,
+      "cer": 0,
+      "punctuation_density": 0,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "parakeet-ctc",
+      "family": "NeMo",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 0,
+      "failed": true,
+      "error": "build transcriber: speech: build sherpa offline config: speech: transducer model in /home/agent/.cache/mavor/models/sherpa/parakeet-ctc requires encoder, decoder, and joiner onnx files (found: encoder=\"\", decoder=\"\", joiner=\"\")",
+      "total_ms": 0,
+      "rtf": 0,
+      "peak_rss_kb": 0,
+      "transcript": "",
+      "wer": 0,
+      "cer": 0,
+      "punctuation_density": 0,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "canary-1b",
+      "family": "NeMo",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 0,
+      "failed": true,
+      "error": "/workspace/sherpa-onnx/csrc/offline-paraformer-model.cc:Init:103 'lfr_window_size' does not exist in the metadata",
+      "total_ms": 0,
+      "rtf": 0,
+      "peak_rss_kb": 0,
+      "transcript": "",
+      "wer": 0,
+      "cer": 0,
+      "punctuation_density": 0,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "canary-180m",
+      "family": "NeMo",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 0,
+      "failed": true,
+      "error": "/workspace/sherpa-onnx/csrc/offline-paraformer-model.cc:Init:103 'lfr_window_size' does not exist in the metadata",
+      "total_ms": 0,
+      "rtf": 0,
+      "peak_rss_kb": 0,
+      "transcript": "",
+      "wer": 0,
+      "cer": 0,
+      "punctuation_density": 0,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "moonshine-tiny",
+      "family": "Moonshine",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 1219.714911,
+      "load_ms": 670.868216,
+      "rtf": 0.060985745550000005,
+      "peak_rss_kb": 325264,
+      "transcript": "Luck's is in the pit. He cannot sit still and he runs up. Luck's gets to the top in a puff of dust. It is not dim. the grass is tall and wide and a duck hops. Luck's hops up on top of a big rock. He is glad, then Jeremy runs up the path.",
+      "wer": 0.07272727272727272,
+      "cer": 0.058823529411764705,
+      "punctuation_density": 0.2,
+      "capitalization_f1": 0.6666666666666665
+    },
+    {
+      "model": "moonshine-base",
+      "family": "Moonshine",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 1746.980562,
+      "load_ms": 1029.953437,
+      "rtf": 0.0873490281,
+      "peak_rss_kb": 558184,
+      "transcript": "Lux is in the pit he cannot sit still and he runs up lux gets to the top in a puff of dust it is not dim the grass is tall and wide and a duck hops lux hops up on top of a big rock he is glad then jeremy runs up the path",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0,
+      "capitalization_f1": 0.33333333333333337
+    },
+    {
+      "model": "sensevoice-small",
+      "family": "SenseVoice",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 3377.475659,
+      "load_ms": 2735.129162,
+      "rtf": 0.16887378295000002,
+      "peak_rss_kb": 1474820,
+      "transcript": "Lux is in the pit. He cannot sit still, and he runs up. Lux gets to the top in a puff of dust. It is not dim. The grass is tall and wide and a duck hops. Lux hops up on top of a big rock. He is glad. Then Jeremy runs up the path.",
+      "wer": 0.01818181818181818,
+      "cer": 0.004524886877828055,
+      "punctuation_density": 0.16363636363636364,
+      "capitalization_f1": 0.9090909090909091
+    },
+    {
+      "model": "paraformer",
+      "family": "Paraformer",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 0,
+      "failed": true,
+      "error": "/workspace/sherpa-onnx/csrc/offline-nemo-enc-dec-ctc-model.cc:Init:123 'subsampling_factor' does not exist in the metadata",
+      "total_ms": 0,
+      "rtf": 0,
+      "peak_rss_kb": 0,
+      "transcript": "",
+      "wer": 0,
+      "cer": 0,
+      "punctuation_density": 0,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "zipformer-streaming",
+      "family": "Zipformer",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 0,
+      "failed": true,
+      "error": "build transcriber: speech: build sherpa offline config: speech: CTC model in /home/agent/.cache/mavor/models/sherpa/zipformer-streaming missing model.onnx",
+      "total_ms": 0,
+      "rtf": 0,
+      "peak_rss_kb": 0,
+      "transcript": "",
+      "wer": 0,
+      "cer": 0,
+      "punctuation_density": 0,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "zipformer-streaming",
+      "family": "Zipformer",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "streaming"
+      },
+      "runs": 0,
+      "failed": true,
+      "error": "build transcriber: speech: build sherpa offline config: speech: CTC model in /home/agent/.cache/mavor/models/sherpa/zipformer-streaming missing model.onnx",
+      "total_ms": 0,
+      "rtf": 0,
+      "peak_rss_kb": 0,
+      "transcript": "",
+      "wer": 0,
+      "cer": 0,
+      "punctuation_density": 0,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "zipformer-offline",
+      "family": "Zipformer",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 0,
+      "failed": true,
+      "error": "build transcriber: speech: build sherpa offline config: speech: CTC model in /home/agent/.cache/mavor/models/sherpa/zipformer-offline missing model.onnx",
+      "total_ms": 0,
+      "rtf": 0,
+      "peak_rss_kb": 0,
+      "transcript": "",
+      "wer": 0,
+      "cer": 0,
+      "punctuation_density": 0,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "zipformer-ctc",
+      "family": "Zipformer",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 0,
+      "failed": true,
+      "error": "/workspace/sherpa-onnx/csrc/offline-nemo-enc-dec-ctc-model.cc:Init:122 'vocab_size' does not exist in the metadata",
+      "total_ms": 0,
+      "rtf": 0,
+      "peak_rss_kb": 0,
+      "transcript": "",
+      "wer": 0,
+      "cer": 0,
+      "punctuation_density": 0,
+      "capitalization_f1": 0
+    }
+  ],
+  "skipped": [
+    {
+      "backend": "sherpa / gpu",
+      "reason": "the sherpa-onnx-go binding vendors a CPU-only ONNX Runtime with no execution providers; a GPU request falls back to CPU without saying so"
+    }
+  ]
+}

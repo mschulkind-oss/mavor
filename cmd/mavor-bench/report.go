@@ -221,12 +221,36 @@ func writeAccuracyTable(b *strings.Builder, r *report) {
 // time to first token is.
 func writeStreamingSection(b *strings.Builder, r *report) {
 	var streaming []runResult
-	for _, x := range successful(r.Results) {
-		if x.Backend.Mode == "streaming" {
+	attempted := 0
+	for _, x := range r.Results {
+		if x.Backend.Mode != "streaming" {
+			continue
+		}
+		attempted++
+		if !x.Failed {
 			streaming = append(streaming, x)
 		}
 	}
+
+	// A streaming section that simply vanishes when every streaming model
+	// failed is the exact failure this report exists to avoid: the reader
+	// concludes streaming was not part of the run, rather than that it could
+	// not be measured. Say it outright.
 	if len(streaming) == 0 {
+		b.WriteString("## Streaming vs batch\n\n")
+		if attempted == 0 {
+			b.WriteString("**Not measured.** No model in this run is marked as streaming, so there\n")
+			b.WriteString("was no incremental decode to time.\n\n")
+			return
+		}
+		fmt.Fprintf(b, "**Not measured.** All %d streaming attempts failed to load — see\n", attempted)
+		b.WriteString("[Cells that failed](#cells-that-failed). Every streaming-capable model in\n")
+		b.WriteString("the catalog is a sherpa model, so when sherpa cannot load them there is\n")
+		b.WriteString("no incremental decode to measure anywhere.\n\n")
+		b.WriteString("> [!WARNING]\n")
+		b.WriteString("> This is a finding, not a gap in the benchmark. `mavor` advertises\n")
+		b.WriteString("> streaming models in `mavor models list`, and on this machine none of\n")
+		b.WriteString("> them can be loaded at all.\n\n")
 		return
 	}
 

@@ -183,3 +183,65 @@ func section(doc, from, to string) string {
 	}
 	return rest
 }
+
+func TestReportSaysStreamingWasUnmeasuredRatherThanOmittingIt(t *testing.T) {
+	// The failure this guards against: every streaming model fails to load,
+	// the section renders nothing, and the reader concludes streaming was
+	// never part of the run instead of that it could not be measured.
+	r := sampleReport()
+	var kept []runResult
+	for _, x := range r.Results {
+		if x.Backend.Mode == "streaming" {
+			x.Failed, x.Error = true, "model could not be loaded"
+		}
+		kept = append(kept, x)
+	}
+	r.Results = kept
+
+	path := filepath.Join(t.TempDir(), "r.md")
+	if err := writeMarkdown(path, r); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(data)
+
+	if !strings.Contains(out, "## Streaming vs batch") {
+		t.Fatal("the streaming section disappeared when every streaming model failed")
+	}
+	if !strings.Contains(out, "Not measured") {
+		t.Error("the streaming section does not say the measurement did not happen")
+	}
+	if !strings.Contains(out, "This is a finding") {
+		t.Error("the streaming section does not flag unloadable streaming models as a finding")
+	}
+}
+
+func TestReportSaysSoWhenNothingStreamsAtAll(t *testing.T) {
+	// Distinct from the case above: a run with no streaming models is not a
+	// failure, and must not be reported as one.
+	r := sampleReport()
+	var kept []runResult
+	for _, x := range r.Results {
+		if x.Backend.Mode != "streaming" {
+			kept = append(kept, x)
+		}
+	}
+	r.Results = kept
+
+	path := filepath.Join(t.TempDir(), "r.md")
+	if err := writeMarkdown(path, r); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	out := string(data)
+
+	if !strings.Contains(out, "No model in this run is marked as streaming") {
+		t.Error("a run with no streaming models does not explain why the section is empty")
+	}
+	if strings.Contains(out, "This is a finding") {
+		t.Error("a run with no streaming models is reported as a failure; it is not one")
+	}
+}
