@@ -1,0 +1,48 @@
+name: Publish
+
+# Triggered by the tag, not by `release: published`, which is what swarf and
+# polyclav key off. goreleaser creates mavor's release using GITHUB_TOKEN, and
+# GitHub deliberately does not raise workflow-triggering events for anything
+# GITHUB_TOKEN does — so a release-event trigger here would simply never fire.
+#
+# There is no ordering problem in going early: the wheel carries no binary. It
+# resolves and downloads the release archive on first run, so it only needs the
+# assets to exist by the time somebody installs, not by the time it publishes.
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  pypi:
+    runs-on: ubuntu-latest
+    # PyPI trusted publishing (OIDC) is pinned to this workflow's filename at
+    # pypi.org/manage/account/publishing. Renaming this file breaks publishing
+    # until the pending publisher is updated to match.
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # setuptools-scm reads the version off the tag, so the tag has to be
+          # in the clone.
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Copy README and LICENSE
+        run: cp README.md LICENSE dist/pypi/
+
+      - name: Build wheel
+        run: uv build
+        working-directory: dist/pypi
+
+      # `automatic` (the default) falls back to unauthenticated when the OIDC
+      # exchange fails and then reports "Missing credentials", which reads as a
+      # missing token rather than a publisher mismatch. `always` names the real
+      # failure.
+      - name: Publish to PyPI
+        run: uv publish dist/* --trusted-publishing always --check-url https://pypi.org/simple/
+        working-directory: dist/pypi
