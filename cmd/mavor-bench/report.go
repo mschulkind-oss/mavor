@@ -178,22 +178,16 @@ func writeMemoryTable(b *strings.Builder, r *report) {
 	sort.Slice(rows, func(i, j int) bool { return rows[i].PeakRSSKB < rows[j].PeakRSSKB })
 
 	b.WriteString("## Memory\n\n")
-	b.WriteString("Peak resident set size. The two engines are measured differently and the\n")
-	b.WriteString("column says which: `whisper-cli` is a subprocess, so this is\n")
-	b.WriteString("`getrusage(RUSAGE_CHILDREN)` — the true high-water mark of the child.\n")
-	b.WriteString("`sherpa` runs in-process, so it is the change in this process's `VmHWM`\n")
-	b.WriteString("across the run, which is a floor rather than an exact figure: allocator\n")
-	b.WriteString("reuse can hide part of a later model's cost behind an earlier one's peak.\n\n")
+	b.WriteString("Peak resident set size, from `getrusage(RUSAGE_CHILDREN)` — the true\n")
+	b.WriteString("high-water mark of a process that loaded exactly one model. Both engines\n")
+	b.WriteString("are measured the same way: `whisper-cli` is already a subprocess, and\n")
+	b.WriteString("each sherpa model runs in a worker process for the same reason.\n\n")
 	b.WriteString("> [!IMPORTANT]\n")
 	b.WriteString("> None of these are VRAM. The GPU rows report host memory only — nothing\n")
 	b.WriteString("> here measures what the card allocated.\n\n")
-	b.WriteString("| Model | Backend | Peak RSS | Measured as |\n|---|---|---:|---|\n")
+	b.WriteString("| Model | Backend | Peak RSS |\n|---|---|---:|\n")
 	for _, x := range rows {
-		how := "child process high-water mark"
-		if x.Backend.Engine == "sherpa" {
-			how = "in-process `VmHWM` delta (a floor)"
-		}
-		fmt.Fprintf(b, "| `%s` | %s | %s | %s |\n", x.Model, x.Backend.label(), memString(x.PeakRSSKB), how)
+		fmt.Fprintf(b, "| `%s` | %s | %s |\n", x.Model, x.Backend.label(), memString(x.PeakRSSKB))
 	}
 	b.WriteString("\n")
 }
@@ -309,6 +303,10 @@ func writeMethod(b *strings.Builder, r *report) {
 	b.WriteString("  `-DGGML_VULKAN=ON`. The CPU and GPU rows use **the same binary**,\n")
 	b.WriteString("  differing only in whisper.cpp's `-ng` flag, so the comparison isolates\n")
 	b.WriteString("  the backend rather than the build.\n")
+	b.WriteString("- Each sherpa model runs in its own **worker process**. sherpa-onnx\n")
+	b.WriteString("  reports a model it cannot load by aborting from C++ rather than\n")
+	b.WriteString("  returning an error, so without isolation one bad model would end the\n")
+	b.WriteString("  sweep and lose every result before it.\n")
 	b.WriteString("- Before publishing a GPU column the harness checks that the build\n")
 	b.WriteString("  actually loaded a GPU backend and that a Vulkan device enumerated. If\n")
 	b.WriteString("  either check fails it refuses the column and says so above, rather than\n")

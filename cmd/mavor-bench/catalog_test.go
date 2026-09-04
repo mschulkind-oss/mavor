@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestSelectModelsSplitsInstalledFromAbsent(t *testing.T) {
 	c := &catalog{Models: []catalogModel{
@@ -90,5 +93,35 @@ func TestHasGPUBackendRejectsACPUOnlyBuild(t *testing.T) {
 		if !hasGPUBackend([]string{"CPU", b}) {
 			t.Errorf("backend list containing %q was not recognized as GPU-capable", b)
 		}
+	}
+}
+
+func TestWorkerRequestRoundTripsThroughTheEnvironment(t *testing.T) {
+	// The worker contract is a JSON blob in an environment variable. If it
+	// stops round-tripping, every sherpa cell fails identically and the
+	// report blames the models.
+	req := workerRequest{
+		Model: "zipformer-streaming", ModelDir: "/models", Audio: "a.wav",
+		Threads: 6, Provider: "cpu", Streaming: true,
+	}
+	payload, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got workerRequest
+	if err := json.Unmarshal(payload, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got != req {
+		t.Errorf("worker request round-tripped to %+v, want %+v", got, req)
+	}
+}
+
+func TestRunWorkerIfRequestedIgnoresANormalInvocation(t *testing.T) {
+	// Without the variable set, this must be an ordinary parent run — a
+	// false positive here would make the harness silently produce no report.
+	t.Setenv(workerEnv, "")
+	if runWorkerIfRequested() {
+		t.Error("runWorkerIfRequested claimed worker mode with no request in the environment")
 	}
 }

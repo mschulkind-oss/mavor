@@ -117,6 +117,9 @@ func TestReportSaysGPURowsAreNotVRAM(t *testing.T) {
 	// A memory table next to a GPU column invites exactly one wrong reading.
 	out := renderReport(t)
 	memory := section(out, "## Memory", "## Accuracy")
+	if !strings.Contains(memory, "getrusage") {
+		t.Error("memory section does not say how peak RSS was measured")
+	}
 	if !strings.Contains(memory, "VRAM") {
 		t.Error("memory section does not say that the GPU rows are host memory, not VRAM")
 	}

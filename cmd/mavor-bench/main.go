@@ -33,6 +33,11 @@ import (
 )
 
 func main() {
+	// A re-executed copy of this binary measures one sherpa model and exits;
+	// it must not parse flags or write a report. See worker.go.
+	if runWorkerIfRequested() {
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "mavor-bench: %v\n", err)
 		os.Exit(1)
@@ -186,6 +191,14 @@ func run() error {
 		"the sherpa-onnx-go binding vendors a CPU-only ONNX Runtime with no execution providers; a GPU request falls back to CPU without saying so",
 	})
 
+	// Worker processes are re-executions of this binary, so it has to be able
+	// to find itself. Under `go run` the executable is a temporary file,
+	// which still works: it lives for the duration of the run.
+	self, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("locating this binary to spawn sherpa workers: %w", err)
+	}
+
 	ctx := context.Background()
 	total := len(selected)
 	for i, m := range selected {
@@ -200,9 +213,9 @@ func run() error {
 			if !sherpaOK {
 				continue
 			}
-			report.Results = append(report.Results, benchSherpaBatch(ctx, sherpa, m, o, reference, audioSec))
+			report.Results = append(report.Results, benchSherpa(ctx, sherpa, self, m, o, reference, audioSec, false))
 			if m.Streaming {
-				report.Results = append(report.Results, benchSherpaStreaming(ctx, sherpa, m, o, reference, audioSec))
+				report.Results = append(report.Results, benchSherpa(ctx, sherpa, self, m, o, reference, audioSec, true))
 			}
 		}
 	}

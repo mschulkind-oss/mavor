@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -43,24 +41,25 @@ func (s sherpaRunner) config(model string) config.Config {
 	return cfg
 }
 
-// runBatch loads the model, transcribes the whole file in one call, and
+// batchOnce loads the model, transcribes the whole file in one call, and
 // reports wall time split into load and inference. The split matters: a
 // 600 MB transducer that loads in two seconds and decodes in eighty
 // milliseconds is a very different proposition for a daemon that keeps it
 // warm than for a one-shot CLI, and a single total hides that.
-func (s sherpaRunner) runBatch(ctx context.Context, model, wavPath string) (text string, load, infer time.Duration, peakKB int64, err error) {
-	before := currentPeakRSSKB()
-
+//
+// This runs in a worker process (see worker.go), so it does not measure
+// memory itself — the parent reads the child's peak RSS from getrusage.
+func (s sherpaRunner) batchOnce(ctx context.Context, model, wavPath string) (text string, load, infer time.Duration, err error) {
 	cfg := s.config(model)
 	t, err := speech.NewSherpaTranscriber(cfg, quietLogger())
 	if err != nil {
-		return "", 0, 0, 0, fmt.Errorf("build transcriber: %w", err)
+		return "", 0, 0, fmt.Errorf("build transcriber: %w", err)
 	}
 	defer t.Close()
 
 	loadStart := time.Now()
 	if err := t.Start(ctx); err != nil {
-		return "", 0, 0, 0, fmt.Errorf("load model: %w", err)
+		return "", 0, 0, fmt.Errorf("load model: %w", err)
 	}
 	load = time.Since(loadStart)
 
@@ -68,14 +67,9 @@ func (s sherpaRunner) runBatch(ctx context.Context, model, wavPath string) (text
 	text, err = t.Transcribe(ctx, wavPath)
 	infer = time.Since(inferStart)
 	if err != nil {
-		return "", load, infer, 0, fmt.Errorf("transcribe: %w", err)
+		return "", load, infer, fmt.Errorf("transcribe: %w", err)
 	}
-
-	after := currentPeakRSSKB()
-	if after > before {
-		peakKB = after - before
-	}
-	return strings.TrimSpace(text), load, infer, peakKB, nil
+	return strings.TrimSpace(text), load, infer, nil
 }
 
 // streamChunkMS is how much audio each FeedChunk call carries. 100 ms is a
@@ -92,24 +86,22 @@ const streamChunkMS = 100
 // Audio is fed as fast as the recognizer accepts it rather than paced to
 // real time: the question is whether the model can keep up with speech, and
 // pacing the feed to wall-clock would measure the sleep, not the model.
-func (s sherpaRunner) runStreaming(ctx context.Context, model, wavPath string) (text string, firstToken, total time.Duration, peakKB int64, err error) {
-	before := currentPeakRSSKB()
-
+func (s sherpaRunner) streamOnce(ctx context.Context, model, wavPath string) (text string, firstToken, total time.Duration, err error) {
 	cfg := s.config(model)
 	t, err := speech.NewSherpaTranscriber(cfg, quietLogger())
 	if err != nil {
-		return "", 0, 0, 0, fmt.Errorf("build transcriber: %w", err)
+		return "", 0, 0, fmt.Errorf("build transcriber: %w", err)
 	}
 	defer t.Close()
 
 	sampleRate, samples, err := speech.ReadWAVAudio(wavPath)
 	if err != nil {
-		return "", 0, 0, 0, fmt.Errorf("read wav: %w", err)
+		return "", 0, 0, fmt.Errorf("read wav: %w", err)
 	}
 
 	start := time.Now()
 	if err := t.StartStream(ctx); err != nil {
-		return "", 0, 0, 0, fmt.Errorf("start stream: %w", err)
+		return "", 0, 0, fmt.Errorf("start stream: %w", err)
 	}
 
 	samplesPerChunk := sampleRate * streamChunkMS / 1000
@@ -117,7 +109,7 @@ func (s sherpaRunner) runStreaming(ctx context.Context, model, wavPath string) (
 		end := min(i+samplesPerChunk, len(samples))
 		partial, err := t.FeedChunk(ctx, pcm16LE(samples[i:end]))
 		if err != nil {
-			return "", 0, time.Since(start), 0, fmt.Errorf("feed chunk: %w", err)
+			return "", 0, time.Since(start), fmt.Errorf("feed chunk: %w", err)
 		}
 		if firstToken == 0 && strings.TrimSpace(partial) != "" {
 			firstToken = time.Since(start)
@@ -127,14 +119,9 @@ func (s sherpaRunner) runStreaming(ctx context.Context, model, wavPath string) (
 	text, err = t.StopStream(ctx)
 	total = time.Since(start)
 	if err != nil {
-		return "", firstToken, total, 0, fmt.Errorf("stop stream: %w", err)
+		return "", firstToken, total, fmt.Errorf("stop stream: %w", err)
 	}
-
-	after := currentPeakRSSKB()
-	if after > before {
-		peakKB = after - before
-	}
-	return strings.TrimSpace(text), firstToken, total, peakKB, nil
+	return strings.TrimSpace(text), firstToken, total, nil
 }
 
 // pcm16LE converts the float samples ReadWAVAudio returns back to the
@@ -154,28 +141,6 @@ func pcm16LE(samples []float32) []byte {
 		out[i*2+1] = byte(u >> 8)
 	}
 	return out
-}
-
-// currentPeakRSSKB reads VmHWM, the high-water mark of this process's
-// resident set. It never decreases, so a per-model figure is the delta across
-// the run and is only valid if models are loaded one at a time — the second
-// model in a process would otherwise inherit the first one's peak and look
-// free.
-func currentPeakRSSKB() int64 {
-	data, err := os.ReadFile("/proc/self/status")
-	if err != nil {
-		return 0
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "VmHWM:") {
-			fields := strings.Fields(line)
-			if len(fields) >= 2 {
-				n, _ := strconv.ParseInt(fields[1], 10, 64)
-				return n
-			}
-		}
-	}
-	return 0
 }
 
 // quietLogger discards engine chatter. The recognizers log per-decode at info

@@ -49,70 +49,54 @@ func benchWhisper(ctx context.Context, w whisperRunner, m catalogModel, modelDir
 	return res
 }
 
-// benchSherpaBatch runs one sherpa model over the whole file at once.
-func benchSherpaBatch(ctx context.Context, s sherpaRunner, m catalogModel, o options, reference string, audioSec float64) runResult {
+// benchSherpa runs one sherpa model, batch or streaming, in a worker process
+// per run. The isolation is what lets a model sherpa-onnx aborts on become a
+// single failed cell instead of the end of the sweep — see worker.go.
+func benchSherpa(ctx context.Context, s sherpaRunner, self string, m catalogModel, o options, reference string, audioSec float64, streaming bool) runResult {
+	mode := "batch"
+	if streaming {
+		mode = "streaming"
+	}
 	res := runResult{
 		Model:   m.Name,
 		Family:  m.Family,
-		Backend: backend{Engine: "sherpa", Device: "cpu", Mode: "batch"},
+		Backend: backend{Engine: "sherpa", Device: "cpu", Mode: mode},
 	}
 
-	var totals, loads []float64
+	req := workerRequest{
+		Model:     m.Name,
+		ModelDir:  s.modelDir,
+		Audio:     o.audio,
+		Threads:   s.threads,
+		Provider:  s.provider,
+		Streaming: streaming,
+	}
+
+	var totals, loads, firsts []float64
 	var text string
 	var peak int64
 	for i := 0; i < o.runs; i++ {
 		runCtx, cancel := context.WithTimeout(ctx, o.timeout)
-		out, load, infer, rss, err := s.runBatch(runCtx, m.Name, o.audio)
+		resp, rss, err := callWorker(runCtx, self, req)
 		cancel()
+		peak = max(peak, rss)
 		if err != nil {
 			res.Failed, res.Error = true, err.Error()
 			return res
 		}
-		totals = append(totals, float64(load+infer)/float64(time.Millisecond))
-		loads = append(loads, float64(load)/float64(time.Millisecond))
-		text = out
-		peak = max(peak, rss)
+		totals = append(totals, resp.TotalMS)
+		if resp.LoadMS > 0 {
+			loads = append(loads, resp.LoadMS)
+		}
+		if resp.FirstTokenMS > 0 {
+			firsts = append(firsts, resp.FirstTokenMS)
+		}
+		text = resp.Text
 	}
 
 	res.Runs = len(totals)
 	res.TotalMS = median(totals)
 	res.LoadMS = median(loads)
-	res.PeakRSSKB = peak
-	res.RTF = res.TotalMS / 1000 / audioSec
-	scoreAccuracy(&res, reference, text)
-	return res
-}
-
-// benchSherpaStreaming feeds the same audio in chunks, as the daemon does
-// while you are still speaking, and records time to first partial text.
-func benchSherpaStreaming(ctx context.Context, s sherpaRunner, m catalogModel, o options, reference string, audioSec float64) runResult {
-	res := runResult{
-		Model:   m.Name,
-		Family:  m.Family,
-		Backend: backend{Engine: "sherpa", Device: "cpu", Mode: "streaming"},
-	}
-
-	var totals, firsts []float64
-	var text string
-	var peak int64
-	for i := 0; i < o.runs; i++ {
-		runCtx, cancel := context.WithTimeout(ctx, o.timeout)
-		out, firstToken, total, rss, err := s.runStreaming(runCtx, m.Name, o.audio)
-		cancel()
-		if err != nil {
-			res.Failed, res.Error = true, err.Error()
-			return res
-		}
-		totals = append(totals, float64(total)/float64(time.Millisecond))
-		if firstToken > 0 {
-			firsts = append(firsts, float64(firstToken)/float64(time.Millisecond))
-		}
-		text = out
-		peak = max(peak, rss)
-	}
-
-	res.Runs = len(totals)
-	res.TotalMS = median(totals)
 	res.FirstTokenMS = median(firsts)
 	res.PeakRSSKB = peak
 	res.RTF = res.TotalMS / 1000 / audioSec
