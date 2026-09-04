@@ -54,6 +54,10 @@ jobs:
         run: uv build
         working-directory: dist/pypi
 
+      # `automatic` (the default) falls back to no credentials when the OIDC
+      # exchange fails, and reports "Missing credentials" — which reads like
+      # a missing token rather than a trusted publisher PyPI has not been
+      # told about. `always` makes the real failure the one you see.
       - name: Publish to PyPI
-        run: uv publish dist/* --check-url https://pypi.org/simple/
+        run: uv publish dist/* --trusted-publishing always --check-url https://pypi.org/simple/
         working-directory: dist/pypi
