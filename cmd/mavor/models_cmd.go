@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"compress/bzip2"
 	"compress/gzip"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -385,7 +386,7 @@ func buildKnownModels() map[string]KnownModel {
 
 func runModels(args []string) error {
 	if len(args) == 0 {
-		return runModelsList(false, false)
+		return runModelsList(false, false, false)
 	}
 	switch args[0] {
 	case "pull":
@@ -394,18 +395,23 @@ func runModels(args []string) error {
 		}
 		return pullModel(args[1])
 	case "list", "ls":
-		installedOnly, verbose := false, false
+		installedOnly, verbose, asJSON := false, false, false
 		for _, a := range args[1:] {
 			switch a {
 			case "--installed", "-i":
 				installedOnly = true
 			case "--verbose", "-v":
 				verbose = true
+			case "--json":
+				asJSON = true
 			default:
 				return fmt.Errorf("unknown flag for 'mavor models list': %s", a)
 			}
 		}
-		return runModelsList(installedOnly, verbose)
+		if asJSON && verbose {
+			return errors.New("--json and --verbose are different renderings of the same data; pick one")
+		}
+		return runModelsList(installedOnly, verbose, asJSON)
 	case "help", "-h", "--help":
 		fmt.Printf(`usage: mavor models <command>
 
@@ -414,6 +420,7 @@ commands:
                       and which of them are already in the cache
       --installed,-i  restrict the listing to models already downloaded
       --verbose,-v    one block per model: speed, vocabulary biasing, GPU
+      --json          the same catalog as JSON, for scripts and benchmarks
   pull <name>         download a model into the cache
 
 %s
@@ -634,10 +641,13 @@ const (
 	markerAbsent     = "\u2013" // not downloaded
 )
 
-func runModelsList(installedOnly, verbose bool) error {
+func runModelsList(installedOnly, verbose, asJSON bool) error {
 	cfg, err := config.Load("")
 	if err != nil {
 		return err
+	}
+	if asJSON {
+		return listCatalogJSON(os.Stdout, cfg, installedOnly)
 	}
 	if verbose {
 		return listCatalogVerbose(os.Stdout, cfg, installedOnly)
@@ -807,6 +817,101 @@ func listCatalogVerbose(w io.Writer, cfg config.Config, installedOnly bool) erro
 
 	fmt.Fprint(w, "\n"+verboseFootnotes)
 	return nil
+}
+
+// catalogJSON is the machine-readable form of the listing: the same rows the
+// table renders, in the shape a benchmark harness or a script wants. It is a
+// single object rather than JSON Lines because a consumer almost always wants
+// the whole catalog at once, and because ModelDir belongs to the listing as a
+// whole and not to any row in it.
+type catalogJSON struct {
+	ModelDir string             `json:"model_dir"`
+	Models   []catalogModelJSON `json:"models"`
+}
+
+// catalogModelJSON is one model. Every field the catalog carries is here,
+// including the ones only --verbose renders, so a consumer never has to parse
+// the human tables to recover a property.
+type catalogModelJSON struct {
+	Name        string   `json:"name"`
+	Aliases     []string `json:"aliases"`
+	Engine      string   `json:"engine"`
+	Family      string   `json:"family"`
+	Description string   `json:"description"`
+	URL         string   `json:"url"`
+	DownloadS   int64    `json:"download_size"`
+	Languages   string   `json:"languages"`
+	Streaming   bool     `json:"streaming"`
+	Transducer  bool     `json:"transducer"`
+	Vocabulary  string   `json:"vocabulary"`
+
+	// Speed is the relative tier and MeasuredRTF the benchmark, kept as
+	// separate fields so a consumer cannot mistake one for the other. The
+	// estimated flag says outright which it is looking at: a tier is an
+	// architectural guess, and reporting it as a measurement is exactly the
+	// error this output exists to prevent.
+	Speed       string  `json:"speed"`
+	MeasuredRTF float64 `json:"measured_rtf,omitempty"`
+	SpeedIsEst  bool    `json:"speed_is_estimated"`
+
+	// Installed reports the cache, not the catalog: whether this model is on
+	// disk under any of its names, how big it is there, and whether it is the
+	// one the daemon would load right now.
+	Installed     bool  `json:"installed"`
+	InstalledSize int64 `json:"installed_size,omitempty"`
+	Active        bool  `json:"active"`
+}
+
+// listCatalogJSON writes the catalog as JSON. It shares scanInstalled and
+// activeModelName with the table renderers so the three views cannot disagree
+// about what is on disk.
+func listCatalogJSON(w io.Writer, cfg config.Config, installedOnly bool) error {
+	installed := scanInstalled(cfg)
+	active := activeModelName(cfg)
+
+	out := catalogJSON{ModelDir: cfg.ModelDir, Models: []catalogModelJSON{}}
+	for _, m := range modelCatalog {
+		var got *installedModel
+		for _, key := range append([]string{m.Name}, m.Aliases...) {
+			if inst, ok := installed[key]; ok {
+				got = &inst
+				break
+			}
+		}
+		if installedOnly && got == nil {
+			continue
+		}
+
+		row := catalogModelJSON{
+			Name:        m.Name,
+			Aliases:     m.Aliases,
+			Engine:      m.Engine,
+			Family:      m.Family,
+			Description: m.Description,
+			URL:         m.URL,
+			DownloadS:   m.DownloadSize,
+			Languages:   m.Languages,
+			Streaming:   m.Streaming,
+			Transducer:  m.Transducer,
+			Vocabulary:  m.Vocabulary,
+			Speed:       m.Speed,
+			MeasuredRTF: m.MeasuredRTF,
+			SpeedIsEst:  m.MeasuredRTF == 0,
+			Installed:   got != nil,
+			Active:      active != "" && (m.Name == active || slices.Contains(m.Aliases, active)),
+		}
+		if row.Aliases == nil {
+			row.Aliases = []string{}
+		}
+		if got != nil {
+			row.InstalledSize = got.size
+		}
+		out.Models = append(out.Models, row)
+	}
+
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
 }
 
 // verboseFootnotes carries the caveats the per-model fields cannot: what the

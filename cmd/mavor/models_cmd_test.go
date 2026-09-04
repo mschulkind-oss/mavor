@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -616,5 +617,164 @@ func TestModelsListAcceptsVerbose(t *testing.T) {
 		if err := runModels(args); err != nil {
 			t.Errorf("runModels(%v): %v", args, err)
 		}
+	}
+}
+
+func TestModelsListJSONCarriesEveryCatalogProperty(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", tmpDir)
+	modelDir := filepath.Join(tmpDir, "mavor", "models")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "ggml-base.en.bin"), make([]byte, 4096), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := new(bytes.Buffer)
+	if err := listCatalogJSON(buf, cfg, false); err != nil {
+		t.Fatalf("listCatalogJSON: %v", err)
+	}
+
+	var got catalogJSON
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
+	}
+	if got.ModelDir == "" {
+		t.Error("JSON output omits the model directory")
+	}
+	if len(got.Models) != len(modelCatalog) {
+		t.Errorf("JSON lists %d models, want the whole catalog (%d)", len(got.Models), len(modelCatalog))
+	}
+
+	byName := map[string]catalogModelJSON{}
+	for _, m := range got.Models {
+		byName[m.Name] = m
+	}
+
+	base, ok := byName["base.en"]
+	if !ok {
+		t.Fatal("JSON output omits base.en")
+	}
+	if !base.Installed {
+		t.Error("base.en is on disk but the JSON reports it as not installed")
+	}
+	if base.InstalledSize != 4096 {
+		t.Errorf("base.en installed_size = %d, want 4096", base.InstalledSize)
+	}
+	if base.Engine != "whisper" || base.DownloadS == 0 || base.Languages == "" {
+		t.Errorf("base.en is missing catalog properties: %+v", base)
+	}
+
+	// A model that is not downloaded is present in the catalog listing, with
+	// installed false — the benchmark harness needs the difference.
+	turbo := byName["large-v3-turbo"]
+	if turbo.Installed {
+		t.Error("large-v3-turbo is not on disk but the JSON reports it as installed")
+	}
+	if turbo.InstalledSize != 0 {
+		t.Errorf("an uninstalled model reports installed_size %d, want 0", turbo.InstalledSize)
+	}
+}
+
+func TestModelsListJSONSeparatesMeasuredFromEstimatedSpeed(t *testing.T) {
+	// The distinction the fabricated reports collapsed: a relative tier is an
+	// architectural guess, and a consumer must not be able to read it as a
+	// benchmark.
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := new(bytes.Buffer)
+	if err := listCatalogJSON(buf, cfg, false); err != nil {
+		t.Fatal(err)
+	}
+	var got catalogJSON
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+
+	sawEstimated, sawMeasured := false, false
+	for _, m := range got.Models {
+		if m.MeasuredRTF > 0 {
+			sawMeasured = true
+			if m.SpeedIsEst {
+				t.Errorf("%s has a measured RTF but is flagged as estimated", m.Name)
+			}
+		} else {
+			sawEstimated = true
+			if !m.SpeedIsEst {
+				t.Errorf("%s has no measured RTF but is not flagged as estimated", m.Name)
+			}
+		}
+	}
+	if !sawMeasured {
+		t.Error("no model in the JSON carries a measured RTF")
+	}
+	if !sawEstimated {
+		t.Error("no model in the JSON is flagged as having an estimated speed tier")
+	}
+}
+
+func TestModelsListJSONInstalledOnlyNarrowsTheListing(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", tmpDir)
+	modelDir := filepath.Join(tmpDir, "mavor", "models")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "ggml-tiny.en.bin"), make([]byte, 1024), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := new(bytes.Buffer)
+	if err := listCatalogJSON(buf, cfg, true); err != nil {
+		t.Fatal(err)
+	}
+	var got catalogJSON
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Models) != 1 || got.Models[0].Name != "tiny.en" {
+		t.Errorf("--installed --json listed %d models, want only tiny.en", len(got.Models))
+	}
+}
+
+func TestModelsListJSONAlwaysEmitsArraysNotNull(t *testing.T) {
+	// A consumer iterating models or aliases should never have to handle
+	// null. This is the difference between a harness that works and one that
+	// panics on the first model with no alias.
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", tmpDir)
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := new(bytes.Buffer)
+	if err := listCatalogJSON(buf, cfg, true); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "null") {
+		t.Errorf("JSON output contains null where an array was expected:\n%s", buf.String())
+	}
+}
+
+func TestModelsListRejectsJSONWithVerbose(t *testing.T) {
+	// They are two renderings of the same data; silently honouring one would
+	// leave a script parsing prose.
+	err := runModels([]string{"list", "--json", "--verbose"})
+	if err == nil {
+		t.Fatal("`models list --json --verbose` was accepted; want an error")
+	}
+	if !strings.Contains(err.Error(), "pick one") {
+		t.Errorf("error %q does not explain that the flags are alternatives", err)
 	}
 }

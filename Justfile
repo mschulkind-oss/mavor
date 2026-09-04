@@ -6,6 +6,12 @@ default_model := "base.en"
 test_model := "tiny.en"
 # Cache dir for whisper models (matches the `models` subcommand).
 model_dir := env_var_or_default("XDG_CACHE_HOME", env_var("HOME") + "/.cache") + "/mavor/models"
+# Where the GPU benchmark's whisper.cpp build lives. It is out of tree because
+# it is a build artifact of another project, not of this one, and it is under
+# the cache so a `git clean` cannot cost an hour of compiling.
+bench_gpu_dir := env_var_or_default("XDG_CACHE_HOME", env_var("HOME") + "/.cache") + "/mavor-bench/whisper-vulkan"
+bench_gpu_bin := bench_gpu_dir + "/whisper.cpp/build-vulkan/bin"
+
 # Build stamp baked into `mavor version`. Several clones of this repo install to
 # the same ~/.local/bin/mavor, so the commit is how you tell them apart.
 commit := `git describe --always --dirty --match 'v[0-9]*' 2>/dev/null || echo unknown`
@@ -96,6 +102,88 @@ storybook:
     go test -tags=integration -run TestUIStorybookReport ./test/integration/... -v
     @echo ""
     @echo "UI Storybook Report: test/reports/ui-storybook.html"
+
+# Benchmark every installed model: speed, peak memory, accuracy, on every
+# backend this machine can run. Writes docs/reports/model-benchmarks.md and
+# test/reports/benchmarks/latest.json.
+#
+# Picks up the Vulkan whisper build automatically if `just bench-gpu-build` has
+# been run; without it the report says the GPU column was skipped and why.
+#
+# Benchmark every installed model: speed, memory, accuracy, CPU and GPU.
+bench *args: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    gpu_flag=()
+    if [ -x "{{bench_gpu_bin}}/whisper-cli" ]; then
+        gpu_flag=(-whisper-gpu "{{bench_gpu_bin}}/whisper-cli")
+    else
+        echo "no Vulkan whisper build at {{bench_gpu_bin}} — run 'just bench-gpu-build' for the GPU column" >&2
+    fi
+    go run ./cmd/mavor-bench "${gpu_flag[@]}" {{args}}
+
+# The same sweep with the in-process sherpa-onnx engines linked in. Needs cgo,
+# so it cannot cross-compile and is a separate recipe rather than the default.
+#
+# Benchmark every model including the sherpa engines (needs cgo).
+bench-sherpa *args: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    gpu_flag=()
+    if [ -x "{{bench_gpu_bin}}/whisper-cli" ]; then
+        gpu_flag=(-whisper-gpu "{{bench_gpu_bin}}/whisper-cli")
+    fi
+    CGO_ENABLED=1 go run -tags sherpa ./cmd/mavor-bench "${gpu_flag[@]}" {{args}}
+
+# Skips what is already cached; stops if the disk drops below 6 GB free.
+#
+# Download every model in the catalog, so `just bench` has something to measure.
+bench-models: build
+    #!/usr/bin/env bash
+    set -uo pipefail
+    for m in $(./bin/mavor models list --json | grep -o '"name": "[^"]*"' | cut -d'"' -f4); do
+        avail=$(df --output=avail -BG "{{model_dir}}" | tail -1 | tr -dc 0-9)
+        if [ "$avail" -lt 6 ]; then
+            echo "only ${avail}G free — stopping before $m" >&2
+            exit 1
+        fi
+        ./bin/mavor models pull "$m" || echo "pull failed: $m" >&2
+    done
+
+# Build the Vulkan-enabled whisper.cpp that the GPU column needs.
+#
+# The stock package is CPU-only on most distros — nixpkgs' whisper-cpp brings
+# up nothing but a CPU backend — so measuring the GPU path means building
+# upstream ourselves. Pinned to the same version as the packaged build, so the
+# CPU and GPU rows compare the same upstream code.
+#
+# Needs: cmake, ninja, glslc (shaderc), the Vulkan headers and loader, the
+# SPIR-V headers, and a Vulkan driver for your GPU.
+#
+# Build the Vulkan whisper.cpp that the GPU benchmark column needs.
+bench-gpu-build version="v1.9.2":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    src="{{bench_gpu_dir}}/whisper.cpp"
+    mkdir -p "{{bench_gpu_dir}}"
+    if [ ! -d "$src/.git" ]; then
+        git clone --depth 1 --branch {{version}} https://github.com/ggml-org/whisper.cpp "$src"
+    fi
+    # ggml-vulkan find_package()s SPIRV-Headers and then includes them by
+    # path, so the include directory has to be passed as well as the prefix.
+    prefix_args=()
+    if command -v nix-build >/dev/null 2>&1; then
+        spirv=$(ls -d /nix/store/*-spirv-headers-* 2>/dev/null | grep -v '\.drv$' | head -1 || true)
+        if [ -n "$spirv" ]; then
+            prefix_args=(-DCMAKE_PREFIX_PATH="$spirv" -DCMAKE_CXX_FLAGS="-I$spirv/include")
+        fi
+    fi
+    cmake -S "$src" -B "$src/build-vulkan" -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON -DWHISPER_BUILD_TESTS=OFF \
+        "${prefix_args[@]}"
+    cmake --build "$src/build-vulkan" -j "$(nproc)"
+    echo "built {{bench_gpu_bin}}/whisper-cli"
+    echo "verify it sees your GPU with: LD_LIBRARY_PATH={{bench_gpu_bin}} {{bench_gpu_bin}}/whisper-cli"
 
 # Cut a release: verify, tag, push. release.yml takes it from there.
 release version:

@@ -2,6 +2,7 @@
 /bin/
 /dist/goreleaser/
 /mavor
+/mavor-bench
 *.test
 *.out
 
