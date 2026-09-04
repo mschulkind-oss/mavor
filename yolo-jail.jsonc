@@ -45,8 +45,11 @@
     // device is really there before trusting a number.
     "cmake",
     "ninja",
-    "shaderc",
+    // shaderc's default output carries no binaries; glslc lives in "bin",
+    // and the Vulkan backend's shader generator shells out to it by name.
+    {"name": "shaderc", "outputs": ["out", "bin", "lib", "dev"]},
     "vulkan-headers",
+    "spirv-headers", // ggml-vulkan's CMake find_package()s these directly
     "vulkan-loader",
     "vulkan-tools",
     "mesa",

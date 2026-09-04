@@ -12,11 +12,11 @@ import (
 	"github.com/mschulkind-oss/mavor/internal/speech"
 )
 
-// sherpaRunner drives the in-process sherpa-onnx recognizers. Unlike whisper
-// there is no subprocess to measure, so memory comes from this process's own
-// high-water mark and the numbers are only meaningful when one model is
-// loaded at a time — which is why the harness closes each transcriber before
-// building the next.
+// sherpaRunner drives the in-process sherpa-onnx recognizers. Its methods run
+// inside a worker process rather than the parent (see worker.go), so each one
+// measures a single model in a process that loaded nothing else — which is
+// what makes the memory figure a real high-water mark and what stops a model
+// sherpa-onnx aborts on from ending the sweep.
 type sherpaRunner struct {
 	modelDir string
 	threads  int
