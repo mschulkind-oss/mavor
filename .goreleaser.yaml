@@ -17,9 +17,10 @@ builds:
       - -X main.BuildTime={{.Date}}
     env:
       - CGO_ENABLED=0
-    # Linux only, for two independent reasons: mavor needs a Wayland
-    # compositor, and the overlay's shared-memory buffers are memfd, which
-    # does not exist off Linux — a darwin build does not compile.
+    # Linux only because that is what has a backend today: the overlay's
+    # shared-memory buffers are memfd, so a darwin build does not currently
+    # compile. Widen this list when another platform's overlay and emitter
+    # exist — nothing else here is Linux-specific.
     goos:
       - linux
     goarch:

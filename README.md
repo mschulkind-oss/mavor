@@ -1,4 +1,4 @@
-# mavor — voice dictation for Wayland
+# mavor — low-latency voice dictation
 
 Tap a hotkey, talk, tap again. The transcribed text is typed into whatever
 window has focus and copied to the clipboard. A small "● Recording" pill
@@ -26,11 +26,16 @@ CLI subcommands:
 - `mavor service install` — install and enable systemd user service (`mavor.service`).
 
 > [!NOTE]
-> mavor needs a compositor implementing **`wlr-layer-shell`** (the overlay) and
-> **`virtual-keyboard-v1`** (typing, via `wtype`) — that is every wlroots
-> compositor: sway, Hyprland, river, Wayfire, niri and labwc. It does **not** work under
-> GNOME, which implements neither. The overlay degrades to silent operation if
-> layer-shell is missing; `wtype` has no fallback.
+> **Where it runs today:** Linux, on a Wayland compositor implementing
+> `wlr-layer-shell` (the overlay) and `virtual-keyboard-v1` (typing, via
+> `wtype`) — sway, Hyprland, river, Wayfire, niri, labwc. Not GNOME, which
+> implements neither.
+>
+> This is the first backend, not the design. Capture, transcription, overlay
+> and text output are four independent interfaces (§[Project layout](#project-layout)),
+> and only the overlay and the output emitter are Wayland-specific. Other
+> compositors and platforms are a matter of writing those two, not of
+> rearchitecting.
 
 ## Why this exists
 

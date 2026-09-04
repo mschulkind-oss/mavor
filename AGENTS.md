@@ -1,6 +1,14 @@
 # mavor Developer Guide for Agents
 
-`mavor` is a low-latency voice-to-text dictation daemon and CLI for wlroots-based Wayland compositors (sway, Hyprland, river, Wayfire, niri and labwc). It needs `wlr-layer-shell` for the overlay and `virtual-keyboard-v1` for typing; GNOME implements neither.
+`mavor` is a low-latency voice-to-text dictation daemon and CLI.
+
+Its first and current backend is Linux on a wlroots Wayland compositor — sway,
+Hyprland, river, Wayfire, niri, labwc — which is what `wlr-layer-shell` (the
+overlay) and `virtual-keyboard-v1` (typing) require. Treat that as the platform
+that exists rather than the platform the design assumes: `audio.Recorder`,
+`speech.Transcriber`, `overlay.Overlay` and `output.Emitter` are four
+independent interfaces, and only the last two are Wayland-specific. Porting is
+a matter of implementing those, not of restructuring.
 
 ## Architecture
 
