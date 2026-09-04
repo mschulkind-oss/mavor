@@ -1,0 +1,83 @@
+version: 2
+project_name: mavor
+
+before:
+  hooks:
+    - go mod tidy
+    - go vet ./...
+
+builds:
+  - id: mavor
+    main: ./cmd/mavor
+    binary: mavor
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Tag}}
+      - -X main.Commit={{.ShortCommit}}
+      - -X main.BuildTime={{.Date}}
+    env:
+      - CGO_ENABLED=0
+    # Linux only, for two independent reasons: mavor needs a Wayland
+    # compositor, and the overlay's shared-memory buffers are memfd, which
+    # does not exist off Linux — a darwin build does not compile.
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: default
+    formats: ["tar.gz"]
+    name_template: "mavor_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  # Idempotent. A tag created by `gh release create` already has a release
+  # attached, and the default mode fails on that instead of filling it in —
+  # which is exactly how v0.1.0 ended up published with zero assets.
+  mode: replace
+
+# `brews` is deprecated in favour of `homebrew_casks`, and that deprecation is
+# ignored deliberately: casks are macOS-only, and mavor is a Linux-only Wayland
+# program. A formula is the only Homebrew artifact that can install it, so this
+# stays until goreleaser offers a non-deprecated way to emit one.
+brews:
+  - name: mavor
+    repository:
+      owner: mschulkind-oss
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://github.com/mschulkind-oss/mavor"
+    description: "Low-latency voice dictation for Wayland — hotkey to talk, text typed into the focused window"
+    license: "Apache-2.0"
+    directory: Formula
+    # All three are in homebrew/core with Linux bottles, so the formula can
+    # own the whole runtime rather than leaving them to the reader.
+    dependencies:
+      - name: whisper-cpp
+      - name: wl-clipboard
+      - name: wtype
+    install: |
+      bin.install "mavor"
+    caveats: |
+      mavor needs a Wayland compositor implementing wlr-layer-shell and
+      virtual-keyboard-v1: sway, Hyprland, river, Wayfire, niri, labwc. It
+      does not work under GNOME, which implements neither.
+
+      Get started with:
+        mavor setup     # scaffold config, install tools, fetch a model
+        mavor doctor    # check the environment
+    test: |
+      system "#{bin}/mavor", "version"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^chore:"
+      - "^test:"
+      - "^ci:"
