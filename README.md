@@ -1,10 +1,10 @@
-# mavor — low-latency voice dictation
+# mavor — local, low-latency voice dictation
 
-Tap a hotkey, talk, tap again. The transcribed text is typed into whatever
-window has focus and copied to the clipboard. Everything runs locally — your
-voice never leaves the machine. A small "● Recording" pill appears at the top
-of the screen, clear of your bar, while you speak, with a live audio waveform
-meter, and flips to an amber indicator while whisper.cpp or Sherpa-ONNX runs.
+Tap a hotkey, talk, tap again: the words are transcribed on your own machine
+and typed into whatever window has focus. Your voice never leaves the box —
+no cloud API, no account, nothing to sign up for. The text is copied to the
+clipboard too, and a small "● Recording" pill sits at the top of the screen,
+clear of your bar, showing a live waveform while you speak.
 
 ```
 $mod + ` ──▶  ● Recording   ▂▃▅▆          (HUD overlay with live audio meter)

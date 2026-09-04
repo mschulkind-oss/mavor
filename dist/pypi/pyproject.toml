@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mavor"
 dynamic = ["version"]
-description = "Low-latency voice dictation — hotkey to talk, text typed into the focused window"
+description = "Local, low-latency voice dictation — hotkey to talk, text lands where you type"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"

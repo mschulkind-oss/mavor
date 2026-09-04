@@ -1,6 +1,6 @@
 # mavor Developer Guide for Agents
 
-`mavor` is a low-latency voice-to-text dictation daemon and CLI. Transcription
+`mavor` is a local, low-latency voice-to-text dictation daemon and CLI. Transcription
 is entirely local — no cloud API, no account, no telemetry — and that is a
 property worth preserving: the only outbound request in the program is
 `mavor models pull`.
