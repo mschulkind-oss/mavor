@@ -1,0 +1,620 @@
+package main
+
+import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/mschulkind-oss/mavor/internal/config"
+)
+
+func TestKnownModelsCatalog(t *testing.T) {
+	requiredFamilies := map[string][]string{
+		"Whisper": {
+			"tiny", "tiny.en", "base", "base.en", "small", "small.en",
+			"medium", "medium.en", "large-v3", "large-v3-turbo", "distil-large-v3",
+		},
+		"NeMo": {
+			"parakeet", "parakeet-tdt", "parakeet-tdt-0.6b", "parakeet-unified-en",
+			"parakeet-tdt-1.1b", "parakeet-ctc", "canary", "canary-1b",
+		},
+		"Moonshine": {
+			"moonshine", "moonshine-tiny", "moonshine-base",
+		},
+		"SenseVoice": {
+			"sensevoice", "sensevoice-small",
+		},
+		"Zipformer": {
+			"zipformer", "zipformer-streaming", "zipformer-offline", "zipformer-ctc",
+		},
+	}
+
+	for family, models := range requiredFamilies {
+		for _, m := range models {
+			spec, ok := knownModels[m]
+			if !ok {
+				t.Errorf("missing model %q in knownModels catalog (family: %s)", m, family)
+				continue
+			}
+			if spec.URL == "" {
+				t.Errorf("model %q has empty URL", m)
+			}
+			if !strings.HasPrefix(spec.URL, "https://") {
+				t.Errorf("model %q URL is not HTTPS: %s", m, spec.URL)
+			}
+			if spec.Engine != "whisper" && spec.Engine != "sherpa" {
+				t.Errorf("model %q has invalid engine: %s", m, spec.Engine)
+			}
+			if spec.Engine == "sherpa" && spec.TargetDir == "" {
+				t.Errorf("sherpa model %q has empty TargetDir", m)
+			}
+			if spec.Description == "" {
+				t.Errorf("model %q has empty Description", m)
+			}
+			if spec.Format == "" {
+				t.Errorf("model %q has empty Format", m)
+			}
+		}
+	}
+}
+
+func TestCleanWhisperName(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"base.en", "base.en"},
+		{"whisper-base.en", "base.en"},
+		{"whisper_tiny", "tiny"},
+		{"ggml-small.bin", "small"},
+		{"distil-large-v3", "distil-large-v3"},
+		{"distil-whisper-large-v3", "distil-large-v3"},
+		{"whisper-large-v3-turbo", "large-v3-turbo"},
+	}
+
+	for _, tc := range cases {
+		got := cleanWhisperName(tc.input)
+		if got != tc.want {
+			t.Errorf("cleanWhisperName(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestFormatFileSize(t *testing.T) {
+	if got := formatFileSize(500 * 1024 * 1024); got != "500.0 MB" {
+		t.Errorf("formatFileSize(500MB) = %q, want 500.0 MB", got)
+	}
+	if got := formatFileSize(1536 * 1024 * 1024); got != "1.50 GB" {
+		t.Errorf("formatFileSize(1.5GB) = %q, want 1.50 GB", got)
+	}
+}
+
+func TestDirSize(t *testing.T) {
+	tmp := t.TempDir()
+	file1 := filepath.Join(tmp, "a.bin")
+	file2 := filepath.Join(tmp, "sub", "b.bin")
+	_ = os.MkdirAll(filepath.Dir(file2), 0o755)
+
+	_ = os.WriteFile(file1, make([]byte, 1024), 0o644)
+	_ = os.WriteFile(file2, make([]byte, 2048), 0o644)
+
+	size := dirSize(tmp)
+	if size != 3072 {
+		t.Errorf("dirSize(%s) = %d, want 3072", tmp, size)
+	}
+}
+
+func TestDownloadAndExtractArchiveTarGz(t *testing.T) {
+	// Create an in-memory tar.gz archive
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+
+	files := map[string]string{
+		"root_dir/tokens.txt":   "hello\nworld\n",
+		"root_dir/encoder.onnx": "fake-encoder-data",
+		"root_dir/sub/test.wav": "fake-wav-data",
+	}
+
+	for name, content := range files {
+		hdr := &tar.Header{
+			Name:     name,
+			Mode:     0o644,
+			Size:     int64(len(content)),
+			Typeflag: tar.TypeReg,
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = tw.Close()
+	_ = gw.Close()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(buf.Bytes())
+	}))
+	defer srv.Close()
+
+	destDir := filepath.Join(t.TempDir(), "extracted")
+	if err := downloadAndExtractArchive(srv.URL, "tar.gz", destDir); err != nil {
+		t.Fatalf("downloadAndExtractArchive error: %v", err)
+	}
+
+	// Verify files were extracted and top-level directory stripped
+	tokensPath := filepath.Join(destDir, "tokens.txt")
+	if data, err := os.ReadFile(tokensPath); err != nil || string(data) != "hello\nworld\n" {
+		t.Errorf("tokens.txt not extracted properly: err=%v, data=%q", err, string(data))
+	}
+
+	encoderPath := filepath.Join(destDir, "encoder.onnx")
+	if data, err := os.ReadFile(encoderPath); err != nil || string(data) != "fake-encoder-data" {
+		t.Errorf("encoder.onnx not extracted properly: err=%v, data=%q", err, string(data))
+	}
+
+	subPath := filepath.Join(destDir, "sub", "test.wav")
+	if data, err := os.ReadFile(subPath); err != nil || string(data) != "fake-wav-data" {
+		t.Errorf("sub/test.wav not extracted properly: err=%v, data=%q", err, string(data))
+	}
+}
+
+func TestRunModelsListDetailed(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", tmpDir)
+
+	modelDir := filepath.Join(tmpDir, "mavor", "models")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Whisper model
+	_ = os.WriteFile(filepath.Join(modelDir, "ggml-base.en.bin"), make([]byte, 1024*1024), 0o644)
+
+	// 2. Sherpa model in sherpa/<target>
+	parakeetDir := filepath.Join(modelDir, "sherpa", "parakeet")
+	_ = os.MkdirAll(parakeetDir, 0o755)
+	_ = os.WriteFile(filepath.Join(parakeetDir, "encoder.onnx"), make([]byte, 2*1024*1024), 0o644)
+	_ = os.WriteFile(filepath.Join(parakeetDir, "tokens.txt"), []byte("tokens"), 0o644)
+
+	// 3. Moonshine model in sherpa/moonshine
+	moonshineDir := filepath.Join(modelDir, "sherpa", "moonshine")
+	_ = os.MkdirAll(moonshineDir, 0o755)
+	_ = os.WriteFile(filepath.Join(moonshineDir, "encode.int8.onnx"), make([]byte, 3*1024*1024), 0o644)
+	_ = os.WriteFile(filepath.Join(moonshineDir, "tokens.txt"), []byte("tokens"), 0o644)
+
+	if err := runModels([]string{"list"}); err != nil {
+		t.Fatalf("runModels(list) error: %v", err)
+	}
+
+	if err := runModels([]string{"ls"}); err != nil {
+		t.Fatalf("runModels(ls) error: %v", err)
+	}
+}
+
+func TestRunModelsCommands(t *testing.T) {
+	if err := runModels([]string{"help"}); err != nil {
+		t.Fatalf("runModels(help) error: %v", err)
+	}
+
+	if err := runModels([]string{"pull"}); err == nil {
+		t.Fatalf("expected error for 'mavor models pull' without arguments")
+	}
+
+	if err := runModels([]string{"invalid-command"}); err == nil {
+		t.Fatalf("expected error for unknown command")
+	}
+}
+
+// The catalog is the list users see when they ask what they can download,
+// so every canonical entry must be a distinct artifact. Aliases are alternate
+// names for the same download, not separate models.
+func TestCatalogEntriesAreDistinctDownloads(t *testing.T) {
+	seenURL := map[string]string{}
+	seenName := map[string]bool{}
+	for _, m := range modelCatalog {
+		if prev, dup := seenURL[m.URL]; dup {
+			t.Errorf("models %q and %q share a URL — one should be an alias of the other:\n  %s",
+				prev, m.Name, m.URL)
+		}
+		seenURL[m.URL] = m.Name
+
+		if seenName[m.Name] {
+			t.Errorf("duplicate catalog name %q", m.Name)
+		}
+		seenName[m.Name] = true
+
+		for _, a := range m.Aliases {
+			if seenName[a] {
+				t.Errorf("alias %q of %q collides with another catalog name", a, m.Name)
+			}
+			seenName[a] = true
+		}
+	}
+}
+
+// Every property the listing prints has to exist for every model, or the
+// table renders holes.
+func TestCatalogEntriesCarryTheirProperties(t *testing.T) {
+	for _, m := range modelCatalog {
+		if m.Name == "" {
+			t.Error("catalog entry with empty Name")
+			continue
+		}
+		if m.DownloadSize <= 0 {
+			t.Errorf("model %q has no DownloadSize; the size column would be blank", m.Name)
+		}
+		if m.Languages == "" {
+			t.Errorf("model %q has no Languages", m.Name)
+		}
+		if m.Description == "" {
+			t.Errorf("model %q has no Description", m.Name)
+		}
+		if m.Engine != "whisper" && m.Engine != "sherpa" {
+			t.Errorf("model %q has invalid engine %q", m.Name, m.Engine)
+		}
+		if !strings.HasPrefix(m.URL, "https://") {
+			t.Errorf("model %q URL is not HTTPS: %s", m.Name, m.URL)
+		}
+	}
+}
+
+// knownModels is generated from the catalog. Every canonical name and every
+// alias must resolve, and sherpa models must keep landing in a directory
+// named after the name the user typed — that is what ResolveSherpaModelDir
+// looks for.
+func TestKnownModelsIsGeneratedFromTheCatalog(t *testing.T) {
+	for _, m := range modelCatalog {
+		for _, key := range append([]string{m.Name}, m.Aliases...) {
+			spec, ok := knownModels[key]
+			if !ok {
+				t.Errorf("catalog name %q missing from knownModels", key)
+				continue
+			}
+			if spec.URL != m.URL {
+				t.Errorf("knownModels[%q].URL = %q, want %q", key, spec.URL, m.URL)
+			}
+			if spec.Engine == "sherpa" && spec.TargetDir != key {
+				t.Errorf("knownModels[%q].TargetDir = %q, want %q so the model resolves by the name the user typed",
+					key, spec.TargetDir, key)
+			}
+		}
+	}
+}
+
+// Regression guard. Both of these shipped in the catalog as dictation models
+// and neither can transcribe: the MMS entry pointed at a VITS text-to-speech
+// voice, and the Seamless entry at a PyTorch checkpoint that sherpa-onnx
+// (an ONNX runtime) cannot load.
+func TestCatalogListsOnlyLoadableASRModels(t *testing.T) {
+	for _, banned := range []string{"mms", "mms-1b", "seamless", "seamless-streaming"} {
+		if _, ok := knownModels[banned]; ok {
+			t.Errorf("model %q is back in the catalog; it cannot be loaded for transcription", banned)
+		}
+	}
+	for _, m := range modelCatalog {
+		if strings.Contains(m.URL, "/tts-models/") {
+			t.Errorf("model %q points at a text-to-speech artifact: %s", m.Name, m.URL)
+		}
+		if strings.HasSuffix(m.URL, ".pt") {
+			t.Errorf("model %q points at a PyTorch checkpoint, which sherpa-onnx cannot load: %s", m.Name, m.URL)
+		}
+	}
+}
+
+func TestModelsListShowsTheCatalogWithStatus(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", tmpDir)
+	modelDir := filepath.Join(tmpDir, "mavor", "models")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// base.en is downloaded and is the configured model; tiny.en is not.
+	if err := os.WriteFile(filepath.Join(modelDir, "ggml-base.en.bin"), make([]byte, 1024*1024), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := new(bytes.Buffer)
+	if err := listCatalog(buf, cfg, false); err != nil {
+		t.Fatalf("listCatalog: %v", err)
+	}
+	out := buf.String()
+
+	// A model that is not downloaded still appears — that is the point of
+	// the catalog view.
+	if !strings.Contains(out, "tiny.en") {
+		t.Error("catalog listing omits tiny.en, which is supported but not downloaded")
+	}
+	if !strings.Contains(out, "large-v3-turbo") {
+		t.Error("catalog listing omits large-v3-turbo")
+	}
+	// Properties are columns, not prose.
+	for _, header := range []string{"NAME", "ENGINE", "SIZE", "LANGUAGES", "STREAM", "STATUS"} {
+		if !strings.Contains(out, header) {
+			t.Errorf("listing missing %q column header", header)
+		}
+	}
+	// Aliases are discoverable.
+	if !strings.Contains(out, "ALIASES") {
+		t.Error("listing missing ALIASES column")
+	}
+	// Downloaded and active markers.
+	if !strings.Contains(out, markerDownloaded) {
+		t.Errorf("listing never shows the downloaded marker %q for base.en", markerDownloaded)
+	}
+	if !strings.Contains(out, markerActive) {
+		t.Errorf("listing never shows the active marker %q for the configured model", markerActive)
+	}
+}
+
+func TestModelsListInstalledShowsOnlyDownloaded(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", tmpDir)
+	modelDir := filepath.Join(tmpDir, "mavor", "models")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "ggml-base.en.bin"), make([]byte, 1024*1024), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := new(bytes.Buffer)
+	if err := listCatalog(buf, cfg, true); err != nil {
+		t.Fatalf("listCatalog(installed): %v", err)
+	}
+	out := buf.String()
+
+	if !strings.Contains(out, "base.en") {
+		t.Error("--installed listing omits the downloaded model")
+	}
+	if strings.Contains(out, "large-v3-turbo") {
+		t.Error("--installed listing includes large-v3-turbo, which is not downloaded")
+	}
+}
+
+func TestModelsListInstalledIsEmptyWithNoModels(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", tmpDir)
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := new(bytes.Buffer)
+	if err := listCatalog(buf, cfg, true); err != nil {
+		t.Fatalf("listCatalog on an empty cache should not error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "models pull") {
+		t.Error("empty listing should point the user at 'mavor models pull'")
+	}
+}
+
+func TestModelsListAcceptsTheInstalledFlag(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", tmpDir)
+	if err := runModels([]string{"list", "--installed"}); err != nil {
+		t.Fatalf("runModels(list --installed): %v", err)
+	}
+}
+
+// The active marker has to follow the config through an alias: a user whose
+// config says sherpa_model = "parakeet-tdt" is running the model the catalog
+// calls "parakeet", and that is the row that should be starred.
+func TestActiveMarkerFollowsAnAlias(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "cfg"))
+
+	parakeetDir := filepath.Join(tmpDir, "mavor", "models", "sherpa", "parakeet-tdt")
+	if err := os.MkdirAll(parakeetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parakeetDir, "encoder.onnx"), make([]byte, 512), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Engine = "sherpa"
+	cfg.SherpaModel = "parakeet-tdt"
+
+	buf := new(bytes.Buffer)
+	if err := listCatalog(buf, cfg, true); err != nil {
+		t.Fatalf("listCatalog: %v", err)
+	}
+
+	var starred string
+	for _, l := range strings.Split(buf.String(), "\n") {
+		if strings.Contains(l, markerActive) && strings.HasPrefix(l, "parakeet") {
+			starred = l
+		}
+	}
+	if starred == "" {
+		t.Fatalf("no parakeet row carries the active marker:\n%s", buf.String())
+	}
+	if !strings.HasPrefix(starred, "parakeet ") {
+		t.Errorf("expected the canonical %q row to be starred, got: %s", "parakeet", starred)
+	}
+}
+
+// A model the user converted or placed by hand is still a model they have.
+// The catalog listing must not silently drop it.
+func TestListingSurfacesModelsOutsideTheCatalog(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", tmpDir)
+
+	custom := filepath.Join(tmpDir, "mavor", "models", "sherpa", "my-own-model")
+	if err := os.MkdirAll(custom, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(custom, "encoder.onnx"), make([]byte, 256), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := new(bytes.Buffer)
+	if err := listCatalog(buf, cfg, false); err != nil {
+		t.Fatalf("listCatalog: %v", err)
+	}
+	if !strings.Contains(buf.String(), "my-own-model") {
+		t.Errorf("listing dropped a cached model that is not in the catalog:\n%s", buf.String())
+	}
+}
+
+// The help text used to be a hand-maintained prose list and had drifted from
+// the catalog. It is generated now, so every advertised name must be pullable.
+func TestCatalogSummaryNamesAreAllPullable(t *testing.T) {
+	summary := catalogSummary()
+	for _, m := range modelCatalog {
+		if !strings.Contains(summary, m.Name) {
+			t.Errorf("catalog summary omits %q", m.Name)
+		}
+	}
+	for _, line := range strings.Split(summary, "\n") {
+		_, names, found := strings.Cut(line, ":")
+		if !found {
+			continue
+		}
+		for _, n := range strings.Split(names, ",") {
+			n = strings.TrimSpace(n)
+			if n == "" {
+				continue
+			}
+			if _, ok := knownModels[n]; !ok {
+				t.Errorf("summary advertises %q but `mavor models pull %s` would not find it", n, n)
+			}
+		}
+	}
+}
+
+func TestVerboseListingShowsTheExtraProperties(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", tmpDir)
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := new(bytes.Buffer)
+	if err := listCatalogVerbose(buf, cfg, false); err != nil {
+		t.Fatalf("listCatalogVerbose: %v", err)
+	}
+	out := buf.String()
+
+	for _, want := range []string{"speed", "vocabulary", "gpu", "streaming", "languages", "source"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("verbose listing missing the %q property", want)
+		}
+	}
+	// Every model must appear, with its download URL so the source is checkable.
+	for _, m := range modelCatalog {
+		if !strings.Contains(out, m.Name) {
+			t.Errorf("verbose listing omits %q", m.Name)
+		}
+		if !strings.Contains(out, m.URL) {
+			t.Errorf("verbose listing omits the source URL for %q", m.Name)
+		}
+	}
+}
+
+// Speed is a relative ordering, not a measurement, except where it is backed
+// by a benchmark — and then the listing must say so rather than implying every
+// number was measured.
+func TestVerboseDistinguishesMeasuredFromEstimatedSpeed(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", tmpDir)
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := new(bytes.Buffer)
+	if err := listCatalogVerbose(buf, cfg, false); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+
+	if !strings.Contains(out, "measured") {
+		t.Error("verbose listing never marks a measured figure")
+	}
+	if !strings.Contains(strings.ToLower(out), "relative") {
+		t.Error("verbose listing must say the speed tiers are relative, not measured")
+	}
+
+	var measured int
+	for _, m := range modelCatalog {
+		if m.MeasuredRTF > 0 {
+			measured++
+		}
+	}
+	if measured == 0 {
+		t.Fatal("no model carries a measured RTF; the distinction is untestable")
+	}
+	if measured == len(modelCatalog) {
+		t.Error("every model claims a measured RTF, but only a few were benchmarked")
+	}
+}
+
+func TestEveryModelDeclaresItsProperties(t *testing.T) {
+	valid := map[string]bool{
+		"very fast": true, "fast": true, "moderate": true, "slow": true, "very slow": true,
+	}
+	for _, m := range modelCatalog {
+		if !valid[m.Speed] {
+			t.Errorf("model %q has speed %q, not one of the defined tiers", m.Name, m.Speed)
+		}
+		if m.Vocabulary == "" {
+			t.Errorf("model %q does not say whether it supports vocabulary biasing", m.Name)
+		}
+	}
+}
+
+// Vocabulary biasing in sherpa-onnx is a transducer feature; the CTC and
+// encoder-decoder models cannot take hotwords however they are configured.
+func TestOnlyTransducersClaimHotwordSupport(t *testing.T) {
+	for _, m := range modelCatalog {
+		claims := strings.Contains(m.Vocabulary, "hotwords")
+		if claims && m.Engine != "sherpa" {
+			t.Errorf("model %q claims hotwords, which only the sherpa engine supports", m.Name)
+		}
+		if claims && !m.Transducer {
+			t.Errorf("model %q claims hotwords but is not a transducer", m.Name)
+		}
+		if !claims && m.Transducer && m.Engine == "sherpa" {
+			t.Errorf("transducer %q should support hotwords but does not claim it", m.Name)
+		}
+	}
+}
+
+func TestModelsListAcceptsVerbose(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	for _, args := range [][]string{
+		{"list", "--verbose"},
+		{"list", "-v"},
+		{"list", "--verbose", "--installed"},
+	} {
+		if err := runModels(args); err != nil {
+			t.Errorf("runModels(%v): %v", args, err)
+		}
+	}
+}
