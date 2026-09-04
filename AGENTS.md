@@ -34,6 +34,9 @@ User Keybind ($mod+grave)
 ## Directory Layout
 
 - `cmd/mavor/` — CLI entry point, subcommands (`setup`, `daemon`, `start`, `stop`, `toggle`, `status`, `logs`, `doctor`, `config`, `service`, `models`, `history`, `version`).
+- `cmd/mavor-bench/` — the benchmark harness. Drives `modelCatalog` through
+  `mavor models list --json`, so a model added to the catalog is benchmarked
+  without editing a list here. Writes `docs/reports/model-benchmarks.md`.
 - `internal/state/` — Thread-safe FSM tracking daemon lifecycle state.
 - `internal/audio/` — Audio capture via `parec` / PipeWire stream, volume meter, VAD gating, and audio ducking.
 - `internal/speech/` — Pluggable speech-to-text (STT) engines (`whisper-cli`, in-process `sherpa-onnx` CGO, remote HTTP server).
@@ -54,6 +57,20 @@ integration harness's dependencies — sway, waybar, grim, PipeWire, `wtype`,
 `wl-clipboard`, `whisper-cpp` — which is why `just test-int` and `just storybook`
 work in here with no host setup. Edit it via the `configuring-the-jail` skill;
 changing `packages` forces an image rebuild and needs a human to restart.
+
+## Benchmarks
+
+`docs/reports/model-benchmarks.md` is generated — rerun `just bench` rather
+than editing it. Every number in it came from a process that ran on the
+machine named in its header.
+
+Two rules the harness enforces, and any replacement for it should keep:
+
+- **A backend that did not run is named, with the reason.** Absent rows are
+  reported as absent. A gap in a table reads as a model that scored nothing.
+- **A GPU column requires proof of a GPU.** The build must actually bring up
+  a GPU backend and a device must enumerate, or the column is refused. Four
+  earlier reports published CPU numbers under GPU headings; see the roadmap.
 
 ## Build Tags
 
@@ -79,7 +96,7 @@ works, and so does cross-compilation.
 - `mavor service install [--start]` — Install and enable systemd user service (`mavor.service`).
 - `mavor history [-n N] [--json] [--copy]` — List past transcripts (newest first) or recover one to the clipboard.
 - `mavor models pull <name>` — Download a Whisper GGML or sherpa-onnx model into the cache.
-- `mavor models list [--installed] [--verbose]` — List the model catalog with size, languages, and streaming support, marking what is downloaded and active. `--installed` narrows it to the cache; `--verbose` prints a block per model adding speed, vocabulary biasing, GPU support, and the source URL.
+- `mavor models list [--installed] [--verbose] [--json]` — List the model catalog with size, languages, and streaming support, marking what is downloaded and active. `--installed` narrows it to the cache; `--verbose` prints a block per model adding speed, vocabulary biasing, GPU support, and the source URL; `--json` emits the same catalog machine-readably, which is how the benchmark harness reads it.
 
 ## Committing
 
@@ -106,6 +123,10 @@ works, and so does cross-compilation.
 - `just test-int` — Run headless Wayland integration tests (`go test -tags=integration ./test/integration/...`).
 - `just test-e2e` — Run real whisper transcription test.
 - `just storybook` — Generate UI Storybook HTML report with real headless screenshots (`test/reports/ui-storybook.html`).
+- `just bench` — Benchmark every installed model: speed, peak memory, accuracy, CPU and GPU. Regenerates `docs/reports/model-benchmarks.md`.
+- `just bench-sherpa` — The same sweep with the in-process sherpa engines linked in (needs cgo).
+- `just bench-models` — Download the whole catalog so there is something to benchmark (~16 GB).
+- `just bench-gpu-build` — Build the Vulkan whisper.cpp the GPU column needs; the packaged whisper-cpp is CPU-only.
 - `just build` — Compile the static, pure-Go binary to `bin/mavor`.
 - `just build-sherpa` — Compile with the in-process sherpa-onnx engines (cgo).
 - `just install` — Compile and copy binary to `~/.local/bin/mavor`.
