@@ -1,4 +1,4 @@
-# mavor — voice-to-text utility for Sway
+# mavor — voice-to-text utility for Wayland
 
 # Default model used by the daemon when none is configured.
 default_model := "base.en"
@@ -55,16 +55,13 @@ done: check-ci
 doctor:
     @go run ./cmd/mavor doctor
 
-# Build the binary into ./bin/mavor. Self-sufficient: pulls module deps and
-# the default whisper model so the result is immediately runnable. Pure Go —
-# no cgo, no system headers.
+# Build the static, pure-Go binary into ./bin/mavor.
 build: (_ensure-model default_model)
     @mkdir -p bin
     go mod download
     CGO_ENABLED=0 go build -ldflags '{{ldflags}}' -v -o bin/mavor ./cmd/mavor
 
-# Build with the in-process sherpa-onnx engines linked in. This is the one
-# variant that needs cgo, and so the one that cannot be cross-compiled.
+# Build with the in-process sherpa-onnx engines linked in (needs cgo).
 build-sherpa: (_ensure-model default_model)
     @mkdir -p bin
     go build -tags sherpa -ldflags '{{ldflags}}' -v -o bin/mavor ./cmd/mavor
@@ -99,6 +96,31 @@ storybook:
     go test -tags=integration -run TestUIStorybookReport ./test/integration/... -v
     @echo ""
     @echo "UI Storybook Report: test/reports/ui-storybook.html"
+
+# Cut a release: verify, tag, push. release.yml takes it from there.
+release version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # This recipe exists so `oss-release` takes its delegated path. Without it
+    # the script falls back to tagging HEAD *and* running `gh release create`,
+    # and since release.yml also triggers on the tag push, both race to create
+    # the same release. Whichever loses fails with "a release with the same tag
+    # name already exists" — which is how v0.1.0 published carrying no assets.
+    #
+    # Nothing generated has to ride in the tag: mavor is pure Go with no
+    # embedded bundle, so the tag is plain HEAD and goreleaser builds from it.
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "working tree is dirty — commit or stash first" >&2
+        exit 1
+    fi
+    if git rev-parse -q --verify "refs/tags/v{{version}}" >/dev/null; then
+        echo "tag v{{version}} already exists — pick another version" >&2
+        exit 1
+    fi
+    just check-ci
+    git tag "v{{version}}"
+    git push origin "v{{version}}"
+    @echo "pushed v{{version}} — release.yml takes it from here"
 
 # Download a whisper model into the cache (no-op if already present).
 _ensure-model name:

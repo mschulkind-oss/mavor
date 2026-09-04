@@ -1,4 +1,4 @@
-# mavor — voice dictation for Sway
+# mavor — voice dictation for Wayland
 
 Tap a hotkey, talk, tap again. The transcribed text is typed into whatever
 window has focus and copied to the clipboard. A small "● Recording" pill
@@ -24,6 +24,13 @@ CLI subcommands:
 - `mavor doctor` — self-diagnostic health check for Wayland, audio, and tools.
 - `mavor config init` — scaffold `~/.config/mavor/config.toml` with documented defaults.
 - `mavor service install` — install and enable systemd user service (`mavor.service`).
+
+> [!NOTE]
+> mavor needs a compositor implementing **`wlr-layer-shell`** (the overlay) and
+> **`virtual-keyboard-v1`** (typing, via `wtype`) — that is every wlroots
+> compositor: sway, Hyprland, river, Wayfire, niri and labwc. It does **not** work under
+> GNOME, which implements neither. The overlay degrades to silent operation if
+> layer-shell is missing; `wtype` has no fallback.
 
 ## Why this exists
 
@@ -103,7 +110,7 @@ Initialize your configuration file:
 mavor config init
 ```
 
-## Sway integration
+## Compositor integration
 
 ### Push-to-Talk Mode (Recommended)
 

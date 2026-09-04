@@ -1,6 +1,6 @@
 # mavor Developer Guide for Agents
 
-`mavor` is a low-latency voice-to-text dictation daemon and CLI for Sway and Wayland environments.
+`mavor` is a low-latency voice-to-text dictation daemon and CLI for wlroots-based Wayland compositors (sway, Hyprland, river, Wayfire, niri and labwc). It needs `wlr-layer-shell` for the overlay and `virtual-keyboard-v1` for typing; GNOME implements neither.
 
 ## Architecture
 

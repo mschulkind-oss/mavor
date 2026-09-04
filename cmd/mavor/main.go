@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -77,7 +78,7 @@ func transcriptStore(logger *slog.Logger) daemon.TranscriptRecorder {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, `mavor — low-latency voice dictation for Sway and Wayland
+	fmt.Fprintln(w, `mavor — low-latency voice dictation for Wayland
 
 usage: mavor <command> [args]
 
@@ -101,7 +102,7 @@ Environment & Service Management:
   version                               show version and build tags
   help                                  show this help message
 
-Sway Keybinding Example (~/.config/sway/config):
+Keybinding example (sway; adapt for your compositor):
   exec mavor daemon
   bindsym $mod+grave exec mavor toggle`)
 }
@@ -129,18 +130,17 @@ func runDaemon(args []string) error {
 			logFile = strings.TrimPrefix(a, "--log-file=")
 		}
 	}
-	// Ensure WAYLAND_DISPLAY and SWAYSOCK are exported if running under systemd
+	// A systemd user service may start before the compositor has exported
+	// WAYLAND_DISPLAY into the environment it inherited, so recover it from
+	// the socket on disk. The .lock file sits beside the socket and sorts
+	// after it, so take the first match rather than any match.
 	if os.Getenv("WAYLAND_DISPLAY") == "" {
 		if rt := os.Getenv("XDG_RUNTIME_DIR"); rt != "" {
-			if matches, _ := filepath.Glob(filepath.Join(rt, "wayland-*")); len(matches) > 0 {
-				os.Setenv("WAYLAND_DISPLAY", filepath.Base(matches[0]))
-			}
-		}
-	}
-	if os.Getenv("SWAYSOCK") == "" {
-		if rt := os.Getenv("XDG_RUNTIME_DIR"); rt != "" {
-			if matches, _ := filepath.Glob(filepath.Join(rt, "sway-ipc.*.sock")); len(matches) > 0 {
-				os.Setenv("SWAYSOCK", matches[0])
+			for _, m := range globSorted(filepath.Join(rt, "wayland-*")) {
+				if !strings.HasSuffix(m, ".lock") {
+					os.Setenv("WAYLAND_DISPLAY", filepath.Base(m))
+					break
+				}
 			}
 		}
 	}
@@ -313,4 +313,13 @@ func runStatus() error {
 	}
 	fmt.Println(resp.State)
 	return nil
+}
+
+// globSorted returns matches for pattern in a stable order, or nil. Glob's own
+// error case is a malformed pattern, which is a programming mistake rather
+// than a runtime condition, so it is discarded here.
+func globSorted(pattern string) []string {
+	matches, _ := filepath.Glob(pattern)
+	sort.Strings(matches)
+	return matches
 }

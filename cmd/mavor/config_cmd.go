@@ -35,7 +35,7 @@ duck_audio = true
 # ==============================================================================
 # Advanced Overrides (Optional — smart defaults are resolved automatically above)
 # ==============================================================================
-# top_margin = 32             # Gap below Swaybar / Waybar in pixels
+# top_margin = 32             # Gap below your bar (Waybar, etc.) in pixels
 # engine = "server"           # "server", "cli", or "sherpa"
 # model = "base.en"           # Whisper GGML model name
 # threads = 4                 # CPU inference threads

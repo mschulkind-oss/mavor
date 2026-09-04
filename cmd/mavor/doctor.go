@@ -140,7 +140,7 @@ func runSetup(args []string) error {
 	fmt.Println("\nQuick Start:")
 	fmt.Println("  1. Start the dictation daemon:")
 	fmt.Println("     mavor daemon (or systemctl --user start mavor)")
-	fmt.Println("\n  2. Add keybind to your Sway config (~/.config/sway/config):")
+	fmt.Println("\n  2. Add a keybind to your compositor config (sway shown; ~/.config/sway/config):")
 	fmt.Println("     bindsym $mod+grave exec mavor toggle")
 	fmt.Println("\n  3. Or test push-to-talk in another terminal:")
 	fmt.Println("     mavor start    # start recording")
@@ -359,7 +359,7 @@ func checkWayland() (bool, string) {
 			return true, fmt.Sprintf("socket found at %s", matches[0])
 		}
 	}
-	return false, "No Wayland session detected ($WAYLAND_DISPLAY unset; fix: run inside Sway/Wayland)"
+	return false, "No Wayland session detected ($WAYLAND_DISPLAY unset; fix: run inside a Wayland session)"
 }
 
 func checkAudio() (bool, string) {

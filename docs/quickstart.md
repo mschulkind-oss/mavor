@@ -9,7 +9,7 @@ summary: "Get mavor voice dictation running on Sway in under 5 minutes with just
 
 # mavor — 5-Minute Quickstart Guide
 
-Get low-latency voice dictation working in your Sway/Wayland desktop environment in five simple steps.
+Get low-latency voice dictation working in your wlroots Wayland session in five simple steps.
 
 ---
 

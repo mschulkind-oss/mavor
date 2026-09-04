@@ -19,7 +19,7 @@ ExecStart=%s daemon
 Restart=on-failure
 RestartSec=2s
 Environment=PULSE_LATENCY_MSEC=30
-PassEnvironment=WAYLAND_DISPLAY XDG_CURRENT_DESKTOP SWAYSOCK
+PassEnvironment=WAYLAND_DISPLAY XDG_CURRENT_DESKTOP
 
 [Install]
 WantedBy=graphical-session.target
