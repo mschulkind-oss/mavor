@@ -9,31 +9,42 @@ summary: "Living roadmap for the mavor dictation daemon: open decisions, the rea
 
 # Ongoing Work: `mavor` Voice-to-Text Utility
 
-**Status:** 2 Needs Attention (💬), 6 Ready to Implement (📦), 4 Open Threads (🔒 2, 🛑 1, 🧊 1)
+**Status:** 1 Blocker (🛑), 2 Needs Attention (💬), 4 Ready to Implement (📦), 4 Open Threads (🔒 2, 🛑 1, 🧊 1)
 
 ---
 
 ## 1. Attention Required (💬)
 
-### 💬 🤷 Is GPU acceleration worth pursuing at all?
+### 💬 Is GPU acceleration worth pursuing? Now with numbers
 
-`mavor doctor` now reports the truth, and the truth is that neither engine
-accelerates on a stock install:
+Measured, not inferred ([`model-benchmarks.md`](reports/model-benchmarks.md)).
+On an RX 9060 XT via Vulkan, comparing **the same binary with and without
+`-ng`**, so the only difference is the backend:
 
-- **whisper.cpp** — the nixpkgs build ships CPU backends only. GPU needs a
-  whisper.cpp built with `-DGGML_VULKAN=ON`, which is a packaging problem, not a
-  code one.
-- **sherpa-onnx** — the ONNX Runtime bundled with the Go binding carries no
-  provider libraries at all, so `sherpa_provider = "cuda"` can only fall back to
-  CPU. Fixing this means vendoring a GPU-built runtime and shipping a much
-  larger, hardware-specific binary.
+| Model | CPU | GPU | Speed-up |
+|---|---:|---:|---:|
+| `tiny.en` | 920 ms | 408 ms | 2.3× |
+| `base.en` | 1.56 s | 508 ms | 3.1× |
+| `small.en` | 4.35 s | 743 ms | 5.9× |
+| `medium.en` | 15.12 s | 1.57 s | 9.6× |
+| `large-v3` | 34.62 s | 5.01 s | 6.9× |
 
-Meanwhile `base.en` already runs at **7.3× real time on CPU**, which is well
-inside the latency budget for dictation.
+GPU also *lowers* host memory — 174 MB against 1.55 GB for `medium` — because
+the weights live on the card instead.
 
-This is a product call about how much you care, not a technical one — deferring
-to you. The options: leave it CPU-only and document that clearly; or take on
-GPU packaging as a real workstream.
+What this changes: the earlier framing was "`base.en` is already fast enough
+on CPU, so who cares." That holds for `base.en`. It does not hold for the
+accurate models. `medium.en` is 1.3× real time on CPU — a 20-second dictation
+takes 15 seconds to transcribe, which is unusable — and 12.7× real time on
+GPU, which is comfortable. **GPU is what makes the large models viable at
+all**, so the question is really whether mavor wants to offer them.
+
+The cost is unchanged and it is packaging, not code: distro whisper.cpp
+builds are CPU-only, so this means shipping or documenting a Vulkan build
+(`just bench-gpu-build` does it in about ten minutes). sherpa-onnx stays
+CPU-only regardless — see the workstream below.
+
+**Still deferring to you**, but the trade is now priced.
 
 ### 💬 Should whisper get vocabulary biasing?
 
@@ -58,30 +69,77 @@ the static version proves useful.
 
 Ordered by what unblocks other work first, then by cost.
 
-### 📦 1. Benchmark the whole catalog, not three models of it
+### 🛑 1. Ten of the 24 catalogued models cannot be loaded at all
 
-The single biggest gap. `mavor models list --verbose` shows a real, measured
-real-time factor for **3 of 24 models** — `tiny.en`, `base.en`,
-`large-v3-turbo` — and a hand-assigned relative tier for the other 21.
-`scripts/benchmark-multi-models.py` hardcodes those same three at
-[`scripts/benchmark-multi-models.py:52`](../scripts/benchmark-multi-models.py).
+The catalog-wide benchmark now exists ([`model-benchmarks.md`](reports/model-benchmarks.md),
+`just bench`), and the first full run turned up something much larger than
+the missing numbers it was built to fill in: **10 of the 13 sherpa models in
+the catalog fail to load.** Only `moonshine-tiny`, `moonshine-base` and
+`sensevoice-small` work.
 
-**No sherpa model has ever been benchmarked**, so every claim about the
-streaming transducers being fast is inference from architecture, not evidence.
+The failures cluster by how `DetectSherpaModelType` classified each model,
+which is what makes this one bug rather than ten:
 
-The work:
+| Model | Classified as | What it says |
+|---|---|---|
+| `parakeet`, `parakeet-tdt-0.6b`, `parakeet-unified-en` | offline transducer | `'vocab_size' does not exist in the metadata` |
+| `parakeet-ctc` | transducer | needs encoder/decoder/joiner; the directory has none |
+| `canary-1b`, `canary-180m` | **paraformer** | `'lfr_window_size' does not exist in the metadata` |
+| `paraformer` | **NeMo CTC** | `'subsampling_factor' does not exist in the metadata` |
+| `zipformer-streaming`, `zipformer-offline` | CTC | missing `model.onnx` |
+| `zipformer-ctc` | NeMo CTC | `'vocab_size' does not exist in the metadata` |
 
-- Drive the benchmark harness from `modelCatalog` instead of a hardcoded list,
-  so a new catalog entry is automatically in scope.
-- Cover both engines — the sherpa path is in-process CGO and needs different
-  instrumentation than the `whisper-cli` subprocess.
-- Report accuracy alongside speed. `test/fixtures/real_speech.wav.txt` is the
-  ground truth; a word error rate per model would turn "slow but accurate" from
-  an assumption into a number.
-- Feed the results back into `MeasuredRTF` so `--verbose` stops estimating.
+`canary` classified as paraformer and `paraformer` classified as NeMo CTC
+are not near misses — the detector is matching on the wrong evidence, and
+the name-match-beats-file-layout bug already recorded for `parakeet-ctc` is
+one symptom of a broader problem rather than the whole of it.
 
-This unblocks honest model recommendations everywhere else — the config presets,
-the README, and the `speed` field all currently rest on three data points.
+Two consequences worth stating plainly:
+
+- **`mavor models pull` will happily download 6 GB of models that cannot be
+  used.** Nothing warns the user, at pull time or at load time, until the
+  daemon tries to start.
+- **Streaming has never been measured, because no streaming model loads.**
+  Both streaming-capable entries in the catalog are among the failures, so
+  every claim about incremental decode remains untested.
+
+**Next step:** fix `DetectSherpaModelType` against the ten failing model
+directories, which are now all on disk. `just bench-sherpa` is the
+regression test — it goes from 10 failures to 0.
+
+### 📦 1b. Feed the measured numbers back into the catalog
+
+`MeasuredRTF` still carries figures for 3 models. The benchmark now measures
+every loadable one, so the field can stop being a placeholder — and
+`--verbose` can stop saying "relative tier, not measured" for models that
+have been measured.
+
+### 📦 1c. The accurate whisper models return worse text than `base.en`
+
+Unexpected, and it inverts the usual advice. From the same run, on the same
+audio:
+
+| Model | Transcript | Punct/word | Capitals F1 |
+|---|---|---:|---:|
+| `base.en` | `Lux is in the pit. He cannot sit still...` | 0.16 | 1.00 |
+| `medium.en` | `Lux is in the pit he cannot sit still...` | 0.00 | 0.57 |
+| `large-v3` | `lux is in the pit he cannot sit still...` | 0.00 | 0.00 |
+
+`large-v3`, `large-v3-turbo` and `distil-large-v3` all return **lowercase,
+unpunctuated** text. Word error rate is essentially identical across the
+whole family — the fixture is easy — so a report that measured only WER
+would call these models equivalent, and for dictation they are not: one
+produces text you can paste into a document, the others produce text you
+have to re-punctuate by hand.
+
+This is why the benchmark scores punctuation and capitalization separately
+from WER rather than normalizing them away.
+
+**Next step:** find out whether this is fixable from mavor's side. whisper.cpp
+takes an initial `--prompt`, and a prompt containing punctuated prose is the
+standard way to coax formatted output out of these models — which is the same
+mechanism the vocabulary-biasing item above wants. If it works, one change
+closes both.
 
 ### 📦 2. `mavor doctor` — the checks it still does not do
 
@@ -99,23 +157,6 @@ The GPU check landed. These are the remaining silent-failure modes:
   a confusing error when the cache filesystem is full.
 - **Machine-readable output.** `--json` so the checks can run in CI and in the
   integration harness rather than only being read by a human.
-
-### 📦 3. Fix `DetectSherpaModelType` misclassifying `parakeet-ctc`
-
-[`internal/speech/sherpa.go:442`](../internal/speech/sherpa.go) matches
-`strings.Contains(cleanName, "parakeet")` **even when the directory has no
-joiner file**, so `parakeet-ctc` — a CTC model — is classified as a transducer.
-The fix is to let the file-layout evidence win over the name match.
-
-Held back only because it wants a real `parakeet-ctc` download to verify
-against rather than a guess. Fold it into item 1, which will have every model
-on disk anyway.
-
-### 📦 4. `mavor models list --json`
-
-Machine-readable catalog output. Roughly ten lines, consistent with
-`mavor history --json`, and it makes the catalog scriptable for the benchmark
-harness in item 1.
 
 ### 📦 5. `formatFileSize` labels MiB as "MB"
 
