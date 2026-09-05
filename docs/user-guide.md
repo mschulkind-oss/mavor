@@ -120,21 +120,13 @@ engine = "cli"     # Options: "cli" (default), "sherpa", or "server"
 
 #### 3. `engine = "server"` — Offloaded or Shared Inference
 
-> [!WARNING]
-> **Broken as scaffolded.** The commented-out `server_socket` in the generated
-> config is a Unix socket path, and the supervisor starts `whisper-server` with
-> a `--socket` flag that whisper.cpp's server does not have, so the child exits
-> immediately. Over plain HTTP the client posts to `/v1/audio/transcriptions`,
-> where whisper.cpp serves `/inference`. The one configuration that works today
-> is an explicit HTTP endpoint carrying the path:
->
-> ```toml
-> engine        = "server"
-> server_socket = "http://127.0.0.1:8080/inference"
-> ```
->
-> Tracked in [`roadmap.md`](./roadmap.md); the benchmark's warm-server rows use
-> exactly this endpoint.
+> [!NOTE]
+> **The socket path is not a socket.** whisper.cpp's server binds a host and a
+> port and cannot bind a Unix socket, so a filesystem path in `server_socket`
+> is read as "run a local server for me": the daemon picks a free loopback
+> port, starts the child there, and says which port in the log. Nothing is
+> created at the configured path. Point `server_socket` at an `http://` URL
+> instead to use a server you run yourself, local or remote.
 
 - **How it works:** The daemon posts the captured WAV to a `whisper-server`
   endpoint as multipart form data, and reads the transcript out of the JSON
@@ -361,9 +353,13 @@ duck_sink = ""
 # ==========================================
 socket = "$XDG_RUNTIME_DIR/mavor.sock"
 
-# Where the `server` engine sends audio. The path matters — see the warning in
-# §2; a bare host and port returns 404 against whisper.cpp's server.
-server_socket = "http://127.0.0.1:8080/inference"
+# Where the `server` engine sends audio.
+#   a filesystem path — run a local whisper-server; the daemon picks a
+#                       loopback port and supervises the child itself
+#   an http:// URL     — use a server you run, here or on another machine
+# The request path is discovered: whisper.cpp serves /inference, hosted
+# services serve /v1/audio/transcriptions. Name one explicitly to skip that.
+server_socket = "$XDG_RUNTIME_DIR/mavor-server.sock"
 
 # ==========================================
 # Logging

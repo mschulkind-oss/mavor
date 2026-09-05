@@ -37,11 +37,13 @@ type ServerTranscriber struct {
 	// Logger is the structured logger.
 	Logger *slog.Logger
 
-	// mu guards learnedURL, which is the request URL a previous call found
-	// the server answering on. Discovering it costs one 404, and paying that
-	// on every utterance would put it in the latency of every dictation.
-	mu         sync.Mutex
-	learnedURL string
+	// mu guards learnedPath, the request path a previous call found the
+	// server answering on. Discovering it costs one 404, and paying that on
+	// every utterance would put it in the latency of every dictation. It is a
+	// path rather than a whole URL because the address can move under us: a
+	// supervised child that restarts comes back on a different port.
+	mu          sync.Mutex
+	learnedPath string
 }
 
 // NewServerTranscriber creates a new ServerTranscriber pointing to endpoint.
@@ -203,19 +205,20 @@ var knownPaths = []string{"/inference", "/v1/audio/transcriptions"}
 // themselves is the only candidate — a 404 from it is an error to report, not
 // a reason to go looking around someone else's server.
 func (s *ServerTranscriber) candidateURLs() []string {
-	s.mu.Lock()
-	learned := s.learnedURL
-	s.mu.Unlock()
-	if learned != "" {
-		return []string{learned}
-	}
-
 	base := s.baseURL()
 	for _, p := range knownPaths {
 		if strings.HasSuffix(base, p) {
 			return []string{base}
 		}
 	}
+
+	s.mu.Lock()
+	learned := s.learnedPath
+	s.mu.Unlock()
+	if learned != "" {
+		return []string{base + learned}
+	}
+
 	urls := make([]string, 0, len(knownPaths))
 	for _, p := range knownPaths {
 		urls = append(urls, base+p)
@@ -237,15 +240,29 @@ func (s *ServerTranscriber) baseURL() string {
 	return strings.TrimRight(endpoint, "/")
 }
 
-// target is where requests actually go.
+// target is where requests actually go. A supervised child may be listening
+// somewhere other than the configured endpoint, and it is the supervisor that
+// knows where — see Supervisor.Endpoint.
 func (s *ServerTranscriber) target() string {
+	if s.Supervisor != nil {
+		if ep := s.Supervisor.Endpoint(); ep != "" {
+			return ep
+		}
+	}
 	return s.Endpoint
 }
 
+// rememberURL records which of the known paths answered, so the next call
+// goes straight there even if the address it sits behind has changed.
 func (s *ServerTranscriber) rememberURL(u string) {
-	s.mu.Lock()
-	s.learnedURL = u
-	s.mu.Unlock()
+	for _, p := range knownPaths {
+		if strings.HasSuffix(u, p) {
+			s.mu.Lock()
+			s.learnedPath = p
+			s.mu.Unlock()
+			return
+		}
+	}
 }
 
 // wrongPath reports whether a status means "not here" rather than "this

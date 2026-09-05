@@ -287,8 +287,14 @@ and one with a `Start(context.Context) error` method is started before the
 daemon serves — that is how the warm whisper-server child is supervised.
 
 **Only the speech seam is user-selectable.** `speech.Factory` keys on the
-`engine` config value and returns the whisper-cli runner, the HTTP or
-Unix-socket server client, or the in-process sherpa recognizers. The other four
+`engine` config value and returns the whisper-cli runner, the warm-server
+client, or the in-process sherpa recognizers. A `server_socket` that names a
+filesystem path means "run one for me": whisper.cpp's server binds a host and
+port and cannot bind a Unix socket, so the supervisor picks a loopback port,
+starts the child there, and `Supervisor.Endpoint` is how the client finds it.
+The client discovers the request path the same way — whisper.cpp serves
+`/inference`, hosted services serve `/v1/audio/transcriptions`, and whichever
+answers is remembered. The other four
 are constructed by name in `runDaemon`; the only runtime choice there is the
 overlay's fallback to `Noop` when the compositor has no layer-shell.
 

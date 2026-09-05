@@ -177,14 +177,13 @@ func benchWarmServer(ctx context.Context, models []catalogModel, counts []int, m
 			cells = append(cells, cell)
 			continue
 		}
-		// Loopback HTTP with an explicit `/inference` path, because that is
-		// the configuration that actually works against the packaged
-		// whisper.cpp server: it has no `--socket` flag, so mavor's
-		// Unix-socket supervisor cannot bring it up at all, and it serves
-		// `/inference` rather than the OpenAI path the client defaults to.
-		// Both are daemon bugs rather than properties of the engine, and
-		// measuring around them keeps this table about warm versus cold.
-		endpoint := fmt.Sprintf("http://127.0.0.1:%d/inference", port)
+		// An explicit loopback endpoint rather than the daemon's "pick one
+		// for me" socket path: the benchmark needs to know the port it is
+		// measuring, and a port chosen here cannot collide with the one the
+		// supervisor would have chosen for a previous model still shutting
+		// down. The request path is left off so the run exercises the same
+		// path discovery a user gets.
+		endpoint := fmt.Sprintf("http://127.0.0.1:%d", port)
 
 		st := speech.NewServerTranscriber(endpoint)
 		st.Model = m.Name

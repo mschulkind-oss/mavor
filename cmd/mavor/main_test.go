@@ -98,6 +98,11 @@ func TestScaffoldDoesNotPromiseIncrementalTyping(t *testing.T) {
 	if !strings.Contains(scaffold, "typed once") {
 		t.Error("the scaffold does not tell the reader the text is typed once, when transcription finishes")
 	}
+	// server_socket names a path that nothing ever creates; a reader who is
+	// not told that goes looking for the socket when the engine misbehaves.
+	if !strings.Contains(scaffold, "run a local") {
+		t.Error("the scaffold does not explain what a filesystem path in server_socket means")
+	}
 }
 
 func TestServiceShow(t *testing.T) {

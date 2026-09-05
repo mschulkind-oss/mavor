@@ -45,6 +45,10 @@ duck_audio = true
 # silence_threshold_ms = 450  # Pause duration to trigger VAD batch slice
 # min_phrase_ms = 600         # Minimum speech duration before slicing
 # socket = "$XDG_RUNTIME_DIR/mavor.sock"
+# Where engine = "server" sends audio. A filesystem path means "run a local
+# whisper-server for me" — the daemon picks a loopback port and supervises the
+# child, so nothing is created at the path itself. Use an http:// URL to reach
+# a server you run.
 # server_socket = "$XDG_RUNTIME_DIR/mavor-server.sock"
 `
 

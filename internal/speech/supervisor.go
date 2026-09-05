@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -63,6 +62,19 @@ type Supervisor struct {
 	done   chan struct{}
 	mu     sync.Mutex
 	logger *slog.Logger
+
+	// endpoint is where the child is actually listening, which is not always
+	// what was configured: see Start.
+	endpoint string
+}
+
+// Endpoint reports the address the supervised child listens on, once it has
+// been started. It is not always the configured ServerSocket — a Unix socket
+// path becomes a loopback address — so a client must ask rather than assume.
+func (s *Supervisor) Endpoint() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.endpoint
 }
 
 // NewSupervisor creates a Supervisor with the given configuration.
@@ -107,32 +119,50 @@ func DefaultServerCommand(ctx context.Context, cfg SupervisorConfig) *exec.Cmd {
 		args = append(args, "-ngl", fmt.Sprint(cfg.GPULayers))
 	}
 
-	isUnix, socketPath := IsUnixSocket(cfg.ServerSocket)
-	if isUnix {
-		args = append(args, "--socket", socketPath)
-	} else if cfg.ServerSocket != "" {
-		target := cfg.ServerSocket
-		var host, port string
-		if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
-			if u, err := url.Parse(target); err == nil {
-				host = u.Hostname()
-				port = u.Port()
-			}
-		} else if strings.Contains(target, ":") {
-			h, p, err := net.SplitHostPort(target)
-			if err == nil {
-				host, port = h, p
-			}
-		}
-		if host != "" {
-			args = append(args, "--host", host)
-		}
-		if port != "" {
-			args = append(args, "--port", port)
-		}
+	// A host and a port is the only way this binary can be told where to
+	// listen. There is no --socket flag; passing one makes it print its usage
+	// and exit before it binds anything, which is why Start rewrites a Unix
+	// socket endpoint into a loopback address before getting here.
+	host, port := hostPort(cfg.ServerSocket)
+	if host != "" {
+		args = append(args, "--host", host)
+	}
+	if port != "" {
+		args = append(args, "--port", port)
 	}
 
 	return exec.CommandContext(ctx, binary, args...)
+}
+
+// hostPort splits a TCP endpoint — an http URL or a bare host:port — into its
+// parts. A Unix socket path has neither and yields two empty strings.
+func hostPort(endpoint string) (host, port string) {
+	if isUnix, _ := IsUnixSocket(endpoint); isUnix || endpoint == "" {
+		return "", ""
+	}
+	if strings.HasPrefix(endpoint, "http://") || strings.HasPrefix(endpoint, "https://") {
+		if u, err := url.Parse(endpoint); err == nil {
+			return u.Hostname(), u.Port()
+		}
+		return "", ""
+	}
+	if h, p, err := net.SplitHostPort(endpoint); err == nil {
+		return h, p
+	}
+	return endpoint, ""
+}
+
+// freeLoopbackPort asks the kernel for an unused port. There is a window
+// between closing this listener and the child binding the same port, which is
+// the standard cost of this approach: the alternative is a fixed port that
+// collides with whatever else the user is running.
+func freeLoopbackPort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
 // Start launches the child server process and blocks until it is ready to accept connections.
@@ -144,25 +174,37 @@ func (s *Supervisor) Start(ctx context.Context) error {
 		return nil
 	}
 
-	isUnix, socketPath := IsUnixSocket(s.cfg.ServerSocket)
-	if isUnix {
-		_ = os.Remove(socketPath)
-		if err := os.MkdirAll(filepath.Dir(socketPath), 0o755); err != nil {
-			return fmt.Errorf("speech: supervisor: create socket dir: %w", err)
+	// whisper.cpp's server binds a host and a port and cannot bind a Unix
+	// socket, so a socket path in the config means "run one for me" rather
+	// than naming a transport. Honour the intent on loopback, and say so:
+	// silently listening somewhere other than where a user pointed is worse
+	// than the failure it replaces.
+	endpoint := s.cfg.ServerSocket
+	if isUnix, socketPath := IsUnixSocket(endpoint); isUnix {
+		port, err := freeLoopbackPort()
+		if err != nil {
+			return fmt.Errorf("speech: supervisor: find a port for the child server: %w", err)
 		}
+		endpoint = fmt.Sprintf("http://127.0.0.1:%d", port)
+		s.logger.Info("speech: server_socket is a Unix socket path, which whisper-server cannot bind; supervising on loopback instead",
+			"configured", socketPath, "listening_on", endpoint)
 	}
+	s.endpoint = endpoint
+
+	childCfg := s.cfg
+	childCfg.ServerSocket = endpoint
 
 	var cmd *exec.Cmd
 	if s.cfg.CommandFunc != nil {
-		cmd = s.cfg.CommandFunc(ctx, s.cfg)
+		cmd = s.cfg.CommandFunc(ctx, childCfg)
 	} else {
-		cmd = DefaultServerCommand(ctx, s.cfg)
+		cmd = DefaultServerCommand(ctx, childCfg)
 	}
 
 	s.logger.Info("speech: supervisor launching child server",
 		"binary", cmd.Path,
 		"argv", cmd.Args,
-		"socket", s.cfg.ServerSocket,
+		"endpoint", endpoint,
 		"model", s.cfg.ModelPath,
 	)
 
@@ -237,25 +279,14 @@ func (s *Supervisor) waitForReady(ctx context.Context, doneCh chan struct{}, std
 	}
 }
 
+// probeReady dials where the child was told to listen. It runs under the same
+// lock as Start, which is what makes reading s.endpoint here safe.
 func (s *Supervisor) probeReady() bool {
-	isUnix, socketPath := IsUnixSocket(s.cfg.ServerSocket)
-	if isUnix {
-		conn, err := net.DialTimeout("unix", socketPath, 100*time.Millisecond)
-		if err == nil {
-			_ = conn.Close()
-			return true
-		}
+	host, port := hostPort(s.endpoint)
+	if host == "" || port == "" {
 		return false
 	}
-
-	target := s.cfg.ServerSocket
-	if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
-		u, err := url.Parse(target)
-		if err == nil {
-			target = u.Host
-		}
-	}
-	conn, err := net.DialTimeout("tcp", target, 100*time.Millisecond)
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 100*time.Millisecond)
 	if err == nil {
 		_ = conn.Close()
 		return true
@@ -291,11 +322,7 @@ func (s *Supervisor) stopLocked() error {
 
 	s.cmd = nil
 	s.done = nil
-
-	isUnix, socketPath := IsUnixSocket(s.cfg.ServerSocket)
-	if isUnix {
-		_ = os.Remove(socketPath)
-	}
+	s.endpoint = ""
 
 	return nil
 }

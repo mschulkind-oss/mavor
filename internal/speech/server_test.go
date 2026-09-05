@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -204,12 +203,8 @@ func TestServerTranscriberSupervisorLifecycle(t *testing.T) {
 	sup := NewSupervisor(SupervisorConfig{
 		ServerSocket: sockPath,
 		PollInterval: 10 * time.Millisecond,
-		ReadyTimeout: 3 * time.Second,
-		CommandFunc: func(ctx context.Context, cfg SupervisorConfig) *exec.Cmd {
-			cmd := exec.Command(os.Args[0], "-test.run=TestHelperServerProcess", "--", "--socket", cfg.ServerSocket)
-			cmd.Env = append(os.Environ(), "TEST_SUPERVISOR_HELPER=1")
-			return cmd
-		},
+		ReadyTimeout: 5 * time.Second,
+		CommandFunc:  whisperServerCommand,
 	})
 
 	st := NewServerTranscriber(sockPath)

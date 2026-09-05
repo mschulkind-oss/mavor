@@ -2,6 +2,7 @@ package speech
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -14,30 +15,50 @@ import (
 	"time"
 )
 
+// TestHelperServerProcess stands in for whisper.cpp's `whisper-server`. It
+// binds a host and port and — like the real binary — treats `--socket` as an
+// unknown argument and exits. A fake that accepted any flag is why the daemon
+// shipped for weeks unable to start this engine at all.
 func TestHelperServerProcess(t *testing.T) {
 	if os.Getenv("TEST_SUPERVISOR_HELPER") != "1" {
 		return
 	}
 	args := os.Args
-	var socketPath string
+	var host, port string
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--socket" && i+1 < len(args) {
-			socketPath = args[i+1]
-			break
+		switch args[i] {
+		case "--socket":
+			fmt.Fprintln(os.Stderr, "error: unknown argument: --socket")
+			os.Exit(2)
+		case "--host":
+			if i+1 < len(args) {
+				host = args[i+1]
+			}
+		case "--port":
+			if i+1 < len(args) {
+				port = args[i+1]
+			}
 		}
 	}
-	if socketPath == "" {
+	if host == "" || port == "" {
+		fmt.Fprintln(os.Stderr, "error: no --host/--port given")
 		os.Exit(2)
 	}
 
-	listener, err := net.Listen("unix", socketPath)
+	listener, err := net.Listen("tcp", net.JoinHostPort(host, port))
 	if err != nil {
+		fmt.Fprintln(os.Stderr, "error: listen:", err)
 		os.Exit(1)
 	}
 	defer listener.Close()
 
 	srv := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// whisper.cpp serves /inference and nothing else.
+			if r.URL.Path != "/inference" {
+				http.Error(w, "File Not Found", http.StatusNotFound)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"text": "fake server transcript"}`))
 		}),
@@ -56,25 +77,35 @@ func TestHelperServerProcess(t *testing.T) {
 	os.Exit(0)
 }
 
-func TestSupervisorStartAndStopUnixSocket(t *testing.T) {
+// whisperServerCommand launches the helper the way the supervisor launches the
+// real binary: with whatever endpoint the supervisor decided the child should
+// bind.
+func whisperServerCommand(_ context.Context, cfg SupervisorConfig) *exec.Cmd {
+	host, port := hostPort(cfg.ServerSocket)
+	cmd := exec.Command(os.Args[0], "-test.run=TestHelperServerProcess", "--", "--host", host, "--port", port)
+	cmd.Env = append(os.Environ(), "TEST_SUPERVISOR_HELPER=1")
+	return cmd
+}
+
+// A Unix socket path in the config means "run a local server for me". The
+// binary that runs cannot bind a Unix socket, so the supervisor picks a
+// loopback port and tells everyone — including the client — where it went.
+func TestSupervisorConfiguredWithASocketPathListensOnLoopback(t *testing.T) {
 	sockPath := filepath.Join(t.TempDir(), "supervisor-test.sock")
 	sup := NewSupervisor(SupervisorConfig{
 		ServerSocket: sockPath,
 		PollInterval: 10 * time.Millisecond,
-		ReadyTimeout: 3 * time.Second,
-		CommandFunc: func(ctx context.Context, cfg SupervisorConfig) *exec.Cmd {
-			cmd := exec.Command(os.Args[0], "-test.run=TestHelperServerProcess", "--", "--socket", cfg.ServerSocket)
-			cmd.Env = append(os.Environ(), "TEST_SUPERVISOR_HELPER=1")
-			return cmd
-		},
+		ReadyTimeout: 5 * time.Second,
+		CommandFunc:  whisperServerCommand,
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err := sup.Start(ctx); err != nil {
 		t.Fatalf("Supervisor.Start failed: %v", err)
 	}
+	defer sup.Stop()
 
 	if !sup.IsRunning() {
 		t.Fatal("expected supervisor to report running")
@@ -82,9 +113,17 @@ func TestSupervisorStartAndStopUnixSocket(t *testing.T) {
 	if sup.PID() <= 0 {
 		t.Fatalf("expected PID > 0, got %d", sup.PID())
 	}
+	ep := sup.Endpoint()
+	if !strings.HasPrefix(ep, "http://127.0.0.1:") {
+		t.Fatalf("Endpoint() = %q, want a loopback HTTP endpoint", ep)
+	}
+	if _, err := os.Stat(sockPath); err == nil {
+		t.Error("a socket file was created; nothing listens on it and its presence invites a client to dial it")
+	}
 
-	// Verify server responds
+	// The client must follow the supervisor to where the server actually is.
 	st := NewServerTranscriber(sockPath)
+	st.Supervisor = sup
 	wavPath := filepath.Join(t.TempDir(), "audio.wav")
 	_ = os.WriteFile(wavPath, []byte("fake-wav"), 0o644)
 	got, err := st.Transcribe(ctx, wavPath)
@@ -95,12 +134,47 @@ func TestSupervisorStartAndStopUnixSocket(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, "fake server transcript")
 	}
 
-	// Stop supervisor
 	if err := sup.Stop(); err != nil {
 		t.Fatalf("Supervisor.Stop failed: %v", err)
 	}
 	if sup.IsRunning() {
 		t.Fatal("expected supervisor to report not running after Stop")
+	}
+}
+
+// A restart lands the child on a different port. Anything the client cached
+// about where to send requests has to survive that.
+func TestTranscriberFollowsTheServerAcrossARestart(t *testing.T) {
+	sup := NewSupervisor(SupervisorConfig{
+		ServerSocket: filepath.Join(t.TempDir(), "restart-follow.sock"),
+		PollInterval: 10 * time.Millisecond,
+		ReadyTimeout: 5 * time.Second,
+		CommandFunc:  whisperServerCommand,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := sup.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer sup.Stop()
+
+	st := NewServerTranscriber(sup.Endpoint())
+	st.Supervisor = sup
+	wavPath := filepath.Join(t.TempDir(), "audio.wav")
+	_ = os.WriteFile(wavPath, []byte("fake-wav"), 0o644)
+
+	if _, err := st.Transcribe(ctx, wavPath); err != nil {
+		t.Fatalf("first Transcribe: %v", err)
+	}
+	first := sup.Endpoint()
+	if err := sup.Restart(ctx); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if sup.Endpoint() == first {
+		t.Skip("the restarted child reused the same port; nothing to check")
+	}
+	if _, err := st.Transcribe(ctx, wavPath); err != nil {
+		t.Fatalf("Transcribe after restart went to the old address: %v", err)
 	}
 }
 
@@ -157,11 +231,7 @@ func TestSupervisorRestart(t *testing.T) {
 		ServerSocket: sockPath,
 		PollInterval: 10 * time.Millisecond,
 		ReadyTimeout: 3 * time.Second,
-		CommandFunc: func(ctx context.Context, cfg SupervisorConfig) *exec.Cmd {
-			cmd := exec.Command(os.Args[0], "-test.run=TestHelperServerProcess", "--", "--socket", cfg.ServerSocket)
-			cmd.Env = append(os.Environ(), "TEST_SUPERVISOR_HELPER=1")
-			return cmd
-		},
+		CommandFunc:  whisperServerCommand,
 	})
 
 	ctx := context.Background()
@@ -191,11 +261,7 @@ func TestSupervisorIdempotent(t *testing.T) {
 		ServerSocket: sockPath,
 		PollInterval: 10 * time.Millisecond,
 		ReadyTimeout: 3 * time.Second,
-		CommandFunc: func(ctx context.Context, cfg SupervisorConfig) *exec.Cmd {
-			cmd := exec.Command(os.Args[0], "-test.run=TestHelperServerProcess", "--", "--socket", cfg.ServerSocket)
-			cmd.Env = append(os.Environ(), "TEST_SUPERVISOR_HELPER=1")
-			return cmd
-		},
+		CommandFunc:  whisperServerCommand,
 	})
 
 	ctx := context.Background()
@@ -217,7 +283,7 @@ func TestDefaultServerCommandArgs(t *testing.T) {
 	cfg := SupervisorConfig{
 		BinaryPath:   "/usr/bin/whisper-server",
 		ModelPath:    "/models/base.bin",
-		ServerSocket: "/run/user/1000/mavor-server.sock",
+		ServerSocket: "http://127.0.0.1:9090",
 		GPULayers:    16,
 		Threads:      6,
 	}
@@ -233,8 +299,10 @@ func TestDefaultServerCommandArgs(t *testing.T) {
 	if !strings.Contains(args, "-t 6") {
 		t.Errorf("expected -t 6 in args: %s", args)
 	}
-	if !strings.Contains(args, "--socket /run/user/1000/mavor-server.sock") {
-		t.Errorf("expected --socket in args: %s", args)
+	// whisper.cpp's server has no --socket flag; passing one makes it exit
+	// before it binds anything.
+	if strings.Contains(args, "--socket") {
+		t.Errorf("argv passes --socket, which the server rejects: %s", args)
 	}
 }
 
