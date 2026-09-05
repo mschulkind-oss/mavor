@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -239,5 +240,111 @@ func TestServerTranscriberSupervisorLifecycle(t *testing.T) {
 	}
 	if sup.IsRunning() {
 		t.Fatal("expected supervisor to be stopped after Close")
+	}
+}
+
+// whisperCppServer is a stand-in for whisper.cpp's own server: it serves
+// `/inference` and returns 404 for everything else, which is what a real
+// `whisper-server` does to the OpenAI path the client used to assume.
+func whisperCppServer(t *testing.T, seen *[]string) *httptest.Server {
+	t.Helper()
+	var mu sync.Mutex
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		*seen = append(*seen, r.URL.Path)
+		mu.Unlock()
+		if r.URL.Path != "/inference" {
+			http.Error(w, "File Not Found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"text": "whisper cpp transcript"}`)
+	}))
+}
+
+func TestServerTranscriberFallsBackToInferencePath(t *testing.T) {
+	wavPath := filepath.Join(t.TempDir(), "audio.wav")
+	if err := os.WriteFile(wavPath, []byte("fake-wav-data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var seen []string
+	ts := whisperCppServer(t, &seen)
+	defer ts.Close()
+
+	// A bare host and port, which is what a user writes in config.toml.
+	st := NewServerTranscriber(ts.URL)
+	got, err := st.Transcribe(context.Background(), wavPath)
+	if err != nil {
+		t.Fatalf("Transcribe against a whisper.cpp server failed: %v", err)
+	}
+	if got != "whisper cpp transcript" {
+		t.Fatalf("got %q, want the transcript from /inference", got)
+	}
+	if len(seen) == 0 || seen[len(seen)-1] != "/inference" {
+		t.Fatalf("request paths were %v; the last one should be /inference", seen)
+	}
+}
+
+func TestServerTranscriberRemembersTheWorkingPath(t *testing.T) {
+	wavPath := filepath.Join(t.TempDir(), "audio.wav")
+	if err := os.WriteFile(wavPath, []byte("fake-wav-data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// An OpenAI-compatible server: the path mavor tries first is the wrong
+	// one here, so the discovery miss is visible.
+	var mu sync.Mutex
+	var seen []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.URL.Path)
+		mu.Unlock()
+		if r.URL.Path != "/v1/audio/transcriptions" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"text": "hosted transcript"}`)
+	}))
+	defer ts.Close()
+
+	st := NewServerTranscriber(ts.URL)
+	for i := 0; i < 3; i++ {
+		if _, err := st.Transcribe(context.Background(), wavPath); err != nil {
+			t.Fatalf("Transcribe %d failed: %v", i, err)
+		}
+	}
+	// One miss on the first call, then never again. Paying the 404 on every
+	// dictation would put it in the latency of every utterance.
+	misses := 0
+	for _, p := range seen {
+		if p != "/v1/audio/transcriptions" {
+			misses++
+		}
+	}
+	if misses != 1 {
+		t.Fatalf("request paths were %v; want exactly one miss before the path is learned", seen)
+	}
+}
+
+func TestServerTranscriberDoesNotSecondGuessAnExplicitPath(t *testing.T) {
+	wavPath := filepath.Join(t.TempDir(), "audio.wav")
+	if err := os.WriteFile(wavPath, []byte("fake-wav-data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var seen []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.URL.Path)
+		http.Error(w, "nope", http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	// The user named a path. A 404 from it is an error to report, not an
+	// invitation to go looking for a different endpoint on their server.
+	st := NewServerTranscriber(ts.URL + "/v1/audio/transcriptions")
+	if _, err := st.Transcribe(context.Background(), wavPath); err == nil {
+		t.Fatal("expected the 404 to be reported, not worked around")
+	}
+	if len(seen) != 1 {
+		t.Fatalf("request paths were %v; an explicit path is tried once", seen)
 	}
 }
