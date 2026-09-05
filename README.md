@@ -113,7 +113,16 @@ just deploy
 
 ## Quick Start & Verification
 
-Run the built-in diagnostic tool to verify your Wayland and audio environment:
+The five-step version, with what each command prints and what to do when a
+step does not land, is [`docs/quickstart.md`](docs/quickstart.md). The short
+form:
+
+```bash
+mavor setup      # config, missing tools, default model, systemd unit
+```
+
+Or do it by hand. Run the built-in diagnostic tool to verify your Wayland and
+audio environment:
 
 ```bash
 mavor doctor
@@ -248,6 +257,20 @@ parakeet
 Whisper models are fetched from the whisper.cpp GGML repository and land in
 `model_dir` as `ggml-<name>.bin`. Sherpa models come from the sherpa-onnx
 release assets and unpack into `model_dir/sherpa/<name>/`.
+
+## Documentation
+
+[`docs/`](docs/README.md) is indexed, and the index says which tree to trust
+for what — guides describe use, `reference/` describes the built system,
+`reports/` are generated measurements, and `design/` and `planning/` are
+proposals rather than descriptions.
+
+- [Quickstart](docs/quickstart.md) · [User Guide](docs/user-guide.md) ·
+  [Choosing a Model](docs/choosing-a-model.md)
+- [How mavor works](docs/reference/how-mavor-works.md) — the daemon as built
+- [Measured model benchmarks](docs/reports/model-benchmarks.md) — regenerate
+  with `just bench`
+- [Roadmap](docs/roadmap.md) — open decisions and known blockers
 
 ## Development
 
