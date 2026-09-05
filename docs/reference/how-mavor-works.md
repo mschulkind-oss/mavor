@@ -4,7 +4,7 @@ author: "Matthew Schulkind"
 date: 2026-09-05
 status: accepted
 verified: 2026-09-05
-verified_commit: c2a3a48
+verified_commit: dbe6592
 covers:
   - internal/state/
   - internal/daemon/
@@ -22,7 +22,7 @@ summary: "As-built reference for the mavor daemon: the three-state machine, the 
 
 # How `mavor` works
 
-**Status:** CURRENT as of 2026-09-05, verified against `c2a3a48`.
+**Status:** CURRENT as of 2026-09-05, verified against `dbe6592`.
 
 `mavor` is one long-lived daemon whose entire shared mutable state is a
 three-value enum. A hotkey-launched CLI pokes it over a Unix socket; the enum
@@ -422,7 +422,7 @@ The empty space, verified by search rather than assumed:
 
 ## Current values
 
-Verified at `c2a3a48`. The prose above says what each of these is for; this
+Verified at `dbe6592`. The prose above says what each of these is for; this
 table is the only place the values themselves are stated.
 
 | Value | Setting | Defined in |

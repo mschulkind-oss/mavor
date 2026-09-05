@@ -173,34 +173,32 @@ The GPU check landed. These are the remaining silent-failure modes:
 - **Machine-readable output.** `--json` so the checks can run in CI and in the
   integration harness rather than only being read by a human.
 
-### 🛑 3. `engine = "server"` cannot start the packaged whisper-server
+### ✅ 3. `engine = "server"` starts and transcribes — RESOLVED (2026-09-05)
 
-Found by the warm-server benchmark, which is the first thing in the project
-ever to drive this engine end to end. Two independent breaks, both in
-[`internal/speech/supervisor.go`](../internal/speech/supervisor.go) and
-[`server.go`](../internal/speech/server.go):
+Found by the warm-server benchmark, which was the first thing in the project
+ever to drive this engine end to end. Two independent breaks, both fixed in
+`dbe6592` and `fd20208`:
 
-- **A Unix socket cannot work at all.** `DefaultServerCommand` passes
-  `--socket <path>` when `server_socket` is a filesystem path. whisper.cpp's
-  server has no such flag — it binds host and port — so the child exits
-  immediately with `error: unknown argument: --socket` and the supervisor
-  reports a readiness failure. This is the *default* shape of `server_socket`
-  in the config scaffold.
-- **Over HTTP the request 404s.** The client posts to
-  `/v1/audio/transcriptions` unless the endpoint already ends in `/inference`.
-  whisper.cpp 1.9.2 serves `/inference` and returns `File Not Found` for the
-  OpenAI path.
+- **A Unix socket could not work at all.** `DefaultServerCommand` passed
+  `--socket <path>` — the shape `mavor config init` writes — to a binary that
+  binds a host and a port and has no such flag. The child printed its usage and
+  exited. The supervisor now reads a filesystem path as *intent* rather than
+  transport: it takes a free loopback port, starts the child there, logs where
+  it went, and `Supervisor.Endpoint` tells the client. An `http://` endpoint is
+  still used exactly as written.
+- **Over HTTP the request 404'd.** The client posted to
+  `/v1/audio/transcriptions`; whisper.cpp serves `/inference`. It now tries both
+  and remembers which answered — once per daemon, not once per dictation.
 
-So `engine = "server"` works today only if a user writes
-`server_socket = "http://127.0.0.1:8080/inference"` by hand, which nothing
-documents. The benchmark uses exactly that, and says so in a comment.
+Neither could have been caught by the tests that existed: the fake server
+accepted any flag and answered on any path, because it was written from the
+same assumption as the code. It now behaves like the real binary, and an
+`e2e`-tagged test in [`internal/speech`](../internal/speech/server_e2e_test.go)
+runs a real `whisper-server` through the scaffolded config.
 
-**Next step:** decide whether the supervisor keeps pretending Unix sockets are
-available. Cheapest honest fix: bind loopback with a chosen port when a socket
-path is configured, and probe `/inference` before falling back to the OpenAI
-path — plus a test that the generated argv is one the binary accepts. Whatever
-the shape, the fix needs a failing test first; there is none today because
-nothing exercised the engine.
+**Left undone:** nothing measures the engine in CI, and `mavor doctor` still
+does not check it — a user whose `whisper-server` is missing finds out at the
+first dictation. That belongs with the doctor checks in item 2.
 
 ### 📦 5. `formatFileSize` labels MiB as "MB"
 
