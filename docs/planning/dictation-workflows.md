@@ -2,12 +2,19 @@
 title: "User Stories: Voice-to-Text Dictation on Linux (mavor)"
 author: "Matthew Schulkind"
 date: 2026-09-04
-status: accepted
+status: in-review
 tags: [user-stories, personas, onboarding, install, wayland, dictation, models, cli]
 summary: "Five concrete narrative user stories tracing new users from discovery and installation through everyday dictation and model switching on Wayland."
 ---
 
 # User Stories: Voice-to-Text Dictation on Linux (`mavor`)
+
+> [!NOTE]
+> This is a planning document, not a description of the built system. The
+> stories walk workflows as they are meant to feel, and the inline **Gap:**
+> notes name what is missing — read them as intent, not as behaviour that
+> exists. [`../design/how-mavor-works.md`](../design/how-mavor-works.md) is
+> the account of what mavor actually does today.
 
 This document explores how new users discover, install, configure, dictate with, and switch models in `mavor`, a background voice-to-text dictation daemon for wlroots Wayland compositors (Sway, Hyprland, river, Wayfire, niri, labwc). It traces the end-to-end journey across five distinct personas—from an RSI-fatigued engineer and a minimal-dotfiles purist to a non-technical writer, an audio power user, and an automated headless CI agent.
 
