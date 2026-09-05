@@ -268,8 +268,9 @@ evaluates ahead-of-time compiled inference against the graph interpreters mavor
 uses today.
 
 Genuinely uncertain this is worth building. The premise is that compilation buys
-latency, but `base.en` at 7.3× real time is already fast enough for dictation,
-and both runtimes would add a heavyweight toolchain to the build.
+latency, but `base.en` at 12.2× real time on CPU — 36.6× on a Vulkan build —
+is already far past what dictation needs, and both runtimes would add a
+heavyweight toolchain to the build.
 
 **Next step:** revisit once item 1 produces catalog-wide numbers. If the fast
 sherpa transducers turn out to close the gap on their own, this stays frozen.
