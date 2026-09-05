@@ -4,6 +4,8 @@
 // over HTTP or a Unix socket, or in-process sherpa-onnx recognizers. The
 // interface also lets the daemon swap in a Mock for unit tests — deterministic
 // text, no model load.
+//
+// Architecture and invariants: docs/reference/how-mavor-works.md
 package speech
 
 import (

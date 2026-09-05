@@ -2,6 +2,8 @@
 // CLI speak (toggle, start, stop, status). One connection = one request + one response. The
 // protocol is intentionally trivial — we are not building a general RPC, just
 // a way for a hotkey-launched short-lived process to nudge the daemon.
+//
+// Architecture and invariants: docs/reference/how-mavor-works.md
 package ipc
 
 import (

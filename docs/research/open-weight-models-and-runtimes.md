@@ -14,7 +14,7 @@ Evergreen domain doc for `mavor`. Scope: **open-weight acoustic models**, **loca
 Sibling docs in this tree:
 - [`hosted-stt-and-postprocessing.md`](./hosted-stt-and-postprocessing.md) — Hosted/cloud speech-to-text (STT) APIs (Groq, OpenAI, Deepgram) and LLM post-processing.
 - [`wayland-dictation-stack.md`](./wayland-dictation-stack.md) — Wayland input injection, hotkey dispatch, and desktop compositor integration.
-- [`how-mavor-works.md`](../design/how-mavor-works.md) — Current internal architecture of `mavor`.
+- [`how-mavor-works.md`](../reference/how-mavor-works.md) — Current internal architecture of `mavor`.
 
 ---
 

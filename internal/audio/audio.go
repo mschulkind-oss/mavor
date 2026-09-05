@@ -1,6 +1,8 @@
 // Package audio captures speech from a PulseAudio/PipeWire source via parec.
 // The Recorder interface keeps the daemon's state machine agnostic to the
 // real capture process — tests use a Mock that returns canned WAV fixtures.
+//
+// Architecture and invariants: docs/reference/how-mavor-works.md
 package audio
 
 import (

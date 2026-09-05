@@ -2,6 +2,8 @@
 // the focused window via wtype AND placing it on the clipboard via wl-copy.
 // Both happen on every emission; if one fails the other is still attempted
 // and errors are joined.
+//
+// Architecture and invariants: docs/reference/how-mavor-works.md
 package output
 
 import (

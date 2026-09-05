@@ -3,6 +3,8 @@
 // overlay uses to redraw on every transition. It is pure Go and has no
 // dependencies outside the standard library so the FSM can be exercised
 // without any Wayland/audio harness.
+//
+// Architecture and invariants: docs/reference/how-mavor-works.md
 package state
 
 import "sync"

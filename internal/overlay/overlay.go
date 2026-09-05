@@ -4,6 +4,8 @@
 // The Overlay interface is the seam: the daemon can be driven by Noop or Mock
 // in unit tests, the painter in paint.go turns state into an image with no
 // compositor involved, and overlay_wl.go is the only part that speaks Wayland.
+//
+// Architecture and invariants: docs/reference/how-mavor-works.md
 package overlay
 
 import "math"

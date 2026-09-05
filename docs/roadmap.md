@@ -183,14 +183,20 @@ Pick one convention and apply it everywhere — the same formatter renders
 installed sizes and doctor output, so this is a small change with a wide blast
 radius.
 
-### 📦 6. Retire the design docs that have shipped
+### ✅ 6. The design docs that have shipped are retired
 
-[`how-mavor-works.md`](design/how-mavor-works.md) is `status: accepted` and
-describes a system that is built. Per the `system-doc` convention it should
-become an evergreen system reference and the design doc deleted.
+`how-mavor-works.md` was `status: accepted` and described a system built two
+weeks and 18,000 lines of Go earlier — no push-to-talk, no VAD, no history, no
+engine selection, and a stuck-in-Recording bug that has since been fixed. It is
+now [`how-mavor-works.md`](reference/how-mavor-works.md) in the reference tree,
+reconciled against `c2a3a48`, and the design doc is deleted.
 
 Its companion, `local-engine-benchmarks-and-architecture.md`, is already gone —
 not retired but withdrawn. See the note on fabricated reports below.
+
+What is left in `docs/design/`: `active-window-context-and-vocabulary-prompting.md`,
+which is `in-review` and unbuilt, and `next-gen-runtimes-executorch-iree.md`,
+which is frozen. Both are proposals, which is what that tree is for.
 
 ---
 

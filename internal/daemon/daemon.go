@@ -3,8 +3,10 @@
 // is the seam between the small interface packages and `cmd/mavor`.
 //
 // The daemon does not embed a specific Overlay implementation; callers pass
-// one in (Noop in tests, GTK in production). That keeps the daemon's tests
-// fast and free of cgo.
+// one in (Noop in tests, the wlr-layer-shell overlay in production). That
+// keeps the daemon's tests fast and free of cgo.
+//
+// Architecture and invariants: docs/reference/how-mavor-works.md
 package daemon
 
 import (

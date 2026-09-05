@@ -171,4 +171,4 @@ followed by a paste gets the words in.
 | Pick a different model, or a language other than English | [`choosing-a-model.md`](./choosing-a-model.md) |
 | Stream tokens as you speak, switch to the in-process sherpa engines, tune ducking and VAD | [`user-guide.md`](./user-guide.md) |
 | See the speed, memory and accuracy numbers behind the defaults | [`reports/model-benchmarks.md`](./reports/model-benchmarks.md) |
-| Understand how the daemon is put together | [`design/how-mavor-works.md`](./design/how-mavor-works.md) |
+| Understand how the daemon is put together | [`reference/how-mavor-works.md`](./reference/how-mavor-works.md) |

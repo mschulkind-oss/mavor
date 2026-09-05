@@ -11,7 +11,7 @@ summary: "Task-oriented manual for installing, running, configuring, and debuggi
 
 A task-oriented manual for installing, running, configuring, and debugging `mavor`, the low-latency voice dictation daemon for Sway and Wayland compositors.
 
-For high-level architecture see [`how-mavor-works.md`](./design/how-mavor-works.md).
+For high-level architecture see [`how-mavor-works.md`](./reference/how-mavor-works.md).
 
 > [!TIP]
 > **Which model should you use?** See [`choosing-a-model.md`](./choosing-a-model.md)

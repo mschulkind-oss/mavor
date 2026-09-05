@@ -2,6 +2,8 @@
 // that never reached its destination. Synthetic typing can be swallowed by a
 // window that lost focus, a compositor that dropped the keystrokes, or an app
 // that was still starting — and the transcript is gone with no way back.
+//
+// Architecture and invariants: docs/reference/how-mavor-works.md
 package history
 
 import (

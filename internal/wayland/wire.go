@@ -6,6 +6,8 @@
 // is one surface that never takes focus and never reads a key. That narrowness
 // is what makes hand-writing the protocol cheaper than depending on a C library
 // which, being cgo, would forbid cross-compilation and static linking.
+//
+// Architecture and invariants: docs/reference/how-mavor-works.md
 package wayland
 
 import (
