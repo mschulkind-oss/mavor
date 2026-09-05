@@ -61,6 +61,10 @@ type options struct {
 	skipGPU    bool
 	skipSherpa bool
 	render     bool
+
+	threadSweep string
+	sweepModels string
+	skipWarmSrv bool
 }
 
 // rerender rewrites the Markdown from a results file. It deliberately does
@@ -98,6 +102,9 @@ func run() error {
 	flag.StringVar(&o.mdOut, "markdown", "docs/reports/model-benchmarks.md", "where to write the rendered report")
 	flag.BoolVar(&o.skipGPU, "no-gpu", false, "skip the GPU column even if a GPU build was given")
 	flag.BoolVar(&o.skipSherpa, "no-sherpa", false, "skip the sherpa engines even if built in")
+	flag.StringVar(&o.threadSweep, "thread-sweep", "2,4,6,8", "thread counts for the thread-scaling table; empty skips it")
+	flag.StringVar(&o.sweepModels, "sweep-models", "tiny.en,base.en,small.en", "models the thread and warm-server sweeps run over")
+	flag.BoolVar(&o.skipWarmSrv, "no-warm-server", false, "skip the warm whisper-server comparison")
 	flag.BoolVar(&o.render, "render", false, "re-render the Markdown from an existing results JSON without running anything")
 	flag.Parse()
 
@@ -249,6 +256,8 @@ func run() error {
 		}
 	}
 
+	runSweeps(ctx, report, stock, selected, cat.ModelDir, o, audioSec)
+
 	if err := writeJSON(o.jsonOut, report); err != nil {
 		return err
 	}
@@ -257,6 +266,69 @@ func run() error {
 	}
 	fmt.Fprintf(os.Stderr, "\nwrote %s and %s\n", o.jsonOut, o.mdOut)
 	return nil
+}
+
+// runSweeps runs the two setting sweeps — thread count, and warm server
+// versus cold CLI — and records why in Skipped whenever one of them does not
+// run. Both are whisper-only: they vary a whisper.cpp setting, and sherpa
+// exposes neither.
+func runSweeps(ctx context.Context, r *report, stock whisperRunner, selected []catalogModel, modelDir string, o options, audioSec float64) {
+	counts, err := parseThreadSweep(o.threadSweep)
+	if err != nil {
+		r.Skipped = append(r.Skipped, skipNote{"thread scaling", err.Error()})
+		return
+	}
+	sweepModels, absent := selectSweepModels(selected, strings.Split(o.sweepModels, ","))
+	if len(absent) > 0 {
+		r.Skipped = append(r.Skipped, skipNote{
+			"thread scaling / warm server",
+			fmt.Sprintf("asked for %s, which %s not installed whisper models; pull them for a fuller sweep",
+				"`"+strings.Join(absent, "`, `")+"`", plural(len(absent), "is", "are")),
+		})
+	}
+
+	switch {
+	case len(counts) == 0:
+		r.Skipped = append(r.Skipped, skipNote{"thread scaling", "disabled with -thread-sweep="})
+	case len(sweepModels) == 0:
+		r.Skipped = append(r.Skipped, skipNote{"thread scaling", "none of the -sweep-models are installed"})
+	case r.WhisperCPUBackends == nil:
+		r.Skipped = append(r.Skipped, skipNote{"thread scaling", "no stock whisper-cli to sweep"})
+	default:
+		fmt.Fprintf(os.Stderr, "\nthread sweep: %d models × %v threads\n", len(sweepModels), counts)
+		r.ThreadScaling = benchThreadSweep(ctx, stock, sweepModels, counts, modelDir, o, audioSec)
+	}
+
+	switch {
+	case o.skipWarmSrv:
+		r.Skipped = append(r.Skipped, skipNote{"warm server", "disabled with -no-warm-server"})
+	case len(sweepModels) == 0:
+		r.Skipped = append(r.Skipped, skipNote{"warm server", "none of the -sweep-models are installed"})
+	case !whisperServerAvailable():
+		r.Skipped = append(r.Skipped, skipNote{"warm server", "no whisper-server or whisper-cpp-server on PATH"})
+	default:
+		fmt.Fprintf(os.Stderr, "\nwarm server: %d models\n", len(sweepModels))
+		r.WarmServer = benchWarmServer(ctx, sweepModels, counts, modelDir, o, audioSec, coldTimes(r.ThreadScaling))
+	}
+}
+
+// whisperServerAvailable mirrors the binaries the speech supervisor looks for,
+// so the report skips the section for the same reason the daemon would fail to
+// start the engine.
+func whisperServerAvailable() bool {
+	for _, name := range []string{"whisper-server", "whisper-cpp-server"} {
+		if _, err := exec.LookPath(name); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 // hasGPUBackend reports whether a ggml backend list contains anything that

@@ -104,8 +104,12 @@ storybook:
     @echo "UI Storybook Report: test/reports/ui-storybook.html"
 
 # Benchmark every installed model: speed, peak memory, accuracy, on every
-# backend this machine can run. Writes docs/reports/model-benchmarks.md and
-# test/reports/benchmarks/latest.json.
+# backend this machine can run, plus the two setting sweeps — thread scaling
+# and warm whisper-server versus cold CLI. Writes
+# docs/reports/model-benchmarks.md and test/reports/benchmarks/latest.json.
+#
+# The sweeps run over -sweep-models at -thread-sweep thread counts; pass
+# `-thread-sweep=` and `-no-warm-server` to skip them on a slow machine.
 #
 # Picks up the Vulkan whisper build automatically if `just bench-gpu-build` has
 # been run; without it the report says the GPU column was skipped and why.

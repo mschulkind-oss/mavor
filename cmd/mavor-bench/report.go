@@ -39,6 +39,12 @@ type report struct {
 	Results      []runResult `json:"results"`
 	NotInstalled []string    `json:"not_installed,omitempty"`
 	Skipped      []skipNote  `json:"skipped,omitempty"`
+
+	// The two sweeps vary a setting rather than a model, so they carry their
+	// own cells rather than more rows in Results — a thread-scaling cell is
+	// not comparable with a model row and must not be sorted alongside one.
+	ThreadScaling []threadCell `json:"thread_scaling,omitempty"`
+	WarmServer    []serverCell `json:"warm_server,omitempty"`
 }
 
 func writeJSON(path string, r *report) error {
@@ -86,6 +92,8 @@ func writeMarkdown(path string, r *report) error {
 	writeMemoryTable(&b, r)
 	writeAccuracyTable(&b, r)
 	writeStreamingSection(&b, r)
+	writeThreadScalingSection(&b, r)
+	writeWarmServerSection(&b, r)
 	writeFailures(&b, r)
 	writeMethod(&b, r)
 
@@ -289,6 +297,85 @@ func writeStreamingSection(b *strings.Builder, r *report) {
 	b.WriteString("\nA dash under **first token** means the recognizer returned no partial text\n")
 	b.WriteString("before the stream closed — it accepted the chunks but decoded only at the\n")
 	b.WriteString("end, which is worth knowing about a model the catalog calls streaming.\n\n")
+}
+
+// writeThreadScalingSection answers the `threads` config key. It is a
+// separate table because it varies a setting on a fixed model, which is the
+// opposite of every table above it, and mixing the two would invite a reader
+// to compare a 2-thread cell against a GPU row.
+func writeThreadScalingSection(b *strings.Builder, r *report) {
+	b.WriteString("## Thread scaling\n\n")
+	if len(r.ThreadScaling) == 0 {
+		b.WriteString("**Not measured** in this run — see [What this run could not\n")
+		b.WriteString("measure](#what-this-run-could-not-measure).\n\n")
+		return
+	}
+	b.WriteString("How much `threads` in `config.toml` is worth, on the stock CPU build.\n")
+	b.WriteString("Each row is the same audio and the same median-of-N as the tables above,\n")
+	b.WriteString("with only `-t` changed. Speedup is against the same model's slowest\n")
+	b.WriteString("thread count here, so it reads as what the extra cores bought.\n\n")
+
+	slowest := map[string]float64{}
+	for _, c := range r.ThreadScaling {
+		if !c.Failed && c.TotalMS > slowest[c.Model] {
+			slowest[c.Model] = c.TotalMS
+		}
+	}
+
+	b.WriteString("| Model | Threads | Total | RTF | Speedup vs slowest | Peak RSS |\n")
+	b.WriteString("|---|---:|---:|---:|---:|---:|\n")
+	for _, c := range r.ThreadScaling {
+		if c.Failed {
+			fmt.Fprintf(b, "| `%s` | %d | failed | — | — | — |\n", c.Model, c.Threads)
+			continue
+		}
+		speedup := "—"
+		if base := slowest[c.Model]; base > 0 && c.TotalMS > 0 {
+			speedup = fmt.Sprintf("%.2f×", base/c.TotalMS)
+		}
+		fmt.Fprintf(b, "| `%s` | %d | %s | %.3f | %s | %s |\n",
+			c.Model, c.Threads, msString(c.TotalMS), c.RTF, speedup, memString(c.PeakRSSKB))
+	}
+	b.WriteString("\nThread counts above the machine's physical cores are included on purpose:\n")
+	b.WriteString("where the curve flattens or turns back is the useful part of the answer,\n")
+	b.WriteString("and it cannot be read off a curve that stops at the optimum.\n\n")
+}
+
+// writeWarmServerSection answers `engine = "server"`: whether keeping the
+// model in memory between utterances is worth running a child process for.
+func writeWarmServerSection(b *strings.Builder, r *report) {
+	b.WriteString("## Warm server vs cold CLI\n\n")
+	if len(r.WarmServer) == 0 {
+		b.WriteString("**Not measured** in this run — see [What this run could not\n")
+		b.WriteString("measure](#what-this-run-could-not-measure).\n\n")
+		return
+	}
+	b.WriteString("`engine = \"cli\"` spawns `whisper-cli` per utterance and reloads the model\n")
+	b.WriteString("every time; `engine = \"server\"` keeps a `whisper-server` child warm and\n")
+	b.WriteString("posts the audio to it. The warm column is the per-utterance time with the\n")
+	b.WriteString("model already resident. Startup is what the daemon pays once, at login,\n")
+	b.WriteString("and is excluded from it.\n\n")
+	b.WriteString("These rows drive `internal/speech`, the same client the daemon uses, so\n")
+	b.WriteString("what is measured is the code path a user gets rather than a stand-in.\n\n")
+	b.WriteString("| Model | Threads | Warm | Cold CLI | Saved | Startup | RTF |\n")
+	b.WriteString("|---|---:|---:|---:|---:|---:|---:|\n")
+	for _, c := range r.WarmServer {
+		if c.Failed {
+			fmt.Fprintf(b, "| `%s` | %d | failed | — | — | — | — |\n", c.Model, c.Threads)
+			continue
+		}
+		cold, saved := "—", "—"
+		if c.ColdMS > 0 {
+			cold = msString(c.ColdMS)
+			saved = fmt.Sprintf("%+.0f ms", c.WarmMS-c.ColdMS)
+		}
+		fmt.Fprintf(b, "| `%s` | %d | %s | %s | %s | %s | %.3f |\n",
+			c.Model, c.Threads, msString(c.WarmMS), cold, saved, msString(c.StartupMS), c.RTF)
+	}
+	b.WriteString("\nA negative **saved** figure is the server winning. Peak memory is absent\n")
+	b.WriteString("from this table on purpose: the server is a long-lived child of the\n")
+	b.WriteString("harness rather than a process that exits per run, so the `getrusage`\n")
+	b.WriteString("high-water mark the memory table uses does not apply to it.\n\n")
 }
 
 func writeFailures(b *strings.Builder, r *report) {

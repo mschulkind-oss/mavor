@@ -123,7 +123,7 @@ works, and so does cross-compilation.
 - `just test-int` — Run headless Wayland integration tests (`go test -tags=integration ./test/integration/...`).
 - `just test-e2e` — Run real whisper transcription test.
 - `just storybook` — Generate UI Storybook HTML report with real headless screenshots (`test/reports/ui-storybook.html`).
-- `just bench` — Benchmark every installed model: speed, peak memory, accuracy, CPU and GPU. Regenerates `docs/reports/model-benchmarks.md`.
+- `just bench` — Benchmark every installed model: speed, peak memory, accuracy, CPU and GPU, plus thread scaling and warm-server-versus-cold-CLI sweeps. Regenerates `docs/reports/model-benchmarks.md`.
 - `just bench-sherpa` — The same sweep with the in-process sherpa engines linked in (needs cgo).
 - `just bench-models` — Download the whole catalog so there is something to benchmark (~16 GB).
 - `just bench-gpu-build` — Build the Vulkan whisper.cpp the GPU column needs; the packaged whisper-cpp is CPU-only.
