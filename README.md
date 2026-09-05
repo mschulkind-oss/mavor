@@ -232,7 +232,11 @@ parakeet
 
 - **speed** is a relative tier across the catalog, estimated from architecture
   and parameter count. Where a real benchmark exists it is labelled `measured`
-  and carries the real-time factor from [`docs/reports/`](docs/reports/).
+  and carries the real-time factor. Every model in the catalog has now been
+  benchmarked for speed, memory and accuracy —
+  [`docs/choosing-a-model.md`](docs/choosing-a-model.md) says which to use, and
+  [`docs/reports/model-benchmarks.md`](docs/reports/model-benchmarks.md) has the
+  numbers. Rerun them on your hardware with `just bench`.
 - **vocabulary** is what biasing the model can take. sherpa-onnx implements it
   by boosting paths during transducer beam search, so only the transducers can
   use a `sherpa_hotwords_file`; the CTC and encoder-decoder models cannot.

@@ -11,7 +11,13 @@ summary: "Task-oriented manual for installing, running, configuring, and debuggi
 
 A task-oriented manual for installing, running, configuring, and debugging `mavor`, the low-latency voice dictation daemon for Sway and Wayland compositors.
 
-For high-level architecture see [`how-mavor-works.md`](./design/how-mavor-works.md). For measured speed, memory, and accuracy across every model in the catalog see [`model-benchmarks.md`](./reports/model-benchmarks.md).
+For high-level architecture see [`how-mavor-works.md`](./design/how-mavor-works.md).
+
+> [!TIP]
+> **Which model should you use?** See [`choosing-a-model.md`](./choosing-a-model.md)
+> — the short answer is `base.en`, and the reasons are measured. The raw
+> numbers behind it are in [`model-benchmarks.md`](./reports/model-benchmarks.md),
+> regenerable on your own hardware with `just bench`.
 
 ---
 
@@ -70,12 +76,19 @@ engine = "cli"     # Options: "cli" (default), "sherpa", or "server"
 | Feature | `engine = "cli"` (Whisper CLI) | `engine = "sherpa"` (In-Process CGO) | `engine = "server"` (Warm HTTP/Socket) |
 |---|---|---|---|
 | **Underlying Runtime** | `whisper-cli` subprocess (`whisper.cpp`) | In-process ONNX Runtime (CGO) | Background HTTP / Unix socket daemon |
-| **Post-Speech Latency** | 1.5 s – 4.0 s (batch processing) | **< 100 ms** (instantaneous) | 200 ms – 500 ms |
-| **Real-Time Streaming** | No (text arrives after key release) | **Yes** (80ms streaming chunks) | No / Optional chunking |
-| **Idle Memory Footprint** | **~0 MB** (memory freed after dictation) | ~150 MB – 600 MB (resident in RAM) | ~0 MB in daemon (server holds RAM) |
-| **Supported Models** | OpenAI Whisper GGML models | Parakeet-TDT, Zipformer, Moonshine, SenseVoice | Any Whisper / OpenAI-compatible model |
-| **Hotword Boosting** | No | **Yes** (custom vocabulary list) | Engine dependent |
-| **Best For** | Casual dictation, low RAM usage | Heavy daily dictation, sub-second typing | Offloading inference to LAN / GPU server |
+| **Time to transcribe 20 s** | 1.0 s (`tiny.en`) – 1.6 s (`base.en`); 34 s for `large-v3` | 1.6 s (`zipformer-ctc`) – 4.4 s (`canary-180m`) | Model dependent, minus the per-call model load |
+| **Real-Time Streaming** | No — text arrives after key release | **Yes**, with a streaming model: first text 114 ms in | No / optional chunking |
+| **Resident Memory** | **~0 MB** — freed after each dictation | 150 MB – 2.3 GB, held while the daemon runs | ~0 MB locally; the server holds it |
+| **Supported Models** | 11 Whisper GGML models | 13 sherpa models — NeMo, Zipformer, Moonshine, SenseVoice, Canary | Any Whisper / OpenAI-compatible model |
+| **Hotword Boosting** | No | Transducer models only | Engine dependent |
+| **Needs cgo** | No | **Yes** (`just build-sherpa`) | No |
+| **Best For** | Almost everyone — it is the default for good reason | Non-English, or watching words appear as you speak | Offloading inference to a LAN or GPU box |
+
+> [!NOTE]
+> The `sherpa` engine's advantage is not raw speed: `base.en` on the `cli`
+> engine transcribes faster than every sherpa model measured. What it buys is
+> streaming, language coverage, and no per-dictation model load. Numbers in
+> [`choosing-a-model.md`](./choosing-a-model.md).
 
 ---
 
@@ -90,15 +103,20 @@ engine = "cli"     # Options: "cli" (default), "sherpa", or "server"
   - **Standard Whisper Formatting:** Renowned for high-quality punctuation, sentence casing, numbers, and grammar formatting.
 - **Trade-off:** You must wait ~1.5 to 3 seconds after releasing the key for the subprocess to initialize, transcribe, and emit text.
 
-#### 2. `engine = "sherpa"` — Sub-100ms In-Process Streaming (Power User Favorite)
+#### 2. `engine = "sherpa"` — In-Process Streaming and Wider Language Coverage
 
 - **How it works:** The neural network weights remain permanently resident in memory within the daemon via in-process CGO ONNX Runtime bindings.
 - **Why users choose it:**
-  - **Sub-100ms Latency:** The transcription is processed in real-time as you speak. The instant you release the hotkey, the text is already typed.
-  - **Live Token Streaming:** Words appear on screen or in the HUD subtitle incrementally in 80ms chunks while you speak.
-  - **SOTA Acoustic Models (Parakeet-TDT):** Access to NVIDIA FastConformer / Parakeet-TDT, which matches or exceeds Whisper accuracy on English with dramatically lower compute requirements.
-  - **Custom Hotwords (`sherpa_hotwords_file`):** Boost technical terms, code symbols, variable names, and personal names so the engine never misspells them.
-- **Trade-off:** Holds model weights in RAM (approx. 200 MB for Parakeet-TDT, 60 MB for quantized Zipformer).
+  - **No process launch per transcription:** weights stay resident, so there is no model load between dictations the way the `cli` engine pays one.
+  - **Live token streaming:** `zipformer-streaming` returns its first text **114 ms** after audio starts flowing, so words can appear while you are still speaking. Measured, from a warm model.
+  - **Languages Whisper handles less well:** `sensevoice-small` covers Chinese, Japanese, Korean and Cantonese; `canary-180m` covers English, Spanish, German and French in 457 MB.
+  - **Custom hotwords (`sherpa_hotwords_file`):** boost technical terms, code symbols, and personal names. Transducer models only — sherpa-onnx implements biasing during beam search, so the CTC and encoder-decoder models cannot use one.
+- **Trade-off:** holds weights in RAM — 457 MB for `canary-180m`, 1.56 GB for `parakeet-tdt-0.6b`, 150 MB for `zipformer-streaming`. And the streaming models are markedly less accurate than the batch ones: 9.1% word error rate against 1.8%.
+
+> [!NOTE]
+> The `sherpa` engine needs a binary built with `just build-sherpa`. It is the
+> one variant requiring cgo, so it cannot be cross-compiled. See
+> [`choosing-a-model.md`](./choosing-a-model.md) for which sherpa model to pick.
 
 #### 3. `engine = "server"` — Offloaded or Shared Inference
 
@@ -268,8 +286,12 @@ gpu_layers = 0             # Set >0 to offload layers to Vulkan/ROCm (-ngl)
 device = "auto"            # "auto", "vulkan", "rocm", "cpu"
 
 # Sherpa ONNX settings (when engine = "sherpa")
-sherpa_model = "parakeet"  # "parakeet", "zipformer", "moonshine", or custom dir name
-sherpa_model_type = "auto" # "transducer" (Parakeet/Zipformer), "moonshine", "sensevoice"
+sherpa_model = "canary-180m"  # any catalogued sherpa model, or a custom dir name
+                              # `mavor models list` prints them all
+sherpa_model_type = "auto"    # "auto" reads the file layout and is almost always
+                              # right. Override with "transducer", "canary",
+                              # "moonshine", "sensevoice", "paraformer",
+                              # "nemo_ctc", "zipformer_ctc" or "whisper".
 sherpa_provider = "cpu"    # "cpu", "cuda", "vulkan"
 sherpa_hotwords_file = "~/.config/mavor/hotwords.txt"
 sherpa_hotwords_score = 1.5
@@ -299,36 +321,64 @@ server_socket = "$XDG_RUNTIME_DIR/mavor-server.sock"
 
 ## 8. Model Management & Supported Architectures
 
-`mavor` supports both batch **Whisper GGML** models via `whisper-cli` and in-process streaming **Sherpa-ONNX** models (including **Parakeet-TDT**, **Zipformer**, **Moonshine**, and **SenseVoice**) via native CGO bindings.
+`mavor` supports batch **Whisper GGML** models via `whisper-cli` and
+in-process **sherpa-onnx** models via native CGO bindings. The full catalog is
+24 models; `mavor models list` prints it with sizes, languages and what is
+already downloaded.
+
+> [!TIP]
+> **[`choosing-a-model.md`](./choosing-a-model.md) is the page that answers
+> "which one?"** The table below is a summary of it. Both come from
+> [`model-benchmarks.md`](./reports/model-benchmarks.md), which is generated by
+> `just bench` — every figure was measured, none is a manufacturer claim.
 
 ### Supported Model Matrix
 
-| Model Name | Engine | Architecture | Streaming Chunk | Accuracy / Speed Profile | Automatic CLI Pull |
-|---|---|---|---|---|---|
-| `parakeet` / `parakeet-tdt` | `sherpa` (CGO) | FastConformer Transducer | **80 ms** | SOTA English accuracy, sub-100ms streaming latency | `mavor models pull parakeet` |
-| `zipformer` | `sherpa` (CGO) | Zipformer Transducer | **160 ms** | Ultra-lightweight streaming, minimal CPU usage | `mavor models pull zipformer` |
-| `moonshine` | `sherpa` (CGO) | Moonshine INT8 | Batch / Offline | Fast quantized encoder-decoder for short phrases | `mavor models pull moonshine` |
-| `sensevoice` | `sherpa` (CGO) | SenseVoice | Batch / Offline | Multilingual (EN, ZH, JA, KO, Cantonese) + emotion tagging | `mavor models pull sensevoice` |
-| `base.en` | `cli` (whisper) | Whisper GGML | Batch / Offline | Stock production Whisper default (141 MB) | `mavor models pull base.en` |
-| `tiny.en` | `cli` (whisper) | Whisper GGML | Batch / Offline | Lightweight test model (74 MB) | `mavor models pull tiny.en` |
-| `small.en` | `cli` (whisper) | Whisper GGML | Batch / Offline | High-accuracy technical vocabulary (465 MB) | `mavor models pull small.en` |
-| `large-v3-turbo` | `cli` (whisper) | Whisper GGML | Batch / Offline | Highest accuracy Whisper model (1.5 GB) | `mavor models pull large-v3-turbo` |
+Times are for 20 seconds of speech on CPU; **Format** is whether the model
+returns punctuated, capitalised text or a bare lowercase word stream.
+
+| Model | Engine | Architecture | Time | RAM | Format | Use it for |
+|---|---|---|---:|---:|---|---|
+| `base.en` | `cli` | Whisper GGML | 1.63 s | 302 MB | Full | **The default.** Best accuracy measured. |
+| `tiny.en` | `cli` | Whisper GGML | 1.05 s | 196 MB | Full | The lightest option that still formats. |
+| `small.en` | `cli` | Whisper GGML | 5.10 s | 768 MB | Full | Little gain over `base.en` here. |
+| `large-v3-turbo` | `cli` | Whisper GGML | 21.01 s | 1.81 GB | **None** | Not recommended — see the warning below. |
+| `canary-180m` | `sherpa` | NeMo Canary | 4.40 s | 457 MB | Full | Best sherpa model; en/es/de/fr. |
+| `parakeet-tdt-0.6b` | `sherpa` | NeMo transducer | 5.82 s | 1.56 GB | Full | 25 languages. |
+| `sensevoice-small` | `sherpa` | SenseVoice | 3.88 s | 1.46 GB | Good | zh, en, ja, ko, yue. |
+| `zipformer-streaming` | `sherpa` | Zipformer (online) | 4.65 s | 150 MB | Minimal | Streaming: first text in 114 ms. |
+
+> [!WARNING]
+> **The largest Whisper models return unpunctuated lowercase text.**
+> `large-v3`, `large-v3-turbo`, `distil-large-v3` and `medium.en` all emit
+> `lux is in the pit he cannot sit still` where `base.en` emits
+> `Lux is in the pit. He cannot sit still.` Word error rate is the same; the
+> output is not. `large-v3` is also 20x slower than `base.en` on CPU and wants
+> 3.9 GB of RAM. [Details](./choosing-a-model.md#do-not-reach-for-the-biggest-model).
+
+GPU changes the calculation for the larger models but not their formatting: a
+Vulkan build (`just bench-gpu-build`) runs `medium.en` **12.8x** faster and
+drops host memory from 2.07 GB to 174 MB, because the weights move to the
+card. Sherpa models have no GPU path — the vendored ONNX Runtime ships no
+execution providers.
 
 ### Automatic Downloads (`mavor models pull`)
 
 `mavor models pull` automatically downloads, verifies, and extracts model archives into your cache directory:
 
 ```console
-# Download NVIDIA Parakeet-TDT Streaming Transducer
-$ mavor models pull parakeet
-
-# Download Streaming Zipformer Transducer
-$ mavor models pull zipformer
-
-# Download Whisper GGML models
+# The default, and the best measured model
 $ mavor models pull base.en
-$ mavor models pull large-v3-turbo
+
+# Best sherpa model: en/es/de/fr, formats well, 457 MB
+$ mavor models pull canary-180m
+
+# Streaming — text while you speak
+$ mavor models pull zipformer-streaming
 ```
+
+See [`choosing-a-model.md`](./choosing-a-model.md) before pulling one of the
+large Whisper models; they are slower and format worse than `base.en`.
 
 List all downloaded models in your local cache:
 
@@ -343,22 +393,32 @@ parakeet  sherpa   429.4 MB  en         yes     ✓ 429.4 MB     parakeet-tdt
 ★ active   ✓ downloaded   – not downloaded
 ```
 
-### Switching to Parakeet-TDT Streaming Engine
+### Switching to the sherpa Engine
 
-To use NVIDIA Parakeet-TDT for real-time dictation:
+`canary-180m` is the sherpa model to start with: it is the only one that
+punctuates and capitalises as well as `base.en`, in 457 MB, across English,
+Spanish, German and French.
 
-1. Download the model:
+1. Build with cgo, which the sherpa engine requires:
    ```console
-   $ mavor models pull parakeet
+   $ just build-sherpa
    ```
 
-2. Update `~/.config/mavor/config.toml`:
+2. Download the model:
+   ```console
+   $ mavor models pull canary-180m
+   ```
+
+3. Update `~/.config/mavor/config.toml`:
    ```toml
    engine = "sherpa"
-   sherpa_model = "parakeet"
+   sherpa_model = "canary-180m"
    ```
 
-3. Restart the daemon:
+   For streaming instead — words appearing as you speak, at a real cost in
+   accuracy — use `sherpa_model = "zipformer-streaming"`.
+
+4. Restart the daemon:
    ```console
    $ mavor service restart    # or: pkill -f 'mavor daemon' && mavor daemon
    ```
@@ -372,7 +432,17 @@ $ mkdir -p ~/.cache/mavor/models/sherpa/my-custom-model
 $ cp tokens.txt encoder.onnx decoder.onnx joiner.onnx ~/.cache/mavor/models/sherpa/my-custom-model/
 ```
 
-Then specify `sherpa_model = "my-custom-model"` in `config.toml`. `mavor` automatically discovers `encoder.onnx`, `decoder.onnx`, `joiner.onnx`, and `tokens.txt`.
+Then specify `sherpa_model = "my-custom-model"` in `config.toml`.
+
+`mavor` identifies the architecture from the files present, not from the
+directory name: an encoder, decoder and joiner is a transducer; an encoder and
+decoder without a joiner is Canary or Whisper; a lone `model.onnx` is one of
+the CTC or paraformer variants. Filenames carrying a training run — the
+`encoder-epoch-99-avg-1.onnx` form sherpa-onnx publishes — are matched too.
+
+If the layout is genuinely ambiguous (a bare `model.onnx` could be SenseVoice
+or NeMo CTC), set `sherpa_model_type` explicitly. `mavor` reports what it
+could not identify rather than guessing.
 
 ---
 
@@ -402,7 +472,7 @@ $ just done       # Pre-commit quality verification
 | Symptom | Cause | Solution |
 |---|---|---|
 | `model "base.en" not found` | Model file has not been downloaded | Run `mavor models pull base.en` |
-| `sherpa model "parakeet" not found` | Parakeet ONNX model archive not extracted | Run `mavor models pull parakeet` |
+| `sherpa model "<name>" not found` | Model archive not downloaded or extracted | Run `mavor models pull <name>`; `mavor models list --installed` shows what is present |
 | `toggle: connect: no such file or directory` | Daemon is not running or socket mismatch | Run `mavor daemon -v` or `mavor doctor` to inspect status |
 | Overlay does not appear | Compositor does not implement `wlr-layer-shell` | Ensure a wlroots session (sway, hyprland, river) is active; `mavor daemon -v` logs the reason it fell back to a silent overlay |
 | Audio volume does not duck | `duck_audio = true` not set in `config.toml` | Set `duck_audio = true` and check `duck_streams` in config |
