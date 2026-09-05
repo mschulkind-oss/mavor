@@ -262,6 +262,10 @@ func writeStreamingSection(b *strings.Builder, r *report) {
 	b.WriteString("Only models the catalog marks as streaming appear here. Whisper is absent\n")
 	b.WriteString("by architecture, not by omission: it is encoder-decoder over 30-second\n")
 	b.WriteString("windows and has no incremental decode to measure.\n\n")
+	b.WriteString("First token is measured from the first chunk, with the model already\n")
+	b.WriteString("loaded — a daemon holds it warm long before anyone speaks, so folding a\n")
+	b.WriteString("model load into this number would describe a wait no user experiences.\n")
+	b.WriteString("Load is in the JSON as `load_ms`, and in the totals.\n\n")
 	b.WriteString("| Model | First token | Streaming total | Batch total | Difference |\n|---|---:|---:|---:|---:|\n")
 
 	batch := map[string]runResult{}

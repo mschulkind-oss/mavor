@@ -86,22 +86,33 @@ const streamChunkMS = 100
 // Audio is fed as fast as the recognizer accepts it rather than paced to
 // real time: the question is whether the model can keep up with speech, and
 // pacing the feed to wall-clock would measure the sleep, not the model.
-func (s sherpaRunner) streamOnce(ctx context.Context, model, wavPath string) (text string, firstToken, total time.Duration, err error) {
+func (s sherpaRunner) streamOnce(ctx context.Context, model, wavPath string) (text string, load, firstToken, total time.Duration, err error) {
 	cfg := s.config(model)
 	t, err := speech.NewSherpaTranscriber(cfg, quietLogger())
 	if err != nil {
-		return "", 0, 0, fmt.Errorf("build transcriber: %w", err)
+		return "", 0, 0, 0, fmt.Errorf("build transcriber: %w", err)
 	}
 	defer t.Close()
 
 	sampleRate, samples, err := speech.ReadWAVAudio(wavPath)
 	if err != nil {
-		return "", 0, 0, fmt.Errorf("read wav: %w", err)
+		return "", 0, 0, 0, fmt.Errorf("read wav: %w", err)
 	}
+
+	// Load before the clock starts. Time to first token is meant to answer
+	// "does this feel live while I speak", and a daemon has the model warm
+	// long before anyone speaks — folding a two-second model load into it
+	// would make every streaming model look unusable for a reason the user
+	// never experiences. Load is measured, just separately.
+	loadStart := time.Now()
+	if err := t.Start(ctx); err != nil {
+		return "", 0, 0, 0, fmt.Errorf("load model: %w", err)
+	}
+	load = time.Since(loadStart)
 
 	start := time.Now()
 	if err := t.StartStream(ctx); err != nil {
-		return "", 0, 0, fmt.Errorf("start stream: %w", err)
+		return "", load, 0, 0, fmt.Errorf("start stream: %w", err)
 	}
 
 	samplesPerChunk := sampleRate * streamChunkMS / 1000
@@ -109,7 +120,7 @@ func (s sherpaRunner) streamOnce(ctx context.Context, model, wavPath string) (te
 		end := min(i+samplesPerChunk, len(samples))
 		partial, err := t.FeedChunk(ctx, pcm16LE(samples[i:end]))
 		if err != nil {
-			return "", 0, time.Since(start), fmt.Errorf("feed chunk: %w", err)
+			return "", load, 0, time.Since(start), fmt.Errorf("feed chunk: %w", err)
 		}
 		if firstToken == 0 && strings.TrimSpace(partial) != "" {
 			firstToken = time.Since(start)
@@ -119,9 +130,9 @@ func (s sherpaRunner) streamOnce(ctx context.Context, model, wavPath string) (te
 	text, err = t.StopStream(ctx)
 	total = time.Since(start)
 	if err != nil {
-		return "", firstToken, total, fmt.Errorf("stop stream: %w", err)
+		return "", load, firstToken, total, fmt.Errorf("stop stream: %w", err)
 	}
-	return strings.TrimSpace(text), firstToken, total, nil
+	return strings.TrimSpace(text), load, firstToken, total, nil
 }
 
 // pcm16LE converts the float samples ReadWAVAudio returns back to the

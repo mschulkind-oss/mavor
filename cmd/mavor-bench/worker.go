@@ -71,10 +71,11 @@ func runWorkerIfRequested() bool {
 	ctx := context.Background()
 
 	if req.Streaming {
-		text, first, total, err := s.streamOnce(ctx, req.Model, req.Audio)
+		text, load, first, total, err := s.streamOnce(ctx, req.Model, req.Audio)
 		emit(workerResponse{
 			Text:         text,
-			TotalMS:      float64(total) / float64(time.Millisecond),
+			LoadMS:       float64(load) / float64(time.Millisecond),
+			TotalMS:      float64(load+total) / float64(time.Millisecond),
 			FirstTokenMS: float64(first) / float64(time.Millisecond),
 			Error:        errString(err),
 		})
