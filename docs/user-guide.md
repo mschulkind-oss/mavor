@@ -288,6 +288,33 @@ Configuration file location: `$XDG_CONFIG_HOME/mavor/config.toml` (defaults to `
 # ==========================================
 # Overlay & UI Configuration
 # ==========================================
+# Dictation behaviour
+# ==========================================
+# Live preview while you speak. Either way the text is typed once, when
+# transcription finishes — partial results are provisional and typing them
+# would insert the same words twice.
+#   "batch"     — no preview; the overlay shows only that it is recording
+#   "streaming" — partial text appears in the overlay as it is recognized
+mode = "streaming"
+
+# Quality/speed preset. It picks the model when `model` is left at its default:
+#   "balanced" — base.en          "accurate" — large-v3-turbo
+#   "fast"     — tiny.en
+preset = "balanced"
+
+# How the preview is produced when mode = "streaming".
+#   "auto"      — a streaming sherpa model decodes incrementally if the engine
+#                 has one; otherwise the VAD-segmented path below
+#   "vad_batch" — slice on speech pauses and transcribe each slice
+#   "transducer" — force the sherpa streaming path
+streaming_strategy = "auto"
+
+# VAD-segmented preview tuning. A slice is cut after this much silence, once
+# the phrase before it has run at least min_phrase_ms.
+silence_threshold_ms = 450
+min_phrase_ms = 600
+
+# ==========================================
 # Gap in pixels between top screen edge and overlay (default: 8)
 top_margin = 8
 
@@ -333,8 +360,24 @@ duck_sink = ""
 # Daemon IPC Socket
 # ==========================================
 socket = "$XDG_RUNTIME_DIR/mavor.sock"
-server_socket = "$XDG_RUNTIME_DIR/mavor-server.sock"
+
+# Where the `server` engine sends audio. The path matters — see the warning in
+# §2; a bare host and port returns 404 against whisper.cpp's server.
+server_socket = "http://127.0.0.1:8080/inference"
+
+# ==========================================
+# Logging
+# ==========================================
+# Daemon log destination. Defaults to ~/.local/state/mavor/daemon.log; the
+# `--log-file` flag overrides it for one run.
+log_file = "~/.local/state/mavor/daemon.log"
 ```
+
+Sherpa models that are not in the catalog are configured by naming their files
+directly — `sherpa_tokens`, `sherpa_encoder`, `sherpa_decoder` and
+`sherpa_joiner` — instead of `sherpa_model`. `mavor config show` prints the
+resolved value of every key above, which is the fastest way to see what the
+daemon actually loaded.
 
 ---
 

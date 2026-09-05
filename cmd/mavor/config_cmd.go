@@ -16,9 +16,10 @@ const defaultConfigTemplate = `# ~/.config/mavor/config.toml
 # Simple Configuration (Smart Defaults)
 # ==============================================================================
 
-# Dictation mode:
-# - "batch": Push-to-talk or toggle with full sentence punctuation upon key release (default).
-# - "streaming": Real-time incremental typing while speaking.
+# Live preview while you speak. The text is typed once either way — when
+# transcription finishes — because partial results are provisional.
+# - "batch": no preview; the overlay shows only that it is recording (default).
+# - "streaming": show partial text in the overlay as the words are recognized.
 mode = "batch"
 
 # Quality & Speed Preset:

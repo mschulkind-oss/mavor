@@ -77,6 +77,29 @@ func TestConfigCommands(t *testing.T) {
 	}
 }
 
+// The scaffold is the only description of `mode` most users will ever read,
+// and it used to promise "real-time incremental typing while speaking" — a
+// feature the daemon does not have: streaming mode previews text in the
+// overlay and types it once, when transcription finishes.
+func TestScaffoldDoesNotPromiseIncrementalTyping(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	if err := runConfig([]string{"init"}); err != nil {
+		t.Fatalf("runConfig(init) error = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(tmpDir, "mavor", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scaffold := string(data)
+	if strings.Contains(scaffold, "incremental typing") {
+		t.Error("the scaffold promises incremental typing; streaming mode only previews")
+	}
+	if !strings.Contains(scaffold, "typed once") {
+		t.Error("the scaffold does not tell the reader the text is typed once, when transcription finishes")
+	}
+}
+
 func TestServiceShow(t *testing.T) {
 	if err := runServiceShow(); err != nil {
 		t.Fatalf("runServiceShow() error = %v", err)
