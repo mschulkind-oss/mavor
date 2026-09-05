@@ -9,7 +9,7 @@ summary: "Living roadmap for the mavor dictation daemon: open decisions, the rea
 
 # Ongoing Work: `mavor` Voice-to-Text Utility
 
-**Status:** 1 Blocker (🛑), 2 Needs Attention (💬), 4 Ready to Implement (📦), 4 Open Threads (🔒 2, 🛑 1, 🧊 1)
+**Status:** 2 Needs Attention (💬), 4 Ready to Implement (📦), 4 Open Threads (🔒 2, 🛑 1, 🧊 1)
 
 ---
 
@@ -69,43 +69,51 @@ the static version proves useful.
 
 Ordered by what unblocks other work first, then by cost.
 
-### 🛑 1. Ten of the 24 catalogued models cannot be loaded at all
+### ✅ 1. All 24 models load (was: ten could not)
 
-The catalog-wide benchmark now exists ([`model-benchmarks.md`](reports/model-benchmarks.md),
-`just bench`), and the first full run turned up something much larger than
-the missing numbers it was built to fill in: **10 of the 13 sherpa models in
-the catalog fail to load.** Only `moonshine-tiny`, `moonshine-base` and
-`sensevoice-small` work.
+Fixed. The catalog-wide benchmark
+([`model-benchmarks.md`](reports/model-benchmarks.md)) now reports **48
+measured rows and no failures**, against 38 rows and 12 failed cells before.
 
-The failures cluster by how `DetectSherpaModelType` classified each model,
-which is what makes this one bug rather than ten:
+The ten sherpa models that could not be loaded shared one root cause and
+three narrower bugs, all in `internal/speech/sherpa.go`:
 
-| Model | Classified as | What it says |
-|---|---|---|
-| `parakeet`, `parakeet-tdt-0.6b`, `parakeet-unified-en` | offline transducer | `'vocab_size' does not exist in the metadata` |
-| `parakeet-ctc` | transducer | needs encoder/decoder/joiner; the directory has none |
-| `canary-1b`, `canary-180m` | **paraformer** | `'lfr_window_size' does not exist in the metadata` |
-| `paraformer` | **NeMo CTC** | `'subsampling_factor' does not exist in the metadata` |
-| `zipformer-streaming`, `zipformer-offline` | CTC | missing `model.onnx` |
-| `zipformer-ctc` | NeMo CTC | `'vocab_size' does not exist in the metadata` |
+- **The detector asked the name before the files.** `parakeet-ctc` has a
+  single `model.onnx` and no joiner, but its name contains "parakeet", so it
+  was declared a transducer and failed looking for a joiner. Detection is
+  layout-first now; the name decides only where the layout genuinely cannot,
+  which is SenseVoice against NeMo CTC.
+- **`findFile` matched exact names only.** sherpa ships zipformer models as
+  `encoder-epoch-99-avg-1.onnx`, so a transducer looked like it had no
+  encoder at all. It takes globs now.
+- **mavor forced sherpa's `model_type`** with its own vocabulary, which made
+  sherpa skip its own detection and use the wrong reader. Left empty, sherpa
+  infers correctly from the populated sub-config.
+- **Canary had no support**, fell through to paraformer, and failed on
+  metadata paraformer expects and Canary does not carry.
 
-`canary` classified as paraformer and `paraformer` classified as NeMo CTC
-are not near misses — the detector is matching on the wrong evidence, and
-the name-match-beats-file-layout bug already recorded for `parakeet-ctc` is
-one symptom of a broader problem rather than the whole of it.
+Worth recording: **the catalog was right the whole time.** Every
+`Transducer` and `Streaming` flag matches what the file layouts actually
+contain — only the loader disagreed with it.
 
-Two consequences worth stating plainly:
+### ✅ 1a. Streaming works, and is measured
 
-- **`mavor models pull` will happily download 6 GB of models that cannot be
-  used.** Nothing warns the user, at pull time or at load time, until the
-  daemon tries to start.
-- **Streaming has never been measured, because no streaming model loads.**
-  Both streaming-capable entries in the catalog are among the failures, so
-  every claim about incremental decode remains untested.
+Also fixed, and it was a bigger hole than "a missing number":
+`BuildSherpaOnlineConfig` and `newCGOOnlineRecognizer` both existed and
+**nothing ever called them**. Every model went through the offline builder,
+and loading a streaming transducer offline is not a soft failure — sherpa
+rejects the encoder's input shapes and aborts the process.
 
-**Next step:** fix `DetectSherpaModelType` against the ten failing model
-directories, which are now all on disk. `just bench-sherpa` is the
-regression test — it goes from 10 failures to 0.
+First measurements, from a warm model:
+
+| Model | First token | Streaming total | Batch total |
+|---|---:|---:|---:|
+| `zipformer-streaming` | 114 ms | 4.33 s | 4.65 s |
+| `parakeet` | 405 ms | 9.28 s | 8.12 s |
+
+`zipformer-streaming` at 114 ms is comfortably inside what reads as live.
+`parakeet` is slower streaming than batch, which is worth a look if
+streaming becomes a product feature rather than a catalog claim.
 
 ### 📦 1b. Feed the measured numbers back into the catalog
 
@@ -140,6 +148,13 @@ takes an initial `--prompt`, and a prompt containing punctuated prose is the
 standard way to coax formatted output out of these models — which is the same
 mechanism the vocabulary-biasing item above wants. If it works, one change
 closes both.
+
+There is now also a way around it rather than through it. With every sherpa
+model loading, `canary-180m` scores 1.8% WER with **punctuation 0.18 and
+capitalisation 1.00** — the same formatting quality as `base.en` — in 457 MB
+and 4.4 s. It is the only model in the catalog that combines large-model
+accuracy with usable formatting, and it is a candidate for the accurate
+preset that `large-v3` currently cannot fill.
 
 ### 📦 2. `mavor doctor` — the checks it still does not do
 
