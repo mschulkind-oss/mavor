@@ -22,14 +22,14 @@ the memory of what was fast here.
 
 | | |
 |---|---|
-| **Run at** | 2026-09-05T01:57:23Z |
-| **Host** | 51c3a55038be |
+| **Run at** | 2026-09-05T03:07:29Z |
+| **Host** | d62dbf977bd6 |
 | **OS / arch** | linux / amd64 |
 | **CPU** | Intel(R) Core(TM) i7-8700K CPU @ 3.70GHz (12 logical cores) |
 | **RAM** | 62.7 GB |
 | **GPU** | AMD Radeon RX 9060 XT (RADV GFX1200) (radv, Vulkan 1.4.354) |
 | **Go** | go1.26.3 |
-| **mavor commit** | 0b442c4 |
+| **mavor commit** | 15f75ac |
 | **Audio** | `test/fixtures/real_speech.wav` (20.00 s) |
 | **Threads** | 6 |
 | **Runs per cell** | 3 (median reported) |
@@ -53,54 +53,54 @@ Sorted fastest first.
 
 | Model | Backend | Total | RTF | Speed |
 |---|---|---:|---:|---:|
-| `tiny` | whisper-cli / gpu (vulkan) | 398 ms | 0.020 | 50.3× real time |
-| `tiny.en` | whisper-cli / gpu (vulkan) | 403 ms | 0.020 | 49.6× real time |
-| `base` | whisper-cli / gpu (vulkan) | 542 ms | 0.027 | 36.9× real time |
-| `base.en` | whisper-cli / gpu (vulkan) | 546 ms | 0.027 | 36.6× real time |
-| `small.en` | whisper-cli / gpu (vulkan) | 823 ms | 0.041 | 24.3× real time |
-| `small` | whisper-cli / gpu (vulkan) | 844 ms | 0.042 | 23.7× real time |
-| `tiny` | whisper-cli / cpu (vulkan) | 890 ms | 0.044 | 22.5× real time |
-| `tiny.en` | whisper-cli / cpu (vulkan) | 907 ms | 0.045 | 22.0× real time |
-| `tiny` | whisper-cli / cpu (stock) | 940 ms | 0.047 | 21.3× real time |
-| `tiny.en` | whisper-cli / cpu (stock) | 1.05 s | 0.052 | 19.1× real time |
-| `moonshine-tiny` | sherpa / cpu | 1.23 s | 0.061 | 16.3× real time |
-| `distil-large-v3` | whisper-cli / gpu (vulkan) | 1.39 s | 0.069 | 14.4× real time |
-| `large-v3-turbo` | whisper-cli / gpu (vulkan) | 1.44 s | 0.072 | 13.9× real time |
-| `base` | whisper-cli / cpu (vulkan) | 1.54 s | 0.077 | 13.0× real time |
-| `medium.en` | whisper-cli / gpu (vulkan) | 1.58 s | 0.079 | 12.7× real time |
-| `zipformer-ctc` | sherpa / cpu | 1.59 s | 0.079 | 12.6× real time |
-| `base.en` | whisper-cli / cpu (stock) | 1.63 s | 0.082 | 12.2× real time |
-| `base` | whisper-cli / cpu (stock) | 1.66 s | 0.083 | 12.1× real time |
-| `medium` | whisper-cli / gpu (vulkan) | 1.75 s | 0.088 | 11.4× real time |
-| `base.en` | whisper-cli / cpu (vulkan) | 1.87 s | 0.094 | 10.7× real time |
-| `moonshine-base` | sherpa / cpu | 1.98 s | 0.099 | 10.1× real time |
-| `zipformer-offline` | sherpa / cpu | 2.21 s | 0.111 | 9.0× real time |
-| `large-v3` | whisper-cli / gpu (vulkan) | 2.91 s | 0.145 | 6.9× real time |
-| `sensevoice-small` | sherpa / cpu | 3.88 s | 0.194 | 5.1× real time |
-| `parakeet-ctc` | sherpa / cpu | 3.91 s | 0.195 | 5.1× real time |
-| `zipformer-streaming` | sherpa / cpu / streaming | 4.33 s | 0.217 | 4.6× real time |
-| `canary-180m` | sherpa / cpu | 4.40 s | 0.220 | 4.5× real time |
-| `zipformer-streaming` | sherpa / cpu | 4.65 s | 0.232 | 4.3× real time |
-| `small.en` | whisper-cli / cpu (stock) | 5.10 s | 0.255 | 3.9× real time |
-| `small.en` | whisper-cli / cpu (vulkan) | 5.37 s | 0.269 | 3.7× real time |
-| `parakeet-tdt-0.6b` | sherpa / cpu | 5.82 s | 0.291 | 3.4× real time |
-| `small` | whisper-cli / cpu (stock) | 6.66 s | 0.333 | 3.0× real time |
-| `small` | whisper-cli / cpu (vulkan) | 6.68 s | 0.334 | 3.0× real time |
-| `parakeet-unified-en` | sherpa / cpu | 6.76 s | 0.338 | 3.0× real time |
-| `paraformer` | sherpa / cpu | 7.25 s | 0.363 | 2.8× real time |
-| `parakeet` | sherpa / cpu | 8.12 s | 0.406 | 2.5× real time |
-| `parakeet` | sherpa / cpu / streaming | 9.28 s | 0.464 | 2.2× real time |
-| `canary-1b` | sherpa / cpu | 14.77 s | 0.738 | 1.4× real time |
-| `medium` | whisper-cli / cpu (stock) | 17.19 s | 0.860 | 1.2× real time |
-| `medium` | whisper-cli / cpu (vulkan) | 17.45 s | 0.872 | 1.1× real time |
-| `distil-large-v3` | whisper-cli / cpu (vulkan) | 18.57 s | 0.929 | 1.1× real time |
-| `medium.en` | whisper-cli / cpu (stock) | 19.08 s | 0.954 | 1.0× real time |
-| `large-v3-turbo` | whisper-cli / cpu (vulkan) | 19.61 s | 0.980 | 1.0× real time |
-| `distil-large-v3` | whisper-cli / cpu (stock) | 20.17 s | 1.009 | 1.0× real time |
-| `medium.en` | whisper-cli / cpu (vulkan) | 20.20 s | 1.010 | 1.0× real time |
-| `large-v3-turbo` | whisper-cli / cpu (stock) | 21.01 s | 1.051 | 1.0× real time |
-| `large-v3` | whisper-cli / cpu (stock) | 33.55 s | 1.677 | 0.6× real time |
-| `large-v3` | whisper-cli / cpu (vulkan) | 41.16 s | 2.058 | 0.5× real time |
+| `tiny` | whisper-cli / gpu (vulkan) | 401 ms | 0.020 | 49.9× real time |
+| `tiny.en` | whisper-cli / gpu (vulkan) | 442 ms | 0.022 | 45.3× real time |
+| `base.en` | whisper-cli / gpu (vulkan) | 472 ms | 0.024 | 42.4× real time |
+| `base` | whisper-cli / gpu (vulkan) | 490 ms | 0.024 | 40.8× real time |
+| `small` | whisper-cli / gpu (vulkan) | 794 ms | 0.040 | 25.2× real time |
+| `small.en` | whisper-cli / gpu (vulkan) | 852 ms | 0.043 | 23.5× real time |
+| `tiny` | whisper-cli / cpu (vulkan) | 860 ms | 0.043 | 23.3× real time |
+| `tiny` | whisper-cli / cpu (stock) | 915 ms | 0.046 | 21.9× real time |
+| `tiny.en` | whisper-cli / cpu (stock) | 920 ms | 0.046 | 21.7× real time |
+| `tiny.en` | whisper-cli / cpu (vulkan) | 950 ms | 0.047 | 21.1× real time |
+| `distil-large-v3` | whisper-cli / gpu (vulkan) | 1.21 s | 0.060 | 16.6× real time |
+| `moonshine-tiny` | sherpa / cpu | 1.50 s | 0.075 | 13.4× real time |
+| `medium` | whisper-cli / gpu (vulkan) | 1.62 s | 0.081 | 12.4× real time |
+| `base.en` | whisper-cli / cpu (vulkan) | 1.67 s | 0.083 | 12.0× real time |
+| `large-v3-turbo` | whisper-cli / gpu (vulkan) | 1.67 s | 0.084 | 11.9× real time |
+| `base.en` | whisper-cli / cpu (stock) | 1.79 s | 0.089 | 11.2× real time |
+| `medium.en` | whisper-cli / gpu (vulkan) | 1.79 s | 0.090 | 11.2× real time |
+| `moonshine-base` | sherpa / cpu | 1.83 s | 0.091 | 11.0× real time |
+| `base` | whisper-cli / cpu (vulkan) | 1.84 s | 0.092 | 10.9× real time |
+| `base` | whisper-cli / cpu (stock) | 1.87 s | 0.093 | 10.7× real time |
+| `parakeet-ctc` | sherpa / cpu | 2.18 s | 0.109 | 9.2× real time |
+| `zipformer-ctc` | sherpa / cpu | 2.23 s | 0.112 | 9.0× real time |
+| `zipformer-offline` | sherpa / cpu | 2.32 s | 0.116 | 8.6× real time |
+| `canary-180m` | sherpa / cpu | 3.46 s | 0.173 | 5.8× real time |
+| `sensevoice-small` | sherpa / cpu | 3.67 s | 0.184 | 5.4× real time |
+| `paraformer` | sherpa / cpu | 3.73 s | 0.187 | 5.4× real time |
+| `zipformer-streaming` | sherpa / cpu / streaming | 4.44 s | 0.222 | 4.5× real time |
+| `zipformer-streaming` | sherpa / cpu | 4.54 s | 0.227 | 4.4× real time |
+| `small` | whisper-cli / cpu (stock) | 4.91 s | 0.246 | 4.1× real time |
+| `small.en` | whisper-cli / cpu (stock) | 4.94 s | 0.247 | 4.0× real time |
+| `small` | whisper-cli / cpu (vulkan) | 5.19 s | 0.259 | 3.9× real time |
+| `parakeet-tdt-0.6b` | sherpa / cpu | 5.84 s | 0.292 | 3.4× real time |
+| `parakeet-unified-en` | sherpa / cpu | 6.04 s | 0.302 | 3.3× real time |
+| `large-v3` | whisper-cli / gpu (vulkan) | 6.62 s | 0.331 | 3.0× real time |
+| `small.en` | whisper-cli / cpu (vulkan) | 7.09 s | 0.354 | 2.8× real time |
+| `parakeet` | sherpa / cpu / streaming | 9.09 s | 0.454 | 2.2× real time |
+| `parakeet` | sherpa / cpu | 9.66 s | 0.483 | 2.1× real time |
+| `canary-1b` | sherpa / cpu | 13.82 s | 0.691 | 1.4× real time |
+| `distil-large-v3` | whisper-cli / cpu (vulkan) | 17.85 s | 0.892 | 1.1× real time |
+| `medium` | whisper-cli / cpu (stock) | 18.39 s | 0.919 | 1.1× real time |
+| `distil-large-v3` | whisper-cli / cpu (stock) | 18.43 s | 0.922 | 1.1× real time |
+| `large-v3-turbo` | whisper-cli / cpu (vulkan) | 18.76 s | 0.938 | 1.1× real time |
+| `medium.en` | whisper-cli / cpu (stock) | 18.96 s | 0.948 | 1.1× real time |
+| `large-v3-turbo` | whisper-cli / cpu (stock) | 19.65 s | 0.982 | 1.0× real time |
+| `medium.en` | whisper-cli / cpu (vulkan) | 20.43 s | 1.022 | 1.0× real time |
+| `medium` | whisper-cli / cpu (vulkan) | 21.01 s | 1.050 | 1.0× real time |
+| `large-v3` | whisper-cli / cpu (vulkan) | 33.65 s | 1.682 | 0.6× real time |
+| `large-v3` | whisper-cli / cpu (stock) | 34.61 s | 1.731 | 0.6× real time |
 
 ## Memory
 
@@ -115,53 +115,53 @@ each sherpa model runs in a worker process for the same reason.
 
 | Model | Backend | Peak RSS |
 |---|---|---:|
-| `tiny.en` | whisper-cli / gpu (vulkan) | 107 MB |
 | `tiny` | whisper-cli / gpu (vulkan) | 107 MB |
-| `base.en` | whisper-cli / gpu (vulkan) | 118 MB |
-| `base` | whisper-cli / gpu (vulkan) | 120 MB |
+| `tiny.en` | whisper-cli / gpu (vulkan) | 107 MB |
+| `base.en` | whisper-cli / gpu (vulkan) | 120 MB |
+| `base` | whisper-cli / gpu (vulkan) | 121 MB |
+| `small.en` | whisper-cli / gpu (vulkan) | 144 MB |
 | `small` | whisper-cli / gpu (vulkan) | 147 MB |
-| `small.en` | whisper-cli / gpu (vulkan) | 147 MB |
-| `zipformer-streaming` | sherpa / cpu | 150 MB |
-| `zipformer-streaming` | sherpa / cpu / streaming | 162 MB |
+| `zipformer-streaming` | sherpa / cpu | 154 MB |
+| `zipformer-streaming` | sherpa / cpu / streaming | 158 MB |
 | `medium` | whisper-cli / gpu (vulkan) | 174 MB |
 | `medium.en` | whisper-cli / gpu (vulkan) | 174 MB |
-| `tiny.en` | whisper-cli / cpu (stock) | 196 MB |
-| `tiny` | whisper-cli / cpu (stock) | 197 MB |
-| `distil-large-v3` | whisper-cli / gpu (vulkan) | 206 MB |
+| `tiny.en` | whisper-cli / cpu (stock) | 195 MB |
+| `tiny` | whisper-cli / cpu (stock) | 196 MB |
 | `large-v3-turbo` | whisper-cli / gpu (vulkan) | 206 MB |
 | `large-v3` | whisper-cli / gpu (vulkan) | 206 MB |
-| `tiny` | whisper-cli / cpu (vulkan) | 221 MB |
-| `tiny.en` | whisper-cli / cpu (vulkan) | 221 MB |
-| `base.en` | whisper-cli / cpu (stock) | 302 MB |
-| `base` | whisper-cli / cpu (stock) | 303 MB |
-| `moonshine-tiny` | sherpa / cpu | 320 MB |
-| `base` | whisper-cli / cpu (vulkan) | 326 MB |
+| `distil-large-v3` | whisper-cli / gpu (vulkan) | 206 MB |
+| `tiny.en` | whisper-cli / cpu (vulkan) | 220 MB |
+| `tiny` | whisper-cli / cpu (vulkan) | 222 MB |
+| `base` | whisper-cli / cpu (stock) | 304 MB |
+| `base.en` | whisper-cli / cpu (stock) | 306 MB |
+| `moonshine-tiny` | sherpa / cpu | 321 MB |
 | `base.en` | whisper-cli / cpu (vulkan) | 327 MB |
-| `zipformer-offline` | sherpa / cpu | 355 MB |
-| `canary-180m` | sherpa / cpu | 457 MB |
-| `zipformer-ctc` | sherpa / cpu | 477 MB |
-| `moonshine-base` | sherpa / cpu | 538 MB |
-| `parakeet` | sherpa / cpu / streaming | 550 MB |
-| `parakeet` | sherpa / cpu | 555 MB |
-| `parakeet-ctc` | sherpa / cpu | 733 MB |
-| `small` | whisper-cli / cpu (stock) | 768 MB |
+| `base` | whisper-cli / cpu (vulkan) | 328 MB |
+| `zipformer-offline` | sherpa / cpu | 371 MB |
+| `canary-180m` | sherpa / cpu | 458 MB |
+| `zipformer-ctc` | sherpa / cpu | 479 MB |
+| `moonshine-base` | sherpa / cpu | 546 MB |
+| `parakeet` | sherpa / cpu / streaming | 549 MB |
+| `parakeet` | sherpa / cpu | 559 MB |
+| `parakeet-ctc` | sherpa / cpu | 737 MB |
 | `small.en` | whisper-cli / cpu (stock) | 768 MB |
-| `small.en` | whisper-cli / cpu (vulkan) | 785 MB |
-| `small` | whisper-cli / cpu (vulkan) | 791 MB |
-| `paraformer` | sherpa / cpu | 1.04 GB |
-| `sensevoice-small` | sherpa / cpu | 1.46 GB |
-| `parakeet-tdt-0.6b` | sherpa / cpu | 1.56 GB |
-| `parakeet-unified-en` | sherpa / cpu | 1.59 GB |
+| `small` | whisper-cli / cpu (stock) | 768 MB |
+| `small.en` | whisper-cli / cpu (vulkan) | 788 MB |
+| `small` | whisper-cli / cpu (vulkan) | 792 MB |
+| `paraformer` | sherpa / cpu | 1.05 GB |
+| `sensevoice-small` | sherpa / cpu | 1.45 GB |
+| `parakeet-tdt-0.6b` | sherpa / cpu | 1.54 GB |
+| `parakeet-unified-en` | sherpa / cpu | 1.61 GB |
 | `distil-large-v3` | whisper-cli / cpu (stock) | 1.62 GB |
 | `distil-large-v3` | whisper-cli / cpu (vulkan) | 1.62 GB |
-| `large-v3-turbo` | whisper-cli / cpu (stock) | 1.76 GB |
 | `large-v3-turbo` | whisper-cli / cpu (vulkan) | 1.76 GB |
-| `medium` | whisper-cli / cpu (stock) | 2.02 GB |
+| `large-v3-turbo` | whisper-cli / cpu (stock) | 1.77 GB |
 | `medium.en` | whisper-cli / cpu (stock) | 2.02 GB |
-| `medium` | whisper-cli / cpu (vulkan) | 2.03 GB |
 | `medium.en` | whisper-cli / cpu (vulkan) | 2.03 GB |
-| `canary-1b` | sherpa / cpu | 2.32 GB |
-| `large-v3` | whisper-cli / cpu (stock) | 3.81 GB |
+| `medium` | whisper-cli / cpu (stock) | 2.03 GB |
+| `medium` | whisper-cli / cpu (vulkan) | 2.03 GB |
+| `canary-1b` | sherpa / cpu | 2.40 GB |
+| `large-v3` | whisper-cli / cpu (stock) | 3.82 GB |
 | `large-v3` | whisper-cli / cpu (vulkan) | 3.82 GB |
 
 ## Accuracy
@@ -244,12 +244,60 @@ Load is in the JSON as `load_ms`, and in the totals.
 
 | Model | First token | Streaming total | Batch total | Difference |
 |---|---:|---:|---:|---:|
-| `parakeet` | 405 ms | 9.28 s | 8.12 s | +1169 ms |
-| `zipformer-streaming` | 114 ms | 4.33 s | 4.65 s | -319 ms |
+| `parakeet` | 480 ms | 9.09 s | 9.66 s | -572 ms |
+| `zipformer-streaming` | 107 ms | 4.44 s | 4.54 s | -102 ms |
 
 A dash under **first token** means the recognizer returned no partial text
 before the stream closed — it accepted the chunks but decoded only at the
 end, which is worth knowing about a model the catalog calls streaming.
+
+## Thread scaling
+
+How much `threads` in `config.toml` is worth, on the stock CPU build.
+Each row is the same audio and the same median-of-N as the tables above,
+with only `-t` changed. Speedup is against the same model's slowest
+thread count here, so it reads as what the extra cores bought.
+
+| Model | Threads | Total | RTF | Speedup vs slowest | Peak RSS |
+|---|---:|---:|---:|---:|---:|
+| `tiny.en` | 2 | 1.72 s | 0.086 | 1.00× | 194 MB |
+| `tiny.en` | 4 | 1.02 s | 0.051 | 1.69× | 196 MB |
+| `tiny.en` | 6 | 809 ms | 0.040 | 2.13× | 197 MB |
+| `tiny.en` | 8 | 873 ms | 0.044 | 1.97× | 198 MB |
+| `base.en` | 2 | 3.16 s | 0.158 | 1.00× | 304 MB |
+| `base.en` | 4 | 1.84 s | 0.092 | 1.72× | 305 MB |
+| `base.en` | 6 | 1.51 s | 0.075 | 2.09× | 305 MB |
+| `base.en` | 8 | 1.43 s | 0.071 | 2.21× | 305 MB |
+| `small.en` | 2 | 10.47 s | 0.523 | 1.00× | 766 MB |
+| `small.en` | 4 | 5.69 s | 0.284 | 1.84× | 767 MB |
+| `small.en` | 6 | 4.77 s | 0.238 | 2.20× | 768 MB |
+| `small.en` | 8 | 4.68 s | 0.234 | 2.24× | 770 MB |
+
+Thread counts above the machine's physical cores are included on purpose:
+where the curve flattens or turns back is the useful part of the answer,
+and it cannot be read off a curve that stops at the optimum.
+
+## Warm server vs cold CLI
+
+`engine = "cli"` spawns `whisper-cli` per utterance and reloads the model
+every time; `engine = "server"` keeps a `whisper-server` child warm and
+posts the audio to it. The warm column is the per-utterance time with the
+model already resident. Startup is what the daemon pays once, at login,
+and is excluded from it.
+
+These rows drive `internal/speech`, the same client the daemon uses, so
+what is measured is the code path a user gets rather than a stand-in.
+
+| Model | Threads | Warm | Cold CLI | Saved | Startup | RTF |
+|---|---:|---:|---:|---:|---:|---:|
+| `tiny.en` | 6 | 550 ms | 809 ms | -259 ms | 325 ms | 0.027 |
+| `base.en` | 6 | 1.30 s | 1.51 s | -207 ms | 551 ms | 0.065 |
+| `small.en` | 6 | 3.31 s | 4.77 s | -1453 ms | 551 ms | 0.166 |
+
+A negative **saved** figure is the server winning. Peak memory is absent
+from this table on purpose: the server is a long-lived child of the
+harness rather than a process that exits per run, so the `getrusage`
+high-water mark the memory table uses does not apply to it.
 
 ## How to rerun this
 
