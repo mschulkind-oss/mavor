@@ -9,7 +9,7 @@ clear of your bar, showing a live waveform while you speak.
 ```
 $mod + ` ──▶  ● Recording   ▂▃▅▆          (HUD overlay with live audio meter)
               talking talking talking
-$mod + ` ──▶  ⟳ Transcribing…             (in-process CGO / whisper.cpp)
+$mod + ` ──▶  ⟳ Transcribing  ● ● ●        (in-process CGO / whisper.cpp)
               ──▶ wtype + wl-copy         (text lands in focused app)
               overlay closes
 ```

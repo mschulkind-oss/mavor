@@ -3,6 +3,7 @@ package overlay
 import (
 	"image"
 	"image/color"
+	"strings"
 	"testing"
 )
 
@@ -221,3 +222,16 @@ func TestCapRiseIsPositiveForAnAllCapsFont(t *testing.T) {
 }
 
 var _ = color.RGBA{}
+
+// The animated typing dots already read as an ellipsis, so the label must not
+// carry one of its own — the GTK pill said "TRANSCRIBING…" beside the dots and
+// showed the ellipsis twice.
+func TestLabelsCarryNoEllipsis(t *testing.T) {
+	for _, s := range []string{recordingLabelText, transcribingLabelText, errorLabelText} {
+		for _, bad := range []string{"…", "..."} {
+			if strings.Contains(s, bad) {
+				t.Errorf("label %q contains %q; the dots animation is the ellipsis", s, bad)
+			}
+		}
+	}
+}

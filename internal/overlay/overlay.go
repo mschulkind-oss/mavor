@@ -18,7 +18,7 @@ const (
 	Hidden Visual = iota
 	// Recording is the "● Recording" red-dot state.
 	Recording
-	// Transcribing is the spinner + "Transcribing…" state.
+	// Transcribing is the "TRANSCRIBING" amber pill with typing dots.
 	Transcribing
 	// Error is the "⚠ ERROR" red warning pill.
 	Error

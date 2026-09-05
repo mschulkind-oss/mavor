@@ -265,7 +265,7 @@ func TestUIStorybookReport(t *testing.T) {
 			Title:       "Transcribing",
 			Badge:       "TRANSCRIBING",
 			BadgeClass:  "badge-transcribing",
-			Description: "Whisper inference in progress — no audio is being captured in this state, so no waveform is shown. Amber pill with 'TRANSCRIBING…' and a typing-dots indicator while the tail of the recording is transcribed.",
+			Description: "Whisper inference in progress — no audio is being captured in this state, so no waveform is shown. Amber pill with 'TRANSCRIBING' and a typing-dots indicator — the animated dots read as the ellipsis, so the label carries none — while the tail of the recording is transcribed.",
 			Visual:      overlay.Transcribing,
 			AudioLevel:  0.0,
 			LevelPct:    0,
