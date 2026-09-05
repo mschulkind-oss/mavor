@@ -16,6 +16,15 @@ import (
 
 func init() {
 	DefaultOfflineRecognizerBuilder = newCGOOfflineRecognizer
+	DefaultOnlineRecognizerBuilder = newCGOOnlineRecognizer
+}
+
+// boolToInt converts to the 0/1 int the sherpa-onnx C API takes.
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func newSherpaTranscriber(cfg config.Config, logger *slog.Logger) (Transcriber, error) {
@@ -257,10 +266,30 @@ func newCGOOfflineRecognizer(_ config.Config, sc SherpaOfflineConfig, _ *slog.Lo
 				Language: sc.Whisper.Language,
 				Task:     sc.Whisper.Task,
 			},
+			Canary: sherpa_onnx.OfflineCanaryModelConfig{
+				Encoder: sc.Canary.Encoder,
+				Decoder: sc.Canary.Decoder,
+				SrcLang: sc.Canary.SrcLang,
+				TgtLang: sc.Canary.TgtLang,
+				UsePnc:  boolToInt(sc.Canary.UsePnc),
+			},
 			Tokens:     sc.Tokens,
 			NumThreads: sc.NumThreads,
 			Provider:   sc.Provider,
-			ModelType:  string(sc.ModelType),
+			// ModelType is deliberately NOT set from sc.ModelType.
+			//
+			// sherpa-onnx treats a non-empty model_type as an instruction to
+			// use that reader, skipping its own detection. mavor's type names
+			// are its own vocabulary and mostly are not sherpa's, so passing
+			// them forced the wrong reader: a NeMo transducer read by the
+			// generic transducer reader failed on a missing vocab_size, and a
+			// zipformer CTC read as NeMo CTC failed the same way. Left empty,
+			// sherpa-onnx infers the architecture from whichever sub-config
+			// above is populated — which the detector now gets right — and
+			// every one of these models loads.
+			//
+			// mavor's own model type still decides which sub-config to fill,
+			// so it has not stopped mattering; it just is not sherpa's word.
 		},
 		DecodingMethod: sc.DecodingMethod,
 		MaxActivePaths: sc.MaxActivePaths,
@@ -301,7 +330,7 @@ func newCGOOnlineRecognizer(_ config.Config, sc SherpaOnlineConfig, _ *slog.Logg
 			Tokens:     sc.Tokens,
 			NumThreads: sc.NumThreads,
 			Provider:   sc.Provider,
-			ModelType:  string(sc.ModelType),
+			// Left empty for the same reason as the offline recognizer above.
 		},
 		DecodingMethod: sc.DecodingMethod,
 		MaxActivePaths: sc.MaxActivePaths,

@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -30,7 +31,32 @@ const (
 	ModelTypeParaformer   SherpaModelType = "paraformer"    // FunASR Paraformer
 	ModelTypeNemoCTC      SherpaModelType = "nemo_ctc"      // NeMo CTC
 	ModelTypeWhisper      SherpaModelType = "whisper"       // Whisper ONNX
+	ModelTypeCanary       SherpaModelType = "canary"        // NVIDIA NeMo Canary
 )
+
+// CanaryModelConfig configures NVIDIA's Canary models, which are attention
+// encoder-decoders: an encoder and a decoder, and no joiner. That layout used
+// to fall through to paraformer, which reads different metadata and failed on
+// a missing lfr_window_size.
+type CanaryModelConfig struct {
+	Encoder string
+	Decoder string
+	SrcLang string
+	TgtLang string
+	UsePnc  bool
+}
+
+// SherpaModelInfo is what the file layout says about a model directory: which
+// architecture it holds, and whether it decodes incrementally.
+//
+// Streaming is a separate axis from Type rather than another Type value,
+// because it selects a different sherpa-onnx recognizer entirely — an
+// OnlineRecognizer instead of an OfflineRecognizer — while the architecture
+// underneath is the same transducer either way.
+type SherpaModelInfo struct {
+	Type      SherpaModelType
+	Streaming bool
+}
 
 // TransducerModelConfig configures offline transducer models (e.g. Parakeet-TDT, Zipformer Transducer).
 type TransducerModelConfig struct {
@@ -108,6 +134,7 @@ type SherpaOfflineConfig struct {
 	Paraformer     ParaformerModelConfig
 	NemoCTC        NemoCTCModelConfig
 	Whisper        WhisperModelConfig
+	Canary         CanaryModelConfig
 	Tokens         string
 	NumThreads     int
 	Provider       string
@@ -162,6 +189,18 @@ type RecognizerBuilderFunc func(cfg config.Config, sc SherpaOfflineConfig, logge
 // DefaultOfflineRecognizerBuilder is initialized by CGO build or stub.
 var DefaultOfflineRecognizerBuilder RecognizerBuilderFunc
 
+// OnlineRecognizerBuilderFunc builds a streaming SherpaRecognizer.
+type OnlineRecognizerBuilderFunc func(cfg config.Config, sc SherpaOnlineConfig, logger *slog.Logger) (SherpaRecognizer, error)
+
+// DefaultOnlineRecognizerBuilder is initialized by CGO build or stub.
+//
+// It was written, and then nothing called it: every model went through the
+// offline builder, so no streaming model had ever been loaded and the
+// streaming path had never run. Loading a streaming transducer offline is not
+// a soft failure — sherpa-onnx rejects the encoder's input shapes and aborts
+// the process — which is why both catalogued streaming models simply died.
+var DefaultOnlineRecognizerBuilder OnlineRecognizerBuilderFunc
+
 // SherpaTranscriber implements the Transcriber and StreamTranscriber interfaces for in-process sherpa-onnx inference.
 type SherpaTranscriber struct {
 	Config            config.Config
@@ -170,6 +209,13 @@ type SherpaTranscriber struct {
 	Logger            *slog.Logger
 	Recognizer        SherpaRecognizer
 	RecognizerBuilder RecognizerBuilderFunc
+
+	// Streaming and the online fields are set when the model decodes
+	// incrementally, in which case Start builds an OnlineRecognizer and the
+	// offline SherpaConfig is unused.
+	Streaming               bool
+	SherpaOnlineConfig      SherpaOnlineConfig
+	OnlineRecognizerBuilder OnlineRecognizerBuilderFunc
 
 	mu      sync.Mutex
 	started bool
@@ -229,18 +275,48 @@ func NewSherpaTranscriber(cfg config.Config, logger *slog.Logger) (*SherpaTransc
 		return nil, fmt.Errorf("speech: resolve sherpa model directory: %w", err)
 	}
 
+	modelName := cfg.SherpaModel
+	if modelName == "" {
+		modelName = cfg.Model
+	}
+
+	// Streaming has to be decided before the model is opened. sherpa-onnx
+	// offers no way to ask a file which recognizer it wants, and guessing
+	// wrong aborts the process rather than returning an error.
+	info, err := DetectSherpaModel(modelDir, modelName)
+	if err != nil {
+		return nil, fmt.Errorf("speech: identify sherpa model: %w", err)
+	}
+
+	t := &SherpaTranscriber{
+		Config:                  cfg,
+		ModelDir:                modelDir,
+		Logger:                  logger,
+		Streaming:               info.Streaming,
+		RecognizerBuilder:       DefaultOfflineRecognizerBuilder,
+		OnlineRecognizerBuilder: DefaultOnlineRecognizerBuilder,
+	}
+
+	if info.Streaming {
+		oc, err := BuildSherpaOnlineConfig(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("speech: build sherpa online config: %w", err)
+		}
+		t.SherpaOnlineConfig = oc
+		// Carried so logs and callers can still ask what architecture this is.
+		t.SherpaConfig = SherpaOfflineConfig{
+			ModelType: oc.ModelType, Tokens: oc.Tokens,
+			NumThreads: oc.NumThreads, Provider: oc.Provider,
+		}
+		return t, nil
+	}
+
 	sc, err := BuildSherpaOfflineConfig(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("speech: build sherpa offline config: %w", err)
 	}
-
-	return &SherpaTranscriber{
-		Config:            cfg,
-		SherpaConfig:      sc,
-		ModelDir:          modelDir,
-		Logger:            logger,
-		RecognizerBuilder: DefaultOfflineRecognizerBuilder,
-	}, nil
+	t.SherpaConfig = sc
+	return t, nil
 }
 
 // Start warms up and initializes the underlying sherpa recognizer.
@@ -253,20 +329,33 @@ func (s *SherpaTranscriber) Start(ctx context.Context) error {
 	}
 
 	if s.Recognizer == nil {
-		if s.RecognizerBuilder == nil {
-			return fmt.Errorf("speech: sherpa recognizer not initialized (engine requires -tags sherpa or injected recognizer)")
+		switch {
+		case s.Streaming:
+			if s.OnlineRecognizerBuilder == nil {
+				return fmt.Errorf("speech: sherpa streaming recognizer not initialized (engine requires -tags sherpa or injected recognizer)")
+			}
+			rec, err := s.OnlineRecognizerBuilder(s.Config, s.SherpaOnlineConfig, s.Logger)
+			if err != nil {
+				return fmt.Errorf("speech: initialize sherpa streaming recognizer: %w", err)
+			}
+			s.Recognizer = rec
+		default:
+			if s.RecognizerBuilder == nil {
+				return fmt.Errorf("speech: sherpa recognizer not initialized (engine requires -tags sherpa or injected recognizer)")
+			}
+			rec, err := s.RecognizerBuilder(s.Config, s.SherpaConfig, s.Logger)
+			if err != nil {
+				return fmt.Errorf("speech: initialize sherpa recognizer: %w", err)
+			}
+			s.Recognizer = rec
 		}
-		rec, err := s.RecognizerBuilder(s.Config, s.SherpaConfig, s.Logger)
-		if err != nil {
-			return fmt.Errorf("speech: initialize sherpa recognizer: %w", err)
-		}
-		s.Recognizer = rec
 	}
 
 	s.started = true
 	if s.Logger != nil {
 		s.Logger.Info("speech: sherpa recognizer started",
 			"model_type", s.SherpaConfig.ModelType,
+			"streaming", s.Streaming,
 			"model_dir", s.ModelDir,
 			"threads", s.SherpaConfig.NumThreads,
 			"provider", s.SherpaConfig.Provider,
@@ -439,45 +528,148 @@ func containsSherpaModelFiles(dir string) bool {
 }
 
 // DetectSherpaModelType inspects the directory contents and model name to determine model architecture.
+// DetectSherpaModelType reports the architecture of a model directory. It is
+// the single-value form of DetectSherpaModel, kept because callers and
+// configuration both speak in model types.
 func DetectSherpaModelType(modelDir string, modelName string) (SherpaModelType, error) {
-	cleanName := strings.ToLower(modelName)
+	info, err := DetectSherpaModel(modelDir, modelName)
+	return info.Type, err
+}
 
-	if findFile(modelDir, "preprocess.onnx", "preprocessor.onnx", "preprocess.int8.onnx", "preprocessor.int8.onnx", "merged_decoder.onnx", "uncached_decoder.onnx") != "" ||
-		strings.Contains(cleanName, "moonshine") {
-		return ModelTypeMoonshine, nil
+// DetectSherpaModel works out what is in a model directory by looking at the
+// files, falling back to the model's name only where the files genuinely
+// cannot tell two architectures apart.
+//
+// That order is the fix for a class of bug rather than one bug. The previous
+// detector asked the name first, so `parakeet-ctc` — a CTC model with a single
+// model.onnx — was declared a transducer because its name contains "parakeet",
+// and then failed looking for a joiner that was never there. Ten of the
+// thirteen catalogued sherpa models could not be loaded, and every failure
+// traced back to evidence being consulted in the wrong order.
+//
+// Where the name is still consulted it is because the layout is honestly
+// ambiguous: SenseVoice, NeMo CTC and a bare zipformer CTC can all ship as
+// nothing but model.onnx plus tokens.txt. Those cases are marked below, and
+// each has a layout signal tried first.
+func DetectSherpaModel(modelDir string, modelName string) (SherpaModelInfo, error) {
+	// modelName may be a catalog name or a full path — configuration accepts
+	// either — so match on the base name only. Matching the whole path lets
+	// any directory above the model decide its architecture: a model kept in
+	// ~/streaming-models/ would be routed to the streaming recognizer no
+	// matter what it actually is.
+	cleanName := strings.ToLower(filepath.Base(strings.TrimRight(modelName, string(filepath.Separator))))
+
+	// Moonshine is unmistakable: it is the only architecture that ships a
+	// separate preprocessor.
+	if findFile(modelDir, "preprocess.onnx", "preprocessor.onnx", "preprocess.int8.onnx",
+		"preprocessor.int8.onnx", "merged_decoder.onnx", "uncached_decode*.onnx") != "" {
+		return SherpaModelInfo{Type: ModelTypeMoonshine}, nil
 	}
 
-	if findFile(modelDir, "joiner.onnx", "joiner.int8.onnx", "join.onnx") != "" ||
-		strings.Contains(cleanName, "parakeet") ||
-		strings.Contains(cleanName, "transducer") {
-		return ModelTypeTransducer, nil
+	// Encoder + decoder + joiner is a transducer, whatever it is called. The
+	// globs matter here: the zipformer artifacts name these files after the
+	// training run, not after their role.
+	encoder := findFile(modelDir, "encoder.onnx", "encoder.int8.onnx", "encoder-*.onnx", "encode.onnx", "encode.int8.onnx")
+	decoder := findFile(modelDir, "decoder.onnx", "decoder.int8.onnx", "decoder-*.onnx")
+	joiner := findFile(modelDir, "joiner.onnx", "joiner.int8.onnx", "joiner-*.onnx", "join.onnx")
+
+	if encoder != "" && decoder != "" && joiner != "" {
+		return SherpaModelInfo{
+			Type:      ModelTypeTransducer,
+			Streaming: isStreamingLayout(modelDir, cleanName),
+		}, nil
 	}
 
-	if strings.Contains(cleanName, "sensevoice") || findFile(modelDir, "sensevoice.onnx") != "" {
-		return ModelTypeSenseVoice, nil
-	}
-
-	if strings.Contains(cleanName, "zipformer") {
-		if findFile(modelDir, "joiner.onnx", "joiner.int8.onnx") != "" {
-			return ModelTypeTransducer, nil
-		}
-		return ModelTypeZipformerCTC, nil
-	}
-
-	encoder := findFile(modelDir, "encoder.onnx", "encoder.int8.onnx")
-	decoder := findFile(modelDir, "decoder.onnx", "decoder.int8.onnx")
+	// Encoder and decoder with no joiner is an attention encoder-decoder:
+	// Whisper or Canary. Both need their own reader; neither is a paraformer,
+	// which is what this layout used to be called.
 	if encoder != "" && decoder != "" {
 		if strings.Contains(cleanName, "whisper") {
-			return ModelTypeWhisper, nil
+			return SherpaModelInfo{Type: ModelTypeWhisper}, nil
 		}
-		return ModelTypeParaformer, nil
+		return SherpaModelInfo{Type: ModelTypeCanary}, nil
+	}
+
+	// From here the directory holds a single model file, and the layout has
+	// only two more things to say before the name has to decide.
+
+	// A paraformer ships its FunASR configuration alongside the model. This
+	// pair is what tells it apart from every other lone-model.onnx layout.
+	if findFile(modelDir, "config.yaml") != "" && findFile(modelDir, "tokens.json") != "" {
+		return SherpaModelInfo{Type: ModelTypeParaformer}, nil
+	}
+
+	// A zipformer CTC ships a word table next to its tokens.
+	if findFile(modelDir, "words.txt") != "" {
+		return SherpaModelInfo{Type: ModelTypeZipformerCTC}, nil
+	}
+
+	// Ambiguous by layout: SenseVoice and NeMo CTC are both a lone model.onnx
+	// with a tokens.txt. The name is the only evidence left.
+	if strings.Contains(cleanName, "sensevoice") || strings.Contains(cleanName, "sense_voice") {
+		return SherpaModelInfo{Type: ModelTypeSenseVoice}, nil
+	}
+	if strings.Contains(cleanName, "paraformer") {
+		return SherpaModelInfo{Type: ModelTypeParaformer}, nil
+	}
+	if strings.Contains(cleanName, "zipformer") {
+		return SherpaModelInfo{Type: ModelTypeZipformerCTC}, nil
+	}
+	if strings.Contains(cleanName, "whisper") {
+		return SherpaModelInfo{Type: ModelTypeWhisper}, nil
 	}
 
 	if findFile(modelDir, "model.onnx", "model.int8.onnx") != "" {
-		return ModelTypeZipformerCTC, nil
+		return SherpaModelInfo{Type: ModelTypeNemoCTC}, nil
 	}
 
-	return ModelTypeTransducer, nil
+	return SherpaModelInfo{}, fmt.Errorf("speech: cannot tell what kind of model %s holds — no recognised encoder/decoder/joiner, preprocessor or model.onnx. Set sherpa_model_type in the config to say explicitly", modelDir)
+}
+
+// isStreamingLayout reports whether a transducer decodes incrementally.
+//
+// sherpa-onnx builds streaming and offline transducers from the same three
+// files, and loading one as the other is not a graceful failure: the offline
+// reader rejects a streaming encoder's inputs and aborts the process from C++.
+// So this has to be decided before the model is opened, from the two signals
+// that survive extraction — the chunk geometry sherpa bakes into streaming
+// filenames, and the upstream artifact directory left behind by the tarball,
+// whose name says "streaming" for exactly these models.
+func isStreamingLayout(modelDir, cleanName string) bool {
+	// Chunked filenames: encoder-epoch-99-avg-1-chunk-16-left-128.onnx.
+	if findFile(modelDir, "*chunk-*.onnx") != "" {
+		return true
+	}
+	if saysStreaming(cleanName) {
+		return true
+	}
+	// The extracted tarball leaves its own top-level directory behind, and
+	// sherpa-onnx names its releases for what they are. This is the only
+	// evidence that identifies `parakeet`, whose own files carry no chunk
+	// marker and whose catalog name says nothing either way.
+	if entries, err := os.ReadDir(modelDir); err == nil {
+		for _, e := range entries {
+			n := strings.ToLower(e.Name())
+			if strings.HasPrefix(n, "sherpa-onnx-") && saysStreaming(n) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// saysStreaming reports whether a name claims to be a streaming model.
+//
+// The "non-streaming" check is not defensive tidiness. sherpa-onnx ships
+// parakeet-unified-en as sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-// non-streaming, and a plain substring test for "streaming" matches it —
+// routing an offline model to the streaming recognizer, which then fails on a
+// missing window_size. The word that is present says the opposite of what the
+// naive match concludes, so it has to be ruled out first.
+func saysStreaming(name string) bool {
+	if strings.Contains(name, "non-streaming") || strings.Contains(name, "non_streaming") {
+		return false
+	}
+	return strings.Contains(name, "streaming") || strings.Contains(name, "online")
 }
 
 // resolveDecoding picks the decoding method and hotword boost for a sherpa
@@ -560,15 +752,15 @@ func BuildSherpaOfflineConfig(cfg config.Config) (SherpaOfflineConfig, error) {
 	case ModelTypeTransducer:
 		encoder := cfg.SherpaEncoder
 		if encoder == "" {
-			encoder = findFile(modelDir, "encoder.onnx", "encoder.int8.onnx", "encode.onnx")
+			encoder = findFile(modelDir, "encoder.onnx", "encoder.int8.onnx", "encoder-*.onnx", "encode.onnx")
 		}
 		decoder := cfg.SherpaDecoder
 		if decoder == "" {
-			decoder = findFile(modelDir, "decoder.onnx", "decoder.int8.onnx", "decode.onnx")
+			decoder = findFile(modelDir, "decoder.onnx", "decoder.int8.onnx", "decoder-*.onnx", "decode.onnx")
 		}
 		joiner := cfg.SherpaJoiner
 		if joiner == "" {
-			joiner = findFile(modelDir, "joiner.onnx", "joiner.int8.onnx", "join.onnx")
+			joiner = findFile(modelDir, "joiner.onnx", "joiner.int8.onnx", "joiner-*.onnx", "join.onnx")
 		}
 
 		if encoder == "" || decoder == "" || joiner == "" {
@@ -616,8 +808,15 @@ func BuildSherpaOfflineConfig(cfg config.Config) (SherpaOfflineConfig, error) {
 		if modelFile == "" {
 			return SherpaOfflineConfig{}, fmt.Errorf("speech: CTC model in %s missing model.onnx", modelDir)
 		}
-		sc.ZipformerCTC = ZipformerCTCModelConfig{Model: modelFile}
-		sc.NemoCTC = NemoCTCModelConfig{Model: modelFile}
+		// Exactly one of these, never both. Setting the pair left sherpa-onnx
+		// to choose a reader for itself, and for a zipformer model it chose
+		// the NeMo one — which is where "'vocab_size' does not exist in the
+		// metadata" came from.
+		if modelType == ModelTypeZipformerCTC {
+			sc.ZipformerCTC = ZipformerCTCModelConfig{Model: modelFile}
+		} else {
+			sc.NemoCTC = NemoCTCModelConfig{Model: modelFile}
+		}
 
 	case ModelTypeSenseVoice:
 		modelFile := cfg.SherpaEncoder
@@ -634,28 +833,47 @@ func BuildSherpaOfflineConfig(cfg config.Config) (SherpaOfflineConfig, error) {
 		}
 
 	case ModelTypeParaformer:
+		// An offline paraformer is a single model file. The encoder/decoder
+		// fields belong to the streaming variant and stay empty here; filling
+		// them from an offline directory is what made every encoder-decoder
+		// layout look like a paraformer.
+		modelFile := cfg.SherpaEncoder
+		if modelFile == "" {
+			modelFile = findFile(modelDir, "model.onnx", "model.int8.onnx")
+		}
+		if modelFile == "" {
+			return SherpaOfflineConfig{}, fmt.Errorf("speech: paraformer model in %s missing model.onnx", modelDir)
+		}
+		sc.Paraformer = ParaformerModelConfig{Model: modelFile}
+
+	case ModelTypeCanary:
 		enc := cfg.SherpaEncoder
 		if enc == "" {
-			enc = findFile(modelDir, "encoder.onnx", "encoder.int8.onnx", "model.onnx")
+			enc = findFile(modelDir, "encoder.onnx", "encoder.int8.onnx", "encoder-*.onnx")
 		}
 		dec := cfg.SherpaDecoder
 		if dec == "" {
-			dec = findFile(modelDir, "decoder.onnx", "decoder.int8.onnx")
+			dec = findFile(modelDir, "decoder.onnx", "decoder.int8.onnx", "decoder-*.onnx")
 		}
-		sc.Paraformer = ParaformerModelConfig{
-			Encoder: enc,
-			Decoder: dec,
-			Model:   enc,
+		if enc == "" || dec == "" {
+			return SherpaOfflineConfig{}, fmt.Errorf("speech: canary model in %s requires encoder and decoder onnx files (found: encoder=%q, decoder=%q)", modelDir, enc, dec)
+		}
+		// UsePnc asks Canary for punctuation and capitalisation. It is the
+		// whole reason to prefer it over a bare CTC model for dictation, so
+		// it is on.
+		sc.Canary = CanaryModelConfig{
+			Encoder: enc, Decoder: dec,
+			SrcLang: "en", TgtLang: "en", UsePnc: true,
 		}
 
 	case ModelTypeWhisper:
 		enc := cfg.SherpaEncoder
 		if enc == "" {
-			enc = findFile(modelDir, "encoder.onnx", "encoder.int8.onnx")
+			enc = findFile(modelDir, "encoder.onnx", "encoder.int8.onnx", "*-encoder.onnx", "*-encoder.int8.onnx")
 		}
 		dec := cfg.SherpaDecoder
 		if dec == "" {
-			dec = findFile(modelDir, "decoder.onnx", "decoder.int8.onnx")
+			dec = findFile(modelDir, "decoder.onnx", "decoder.int8.onnx", "*-decoder.onnx", "*-decoder.int8.onnx")
 		}
 		sc.Whisper = WhisperModelConfig{
 			Encoder:  enc,
@@ -697,15 +915,18 @@ func BuildSherpaOnlineConfig(cfg config.Config) (SherpaOnlineConfig, error) {
 
 	encoder := cfg.SherpaEncoder
 	if encoder == "" {
-		encoder = findFile(modelDir, "encoder.onnx", "encoder.int8.onnx")
+		encoder = findFile(modelDir, "encoder.onnx", "encoder.int8.onnx", "encoder-*.onnx")
 	}
 	decoder := cfg.SherpaDecoder
 	if decoder == "" {
-		decoder = findFile(modelDir, "decoder.onnx", "decoder.int8.onnx")
+		decoder = findFile(modelDir, "decoder.onnx", "decoder.int8.onnx", "decoder-*.onnx")
 	}
 	joiner := cfg.SherpaJoiner
 	if joiner == "" {
-		joiner = findFile(modelDir, "joiner.onnx", "joiner.int8.onnx")
+		joiner = findFile(modelDir, "joiner.onnx", "joiner.int8.onnx", "joiner-*.onnx")
+	}
+	if encoder == "" || decoder == "" || joiner == "" {
+		return SherpaOnlineConfig{}, fmt.Errorf("speech: streaming transducer in %s requires encoder, decoder and joiner onnx files (found: encoder=%q, decoder=%q, joiner=%q)", modelDir, encoder, decoder, joiner)
 	}
 
 	return SherpaOnlineConfig{
@@ -726,11 +947,38 @@ func BuildSherpaOnlineConfig(cfg config.Config) (SherpaOnlineConfig, error) {
 	}, nil
 }
 
+// findFile returns the first candidate that exists in dir. A candidate may be
+// an exact filename or a glob.
+//
+// The glob support is not a convenience. sherpa-onnx ships its zipformer
+// models with the training run baked into the filename —
+// encoder-epoch-99-avg-1.onnx, and for the streaming variant
+// encoder-epoch-99-avg-1-chunk-16-left-128.onnx — so an exact-match lookup for
+// "encoder.onnx" finds nothing, the model reads as having no encoder, and a
+// transducer gets misclassified as a CTC model with a missing model.onnx.
+//
+// Candidates are tried in order, so callers put exact names first and keep the
+// precedence they had. Within one glob the matches are sorted and the first is
+// taken: several files can match, and picking a different one between runs
+// would mean two benchmarks silently compared two different models.
 func findFile(dir string, candidates ...string) string {
 	for _, c := range candidates {
-		p := filepath.Join(dir, c)
-		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
-			return p
+		if !strings.ContainsAny(c, "*?[") {
+			p := filepath.Join(dir, c)
+			if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+				return p
+			}
+			continue
+		}
+		matches, err := filepath.Glob(filepath.Join(dir, c))
+		if err != nil {
+			continue
+		}
+		sort.Strings(matches)
+		for _, m := range matches {
+			if fi, err := os.Stat(m); err == nil && !fi.IsDir() {
+				return m
+			}
 		}
 	}
 	return ""

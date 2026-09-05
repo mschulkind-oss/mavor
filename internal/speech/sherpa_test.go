@@ -635,11 +635,19 @@ func TestBuildSherpaOfflineConfigArchitectures(t *testing.T) {
 		}
 	})
 
-	// 4. Paraformer & Whisper
-	t.Run("Paraformer and Whisper", func(t *testing.T) {
+	// 4. Paraformer
+	//
+	// This subtest used to build a paraformer from an encoder and a decoder,
+	// which is the streaming variant's layout. The offline artifact the
+	// catalog downloads — sherpa-onnx-paraformer-zh-2024-03-09 — is a single
+	// model.onnx beside a config.yaml, and populating the encoder/decoder
+	// pair from an offline directory is what made every encoder-decoder model
+	// look like a paraformer and fail on a missing lfr_window_size.
+	t.Run("Paraformer", func(t *testing.T) {
 		tempDir := t.TempDir()
-		_ = os.WriteFile(filepath.Join(tempDir, "encoder.onnx"), []byte("1"), 0o644)
-		_ = os.WriteFile(filepath.Join(tempDir, "decoder.onnx"), []byte("1"), 0o644)
+		_ = os.WriteFile(filepath.Join(tempDir, "model.onnx"), []byte("1"), 0o644)
+		_ = os.WriteFile(filepath.Join(tempDir, "config.yaml"), []byte("1"), 0o644)
+		_ = os.WriteFile(filepath.Join(tempDir, "tokens.json"), []byte("1"), 0o644)
 		_ = os.WriteFile(filepath.Join(tempDir, "tokens.txt"), []byte("1"), 0o644)
 
 		cfg := config.Config{SherpaModel: tempDir, SherpaModelType: "paraformer"}
@@ -647,9 +655,17 @@ func TestBuildSherpaOfflineConfigArchitectures(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Paraformer config failed: %v", err)
 		}
-		if sc.Paraformer.Encoder == "" || sc.Paraformer.Decoder == "" {
-			t.Errorf("Paraformer paths missing: %+v", sc.Paraformer)
+		if sc.Paraformer.Model == "" {
+			t.Errorf("Paraformer model path missing: %+v", sc.Paraformer)
 		}
+	})
+
+	// 5. Whisper — encoder and decoder, and genuinely so.
+	t.Run("Whisper", func(t *testing.T) {
+		tempDir := t.TempDir()
+		_ = os.WriteFile(filepath.Join(tempDir, "encoder.onnx"), []byte("1"), 0o644)
+		_ = os.WriteFile(filepath.Join(tempDir, "decoder.onnx"), []byte("1"), 0o644)
+		_ = os.WriteFile(filepath.Join(tempDir, "tokens.txt"), []byte("1"), 0o644)
 
 		cfgWhisper := config.Config{SherpaModel: tempDir, SherpaModelType: "whisper"}
 		scWhisper, err := BuildSherpaOfflineConfig(cfgWhisper)
