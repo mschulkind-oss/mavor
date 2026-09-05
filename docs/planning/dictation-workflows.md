@@ -95,7 +95,9 @@ This document explores how new users discover, install, configure, dictate with,
 9. Exactly 1.1 seconds later, `wtype` types the sentence directly into her Neovim cursor position and `wl-copy` updates the Wayland clipboard. The HUD smoothly disappears.
 
 10. Maya pauses for 3 seconds holding `$mod+grave` without speaking, then releases.
-    The integrated Silero Voice Activity Detector (VAD) evaluates the audio buffer, detects <250ms of vocal energy, and immediately returns to `idle` without typing hallucinated filler text like `"you"` or `"[BLANK_AUDIO]"`.
+    The energy-threshold voice-activity check evaluates the captured WAV, finds less than 150 ms of frames above the RMS threshold, and returns to `idle` without typing hallucinated filler text like `"you"` or `"[BLANK_AUDIO]"`.
+
+    **Gap:** The gate is amplitude, not speech — it cannot distinguish quiet dictation from a noisy room, so a soft speaker near a fan gets both failure modes: real speech dropped, and hallucinations let through.
 
 **Changing the model:**
 

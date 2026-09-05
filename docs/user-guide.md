@@ -57,7 +57,7 @@ For high-level architecture see [`how-mavor-works.md`](./reference/how-mavor-wor
 1. **Activation:** Keypress signals `mavor start` (push-to-talk) or `mavor toggle`. Daemon enters `recording`.
 2. **Audio Capture & Ducking:** Audio capture initializes via PipeWire (`parec`). If configured, background media streams (Spotify, Firefox) are automatically ducked.
 3. **Live HUD Waveform:** The layer-shell HUD overlay appears 8px below Waybar, rendering a live volume waveform meter across 6 discrete energy levels (0% to 100%).
-4. **VAD Gating & Transcription:** On release (`mavor stop` / second `toggle`), Silero VAD evaluates speech frames. If speech is detected, the selected speech-to-text (STT) engine (in-process `sherpa-onnx` CGO, `whisper-cli`, or warm HTTP server) executes transcription.
+4. **VAD Gating & Transcription:** On release (`mavor stop` / second `toggle`), an energy-threshold voice-activity check scans the captured WAV: it needs at least 150 ms of frames above an RMS threshold before the audio is worth decoding. Below that the cycle ends silently rather than handing whisper a silent clip to hallucinate over. This is a plain RMS gate computed in Go — there is no neural VAD model in `mavor`. If speech is detected, the selected speech-to-text (STT) engine (in-process `sherpa-onnx` CGO, `whisper-cli`, or warm HTTP server) transcribes it.
 5. **Output Emission:** `wtype` types text directly into the focused window while `wl-copy` updates the Wayland clipboard. Temporary recording files in `/tmp/mavor-recordings/` are immediately purged.
 
 ---
@@ -120,7 +120,26 @@ engine = "cli"     # Options: "cli" (default), "sherpa", or "server"
 
 #### 3. `engine = "server"` — Offloaded or Shared Inference
 
-- **How it works:** The daemon sends audio data over a local Unix socket (`$XDG_RUNTIME_DIR/mavor-server.sock`) or remote HTTP endpoint.
+> [!WARNING]
+> **Broken as scaffolded.** The commented-out `server_socket` in the generated
+> config is a Unix socket path, and the supervisor starts `whisper-server` with
+> a `--socket` flag that whisper.cpp's server does not have, so the child exits
+> immediately. Over plain HTTP the client posts to `/v1/audio/transcriptions`,
+> where whisper.cpp serves `/inference`. The one configuration that works today
+> is an explicit HTTP endpoint carrying the path:
+>
+> ```toml
+> engine        = "server"
+> server_socket = "http://127.0.0.1:8080/inference"
+> ```
+>
+> Tracked in [`roadmap.md`](./roadmap.md); the benchmark's warm-server rows use
+> exactly this endpoint.
+
+- **How it works:** The daemon posts the captured WAV to a `whisper-server`
+  endpoint as multipart form data, and reads the transcript out of the JSON
+  response. When the endpoint is a local one the daemon supervises the child
+  process itself, restarting it if it dies.
 - **Why users choose it:**
   - Allows running speech inference on a dedicated GPU machine or server on your local network while dictating from a lightweight laptop.
 
@@ -476,6 +495,6 @@ $ just done       # Pre-commit quality verification
 | `toggle: connect: no such file or directory` | Daemon is not running or socket mismatch | Run `mavor daemon -v` or `mavor doctor` to inspect status |
 | Overlay does not appear | Compositor does not implement `wlr-layer-shell` | Ensure a wlroots session (sway, hyprland, river) is active; `mavor daemon -v` logs the reason it fell back to a silent overlay |
 | Audio volume does not duck | `duck_audio = true` not set in `config.toml` | Set `duck_audio = true` and check `duck_streams` in config |
-| Ghost words typed during silence | Silence hallucination without VAD | Ensure Silero VAD is active or use in-process `sherpa` engine |
+| Ghost words typed during silence | Speech quiet enough to pass the energy gate, then hallucinated by whisper | Raise the input gain, or move closer to the microphone; the gate is an RMS threshold and cannot tell quiet speech from room noise |
 | Text typed in wrong window | Focus shifted during transcription | Keep window focused until overlay closes |
 | Systemd service fails to start | Audio socket or Wayland display not ready | Ensure `PartOf=graphical-session.target` and PipeWire is running |
