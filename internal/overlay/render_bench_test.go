@@ -34,23 +34,41 @@ func TestFrameRendersWellInsideItsBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const frames = 30
-	start := time.Now()
-	for i := 0; i < frames; i++ {
-		// Phase changes every frame in the real loop, and the waveform
-		// scrolls, so this is not re-rendering an identical scene.
-		scene.Phase = float64(i%24) / 24
-		copy(scene.Levels, scene.Levels[1:])
-		if err := RenderInto(img, scene); err != nil {
-			t.Fatal(err)
+	// The MINIMUM across several batches, not the mean of one.
+	//
+	// A wall-clock assertion in a unit test is a liability: this one failed
+	// once already because it happened to run beside the integration suite,
+	// and a test that fails when the machine is busy teaches people to ignore
+	// it. The minimum is what the machine can do when it is not contended,
+	// which is the property actually being asserted — that the work per frame
+	// is small, not that this run had a quiet CPU.
+	const (
+		batches   = 5
+		perBatch  = 20
+		threshold = budget / 2 // half, so a slower machine still keeps up
+	)
+	best := time.Hour
+	for b := 0; b < batches; b++ {
+		start := time.Now()
+		for i := 0; i < perBatch; i++ {
+			// Phase advances and the waveform scrolls every frame in the real
+			// loop, so this is not re-rendering one identical scene.
+			scene.Phase = float64(i%24) / 24
+			copy(scene.Levels, scene.Levels[1:])
+			if err := RenderInto(img, scene); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if per := time.Since(start) / perBatch; per < best {
+			best = per
 		}
 	}
-	per := time.Since(start) / frames
 
-	t.Logf("steady-state frame: %v (budget %v)", per.Round(time.Microsecond), budget)
-	// Half the budget, so a slower machine than this one still keeps up.
-	if per > budget/2 {
-		t.Errorf("a frame takes %v, over half the %v budget — the render loop will drop ticks and the waveform will stutter", per, budget)
+	t.Logf("steady-state frame: %v (budget %v, threshold %v)",
+		best.Round(time.Microsecond), budget, threshold)
+	if best > threshold {
+		t.Errorf("a frame takes %v at best, over the %v threshold — the render loop will drop ticks and the waveform will stutter",
+			best, threshold)
 	}
 }
 
