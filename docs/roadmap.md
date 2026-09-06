@@ -250,6 +250,14 @@ every whisper catalog name with its family, and makes a small streaming model
 the default source of the live preview instead of re-running the main model at
 every pause.
 
+One ruling already settled, and it reaches past the config file: **mavor becomes
+a cgo-only program.** The pure-Go build and the `sherpa` build tag are deleted
+rather than demoted, `build-sherpa` folds into `build`, and the release ships a
+42 MB directory instead of an 11.8 MB static binary. That buys the thirteen
+sherpa models out of the box and costs cross-compilation without a cross
+toolchain. The release recipe must set `$ORIGIN` in its rpath or it will ship a
+binary that runs only on the build host.
+
 The first two steps — fixing `gpu_layers`, and the catalog rename — are
 self-contained and worth landing on their own.
 

@@ -224,36 +224,42 @@ and refused at daemon start, rather than silently ignored.
 
 ---
 
-## 4. The build question: why pure Go, and why not always cgo
+## 4. The build is cgo, always
 
-`AGENTS.md` states the default build is pure Go and `CGO_ENABLED=0` works. The
-sherpa runtime is the one variant that needs cgo, which is why every sherpa model
-— thirteen of the twenty-four in the catalog — is unavailable in the default
-build. Since this proposal makes a sherpa model the default preview source
-(§6), the question has to be settled rather than inherited.
+**Decided 2026-09-05 (OQ-1): mavor is a cgo program.** The pure-Go build is not
+demoted to a second artifact, it is deleted. The `sherpa` build tag goes with
+it, `just build` becomes what `just build-sherpa` was, and `build-sherpa` and
+`bench-sherpa` collapse into `build` and `bench`.
 
-### 4.1 What cgo actually costs, measured
+This was a live question because `AGENTS.md` states the default build is pure Go
+and `CGO_ENABLED=0` works. The sherpa runtime is the one variant needing cgo,
+which is why thirteen of the twenty-four catalog models are unreachable in that
+default build — and why §6 could not make a sherpa model the default preview
+source without settling this first.
 
-Built both variants from `62db92c` on 2026-09-05:
+### 4.1 What the ruling costs, measured
 
-| | pure Go | cgo (`-tags sherpa`) |
+Both variants built from `62db92c` on 2026-09-05. The left column is what is
+being given up:
+
+| | pure Go (deleted) | cgo (the build) |
 |---|---|---|
 | Binary | 11.8 MB, `statically linked` | 12.0 MB, dynamically linked |
 | Ships as | one file | one file **plus 31 MB of shared objects** |
-| Shared objects needed | none | `libonnxruntime.so` (26.4 MB), `libsherpa-onnx-c-api.so` (5.1 MB) |
+| Shared objects | none | `libonnxruntime.so` (26.4 MB), `libsherpa-onnx-c-api.so` (5.1 MB) |
 | Default `RUNPATH` | n/a | an absolute path into **the builder's** `~/go/pkg/mod` |
-| Cross-compile to `arm64` | works | fails without a cross toolchain |
-| libc | none | glibc; the module carries a `!musl` tag, so musl needs a different variant |
+| Cross-compile to `arm64` | works | needs a cross toolchain |
+| libc | none | glibc; the module carries a `!musl` tag |
 
-The `RUNPATH` result is the one that matters and the one that looks fatal at
-first:
+The `RUNPATH` result looks fatal and is the one thing here that could have
+reversed the decision:
 
 ```console
 $ readelf -d bin/mavor | grep RUNPATH
  (RUNPATH)  Library runpath: [/home/agent/go/pkg/mod/github.com/k2-fsa/sherpa-onnx-go-linux@v1.13.7/lib/x86_64-unknown-linux-gnu:…]
 ```
 
-A binary built that way runs only on a machine with that exact module cache
+A binary built that way runs only on a machine carrying that exact module cache
 path. The cross-compile failure is equally concrete:
 
 ```console
@@ -262,34 +268,28 @@ $ GOOS=linux GOARCH=arm64 CGO_ENABLED=1 go build -tags sherpa ./cmd/mavor
 gcc_arm64.S:30: Error: no such instruction: `stp x29,x30,[sp,'
 ```
 
-### 4.2 It is solvable, and the answer is yes, always use cgo
-
 > [!IMPORTANT]
-> The `RUNPATH` problem is **not** a reason to avoid cgo. Verified on
-> 2026-09-05: building with `-ldflags "-r \$ORIGIN"` and copying the two shared
-> objects next to the binary produces a relocatable 42 MB directory that runs.
-> Do not re-derive this objection — it was investigated and it does not hold.
+> The `RUNPATH` problem is solved, not tolerated. Verified 2026-09-05: building
+> with `-ldflags "-r \$ORIGIN"` and copying the two shared objects next to the
+> binary produces a relocatable 42 MB directory that runs. Do not re-derive this
+> objection — it was investigated and it does not hold, and the release recipe
+> must set `$ORIGIN` or it will ship a binary that runs only on the build host.
 
-So the honest cost of always using cgo is not "it does not work". It is three
-things:
+### 4.2 What follows from it
 
-1. **The distribution unit changes from one file to a directory** — 42 MB
-   instead of 11.8 MB. For a program that ships an ML runtime this is normal;
-   whisper.cpp itself ships shared objects.
-2. **Cross-compilation needs a cross toolchain.** The only realistic targets are
-   `linux/amd64` and `linux/arm64`, and the sherpa module vendors prebuilt
-   objects for both, so this is a build-host question, not a portability wall.
-3. **musl needs a separate module variant.**
+- **The distribution unit is a directory**, 42 MB, not an 11.8 MB file. Normal
+  for a program shipping an ML runtime; whisper.cpp ships shared objects too.
+- **Cross-compilation needs a cross toolchain.** The realistic targets are
+  `linux/amd64` and `linux/arm64`, and the sherpa module vendors prebuilt objects
+  for both, so this is a build-host question rather than a portability wall.
+- **musl is unsupported** until someone asks. The upstream module has a musl
+  variant behind its own tag; wiring it up is not free and nobody wants it yet.
+- **A C toolchain becomes a build requirement**, including in CI.
 
-Against that, cgo buys thirteen catalog models, the streaming preview companion
-of §6, and sub-second Parakeet. **Recommendation: flip the default.** `just
-build` builds with sherpa; a `just build-whisper-only` recipe keeps the
-`CGO_ENABLED=0` path for cross-compilation and for anyone who only wants
-whisper. The pure-Go build stops being "the default build" and becomes what it
-actually is — the whisper-only build. See [OQ-1](#open-questions).
-
-This matters to the config file directly: if cgo is the default, no config
-comment has to explain build tags, and §6's preview design has no caveat.
+What it buys is the reason: thirteen catalog models, the streaming preview
+companion of §6, sub-second Parakeet, and a config file that never has to
+explain a build tag to anyone. That last one is why this section is in a
+document about `config.toml` at all.
 
 ---
 
@@ -683,8 +683,9 @@ implement, so keeping the name would preserve the lie.
 
 | Risk | Mitigation |
 |---|---|
-| Making cgo the default breaks a build host without a C toolchain | Keep the pure-Go recipe, name it for what it is, and cover both in CI |
-| The 42 MB distribution is a regression for whisper-only users | The whisper-only build remains a first-class artifact |
+| cgo-only means no cross-compilation without a cross toolchain | The only realistic targets are `linux/amd64` and `linux/arm64`; the sherpa module vendors prebuilt objects for both, so the release builds on each host or in a container |
+| A whisper-only user now ships 42 MB and an ONNX Runtime they never load | Accepted deliberately. Two build variants cost more in CI and support than the 30 MB saves |
+| A release built without `$ORIGIN` runs only on the build host | §4.1. The release recipe sets it, and a smoke test runs the artifact from a directory the build did not create |
 | The companion model starves the main model on a small CPU | It costs roughly one core at 0.06–0.08 real-time factor; `doctor` warns below 4 physical cores, and `preview.source = "phrases"` is one line |
 | Deleting aliases breaks the author's own config and any scripts | §10.5: `doctor` detects an all-unknown-keys file and names the fix |
 | The catalog rename invalidates the benchmark report's model column | `just bench` regenerates it; the report is generated, never edited |
@@ -719,18 +720,23 @@ here.
 explicit on-disk filename field the rename requires. This is self-contained and
 touches the catalog, `models pull`, and the docs.
 
-**Third, the schema itself.** The struct with its tables, `Default()`, thread
+**Third, collapse the build to cgo** (§4). Delete the `sherpa` build tag and the
+`CGO_ENABLED=0` recipe, fold `build-sherpa` into `build` and `bench-sherpa` into
+`bench`, set `$ORIGIN` in the release recipe, and correct the Build Tags section
+of `AGENTS.md`, which currently states the opposite. This has to land before the
+preview, which assumes a sherpa model is always available.
+
+**Fourth, the schema itself.** The struct with its tables, `Default()`, thread
 autodetection, runtime and placement derivation, and a test asserting that the
 scaffolded template parses to exactly `Default()`.
 
-**Fourth, the preview.** The companion model, the resolution rule, and phrase
-mode as the named fallback. This is the largest piece and it depends on the
-build decision in [OQ-1](#open-questions).
+**Fifth, the preview.** The companion model, the resolution rule, and phrase
+mode as the named fallback. The largest piece.
 
-**Fifth, vocabulary.** The `[vocabulary]` table mapped to a whisper prompt and to
+**Sixth, vocabulary.** The `[vocabulary]` table mapped to a whisper prompt and to
 sherpa hotwords, with the decoding method following from it.
 
-**Sixth, the docs**: the user guide's configuration reference, the quickstart,
+**Seventh, the docs**: the user guide's configuration reference, the quickstart,
 and the `doctor` output described in §10.6.
 
 Steps one and two are worth landing even if the rest of this proposal is
@@ -740,21 +746,7 @@ rejected.
 
 ## Open Questions
 
-1. 💬 **OQ-1: Should the default build become cgo?**
-
-   <!-- vantage: oq id=OQ-1 leaning="Yes — make the cgo/sherpa build the default and rename the pure-Go one the whisper-only build. The measured costs are a 42 MB directory instead of a 12 MB file, and cross-compilation needing a cross toolchain." -->
-
-   §4 measures the cost and finds it is packaging, not capability. This decides
-   whether §6's preview default has a caveat attached, and whether thirteen of
-   twenty-four catalog models are reachable out of the box.
-
-   _Leaning:_ Yes. Make `just build` the cgo build and rename the pure-Go recipe
-   for what it is. Ship both artifacts.
-
-   **Answer:**
-   > _(empty — fill in when decided)_
-
-2. 💬 **OQ-2: Which model is the designated preview companion?**
+1. 💬 **OQ-2: Which model is the designated preview companion?**
 
    <!-- vantage: oq id=OQ-2 leaning="Add the 20M-parameter streaming zipformer to the catalog as the designated companion; zipformer-streaming's 310 MB download is too large for a default." -->
 
@@ -768,7 +760,7 @@ rejected.
    **Answer:**
    > _(empty — fill in when decided)_
 
-3. 💬 **OQ-3: Does `mavor setup` pull the companion model?**
+2. 💬 **OQ-3: Does `mavor setup` pull the companion model?**
 
    <!-- vantage: oq id=OQ-3 leaning="Only if OQ-2 lands a model under about 100 MB; otherwise setup offers it and doctor recommends it, but nothing downloads without being asked." -->
 
@@ -781,7 +773,7 @@ rejected.
    **Answer:**
    > _(empty — fill in when decided)_
 
-4. 💬 **OQ-4: Does the `[vocabulary]` table land now, or wait for the window-context design?**
+3. 💬 **OQ-4: Does the `[vocabulary]` table land now, or wait for the window-context design?**
 
    <!-- vantage: oq id=OQ-4 leaning="Land it now — the static table is the config surface that design needs anyway, and it closes the whisper prompt gap the roadmap already flags." -->
 
@@ -796,7 +788,7 @@ rejected.
    **Answer:**
    > _(empty — fill in when decided)_
 
-5. 💬 🤷 **OQ-5: `[preview]` as a table, or one scalar `preview` key?**
+4. 💬 🤷 **OQ-5: `[preview]` as a table, or one scalar `preview` key?**
 
    <!-- vantage: oq id=OQ-5 leaning="Keep the table — pause_ms and min_phrase_ms need a home, and preview is where they belong." -->
 
@@ -815,4 +807,4 @@ rejected.
 
 | ID | Ruling / Decision | Date | Settled in |
 | :--- | :--- | :--- | :--- |
-| _(none yet)_ | | | |
+| OQ-1 | cgo only. The pure-Go build and the `sherpa` tag are deleted, not demoted — one build, one artifact | 2026-09-05 | §4 The build is cgo, always |
