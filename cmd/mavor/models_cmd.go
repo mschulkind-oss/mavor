@@ -144,19 +144,26 @@ func downloadAndExtractArchive(url, format, targetDir string) error {
 		return fmt.Errorf("download %s: %s", url, resp.Status)
 	}
 
+	// Report while the bytes arrive. The archive path is where the large
+	// models live — hundreds of megabytes — and it is the one that looked
+	// hung.
+	prog := newProgressReader(resp.Body, resp.ContentLength, "downloading")
+	defer prog.Close()
+	body := io.Reader(prog)
+
 	var decompressed io.Reader
 	switch format {
 	case "tar.bz2", "bz2":
-		decompressed = bzip2.NewReader(resp.Body)
+		decompressed = bzip2.NewReader(body)
 	case "tar.gz", "tgz", "gz":
-		gz, err := gzip.NewReader(resp.Body)
+		gz, err := gzip.NewReader(body)
 		if err != nil {
 			return err
 		}
 		defer gz.Close()
 		decompressed = gz
 	case "tar":
-		decompressed = resp.Body
+		decompressed = body
 	default:
 		return fmt.Errorf("unsupported archive format: %s", format)
 	}
@@ -738,7 +745,9 @@ func downloadFile(url, dest string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(f, resp.Body); err != nil {
+	prog := newProgressReader(resp.Body, resp.ContentLength, "downloading")
+	defer prog.Close()
+	if _, err := io.Copy(f, prog); err != nil {
 		f.Close()
 		_ = os.Remove(tmp)
 		return err
