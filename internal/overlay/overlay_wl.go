@@ -227,14 +227,24 @@ func (o *WL) paint(st *wlState, start time.Time) error {
 	}
 
 	renderStart := time.Now()
-	// Reused across frames: with the strip width held constant the scene is
-	// almost always the same size, so this allocates once per resize rather
-	// than once per frame.
-	if st.img == nil || st.img.Bounds().Dx() < sw || st.img.Bounds().Dy() < sh {
-		st.img = image.NewRGBA(image.Rect(0, 0, sw, sh))
+	// Sized from the SCENE, not from the surface. Resize is asynchronous —
+	// the compositor has not acked the new size on the frame that asks for
+	// it — so on exactly that frame the surface is still the old, smaller
+	// one. Sizing the scratch from it produced a buffer too small for the
+	// scene, and the error killed the whole render loop: the overlay
+	// vanished mid-recording while dictation carried on.
+	//
+	// blit clips to whichever is smaller, so a scene bigger than the surface
+	// is drawn correctly and simply cropped until the resize lands.
+	if st.img == nil || st.img.Bounds().Dx() < w || st.img.Bounds().Dy() < h {
+		st.img = image.NewRGBA(image.Rect(0, 0, w, h))
 	}
 	if err := RenderInto(st.img, st.scene); err != nil {
-		return err
+		// Never fatal. A frame mavor cannot draw is a frame the user does
+		// not see; a render loop that stops is an overlay that never comes
+		// back, and the daemon goes on recording behind it.
+		o.debug("overlay: frame skipped", "err", err)
+		return nil
 	}
 	blit(st.img, st.buf)
 	// Render measures and draws every glyph of the preview, so its cost
