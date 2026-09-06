@@ -31,8 +31,9 @@ const (
 	DefaultPauseMS     = 450
 	DefaultMinPhraseMS = 600
 	DefaultTopMargin   = 8
-	// DefaultTypingDelayMS is deliberately low but not zero: see
-	// Output.TypingDelayMS.
+	// DefaultTypingDelayMS is unused: the default is to pass no -d at all,
+	// which is measurably the fastest wtype goes. Kept as the documented
+	// value to write when an application needs typing slowed down.
 	DefaultTypingDelayMS = 1
 	// DefaultPreviewWidth caps the preview at half the screen.
 	DefaultPreviewWidth = 0.5
@@ -82,7 +83,7 @@ type Logging struct {
 // here is what else happens.
 type Output struct {
 	// TypingDelayMS is the pause wtype leaves between keystrokes, in
-	// milliseconds. DefaultTypingDelayMS when unset.
+	// milliseconds. UNSET by default, and that is the fast setting.
 	//
 	// It is a pointer so that "unset" and "zero" are different requests:
 	// zero is a deliberate ask for no delay, and there would be no way to
@@ -90,11 +91,22 @@ type Output struct {
 	// pole on a long dictation — the `emit_chars_per_sec` figure at the end
 	// of each cycle is what says whether changing this helped.
 	//
-	// Lower is not always better: an application that drops synthetic
-	// keystrokes will drop more of them the faster they arrive. That is why
-	// the default is low rather than zero — measured typing runs at about
-	// 230 characters a second, so 1 ms is a small share of the per-character
-	// cost and leaves a margin for applications that need one.
+	// There is no value here that types FASTER than leaving it unset.
+	// Measured against a real compositor (test/integration, 400 characters):
+	//
+	//	default (no -d)   4.14 ms/char
+	//	-d 1              5.17 ms/char
+	//	-d 5              9.21 ms/char
+	//
+	// wtype's own default sleep is zero, so -d can only add. The ~4 ms floor
+	// is wtype's per-keystroke protocol cost, not a delay, and no setting
+	// reaches it. wtype also rejects both `-d 0` and a fractional value with
+	// "Invalid sleep time", so there is nothing available between "unset" and
+	// one whole millisecond.
+	//
+	// It exists to be raised, not lowered: an application that drops
+	// synthetic keystrokes drops more of them the faster they arrive, and
+	// this is the knob that slows typing down for one.
 	TypingDelayMS *int `toml:"typing_delay_ms"`
 
 	// Clipboard also copies each transcript, replacing whatever was on the
@@ -252,7 +264,9 @@ func Default() Config {
 			Verbose: false,
 		},
 		Output: Output{
-			TypingDelayMS: func() *int { d := DefaultTypingDelayMS; return &d }(),
+			// nil: pass no -d, which is the fastest wtype types. See the
+			// measurements on Output.TypingDelayMS.
+			TypingDelayMS: nil,
 			// Off: see the field's own comment. Typing is the product;
 			// clobbering the clipboard is a side effect nobody asked for.
 			Clipboard: false,
@@ -423,7 +437,7 @@ func LoadFile(path string) (File, error) {
 	if err := dec.Decode(&out.Config); err != nil {
 		var strict *toml.StrictMissingError
 		if !errors.As(err, &strict) {
-			return out, fmt.Errorf("config: parse %s: %w", path, err)
+			return out, fmt.Errorf("config: parse %s: %s", path, describeDecodeError(err))
 		}
 		for _, e := range strict.Errors {
 			out.UnknownKeys = append(out.UnknownKeys, strings.Join(e.Key(), "."))
@@ -635,4 +649,56 @@ func defaultLogFile() string {
 		stateHome = filepath.Join(homeDir(), ".local", "state")
 	}
 	return filepath.Join(stateHome, "mavor", "daemon.log")
+}
+
+// describeDecodeError turns go-toml's message into one a person can act on.
+//
+// Its own wording names the Go struct field — "cannot decode TOML float into
+// struct field config.Output.TypingDelayMS of type int" — which says nothing
+// about which line of config.toml to change, and this is a fatal error, so it
+// is the last thing a user sees before the daemon exits. go-toml knows the key
+// and the position; it just does not lead with them.
+func describeDecodeError(err error) string {
+	var de *toml.DecodeError
+	if !errors.As(err, &de) {
+		return err.Error()
+	}
+
+	key := strings.Join(de.Key(), ".")
+	row, _ := de.Position()
+	where := key
+	if where == "" {
+		where = fmt.Sprintf("line %d", row)
+	} else if row > 0 {
+		where = fmt.Sprintf("%s (line %d)", key, row)
+	}
+
+	msg := fmt.Sprintf("%s: %s", where, err.Error())
+	if hint := typeHintFor(key, err.Error()); hint != "" {
+		msg += "\n  " + hint
+	}
+	// The excerpt carries the offending line with a caret under it, which is
+	// worth more than any prose about types.
+	if s := de.String(); s != "" {
+		msg += "\n" + s
+	}
+	return msg
+}
+
+// typeHintFor says what the key actually wants, for the mistakes whose right
+// answer is not obvious from the type name alone.
+func typeHintFor(key, msg string) string {
+	if !strings.Contains(msg, "cannot decode") {
+		return ""
+	}
+	switch key {
+	case "output.typing_delay_ms":
+		// 0.5 is the natural thing to try for "a bit faster", and wtype
+		// rejects a fractional delay itself with "Invalid sleep time".
+		return "typing_delay_ms is a whole number of milliseconds — write 1, not 0.5. " +
+			"wtype cannot type faster than one millisecond per key."
+	case "overlay.preview_width":
+		return "preview_width is a fraction of the screen between 0 and 1 — write 0.5, not 50."
+	}
+	return ""
 }

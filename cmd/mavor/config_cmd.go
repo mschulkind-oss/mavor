@@ -87,12 +87,12 @@ verbose = %t
 # a transcript on demand without it.
 clipboard = %t
 
-# Pause wtype leaves between keystrokes, in milliseconds. Typing is
-# per-character and is usually the slowest part of a long dictation — the
-# `+"`emit_chars_per_sec`"+` figure logged at the end of each cycle says whether
-# changing this helped. Lower is not always better: an app that drops
-# synthetic keystrokes drops more of them the faster they arrive.
-typing_delay_ms = %d
+# Pause wtype leaves between keystrokes, in whole milliseconds. Unset is
+# the FASTEST setting — measured at 4.14 ms/char with no delay, 5.17 with
+# "-d 1", 9.21 with "-d 5" — because wtype's own default sleep is zero and
+# this can only add to it. Set it only to slow typing down for an app that
+# drops synthetic keystrokes when they arrive too fast.
+# typing_delay_ms = 1
 
 [overlay]
 top_margin = %d   # px below the top of the usable area, under your bar
@@ -126,7 +126,6 @@ preview_width = %v
 		strconv.FormatFloat(float64(d.Vocabulary.Boost), 'f', -1, 32),
 		d.Logging.Verbose,
 		d.Output.Clipboard,
-		*d.Output.TypingDelayMS,
 		d.Overlay.TopMargin,
 		d.Overlay.PreviewWidth,
 		d.Advanced.Placement,
