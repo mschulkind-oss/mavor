@@ -9,7 +9,7 @@ summary: "Living roadmap for the mavor dictation daemon: open decisions, the rea
 
 # Ongoing Work: `mavor` Voice-to-Text Utility
 
-**Status:** 2 Needs Attention (💬), 5 Ready to Implement (📦), 4 Open Threads (🔒 2, 🛑 1, 🧊 1)
+**Status:** 2 Needs Attention (💬), 5 Ready to Implement (📦), 4 Open Threads (🏗️ 1, 🔒 1, 🛑 1, 🧊 1)
 
 ---
 
@@ -322,14 +322,61 @@ path may now have race coverage available to it for the first time.
 **Next step:** decide whether CI grows a Wayland service container, or whether
 these stay local-only and CI covers unit tests alone.
 
-### 🔒 sherpa-onnx GPU is gated on the vendored runtime
+### 🏗️ AMD GPU acceleration for the sherpa models — three routes, all uphill
 
-Separate from the product question above: even if GPU is wanted, the
-`sherpa-onnx-go-linux` module ships a CPU-only ONNX Runtime with no provider
-libraries. Nothing in mavor's code can change that — it needs a differently-built
-runtime vendored in.
+whisper.cpp already gets 2.3× to 9.6× on the RX 9060 XT via Vulkan (table
+above). The thirteen sherpa models get nothing, and the reason is not mavor's
+code: the `sherpa-onnx-go-linux` module vendors a CPU-only ONNX Runtime with no
+provider shared objects, and sherpa-onnx answers a provider it cannot honor by
+logging `Fallback to cpu!` and continuing. Researched 2026-09-05; here is what
+the ground actually looks like.
 
-**Next step:** none until the 💬 GPU decision resolves.
+**The hardware is not the blocker.** RDNA4 code generation landed in MIGraphX
+2.12, shipped with ROCm 6.4, and the RX 9060 XT became an officially supported
+product in ROCm 7.0.2. Both are in the past.
+
+**ONNX Runtime's AMD story changed underneath us.** The ROCm execution provider
+was *removed* in ORT 1.23 — AMD's docs name ROCm 7.0 as the last supported
+release and point users at MIGraphX instead. MIGraphX is the surviving path, it
+builds on Linux with `--use_migraphx`, and AMD publishes prebuilt wheels at
+`repo.radeon.com`, so the runtime half is largely pre-solved.
+
+**sherpa-onnx is the blocker.** Its `Provider` enum is `cpu, cuda, coreml,
+xnnpack, nnapi, trt, directml, spacemit` — no ROCm, no MIGraphX, no WebGPU.
+The one open PR ([#2370](https://github.com/k2-fsa/sherpa-onnx/pull/2370)) adds
+ROCm, was tested on a Hygon DCU rather than a Radeon, and targets the execution
+provider ONNX Runtime just deleted. A WebGPU request
+([#3665](https://github.com/k2-fsa/sherpa-onnx/issues/3665)) sits open with no
+maintainer response.
+
+The three routes, worst to best:
+
+| Route | What it costs | Verdict |
+|---|---|---|
+| **MIGraphX EP** | Write the provider plumbing sherpa-onnx does not have (a few hundred lines of C++, modelled on the CUDA provider), build ORT against ROCm, vendor the result into a forked Go module, then maintain that version matrix forever. Multi-day to multi-week. | Plausible, unmerged, and yours to own indefinitely |
+| **WebGPU EP** | ONNX Runtime's WebGPU provider runs natively on Linux through Dawn, which dispatches to Vulkan — vendor-neutral, no ROCm at all. But sherpa-onnx has no plumbing for it, op coverage is unpublished, and the only prototype anyone claims is macOS/Metal. | Most interesting long-term, least evidence |
+| **Leave ONNX entirely** | [`parakeet.cpp`](https://github.com/mudler/parakeet.cpp) reimplements Parakeet in ggml, validated at WER-0 against NeMo, with published GGUF weights. ggml already has the Vulkan backend giving whisper its 9.6×, so a ggml Parakeet **inherits RDNA4 acceleration for free**. | The only route with a live working precedent on this hardware |
+
+> [!WARNING]
+> A trap that applies to both ONNX routes: PR #2370's own author reports that
+> **int8 models fall back to CPU** and only fp32 runs on the GPU. Every sherpa
+> model in mavor's catalog is int8 or has an int8 variant as the fast path, so
+> the payoff could be zero for exactly the models this would be done for.
+> Verify that before writing any C++.
+
+> [!NOTE]
+> Zipformer has no ggml port that I could find — the third route covers
+> Parakeet and, with more work, Moonshine, but not Zipformer. If the streaming
+> Zipformer becomes the preview companion
+> ([`design/configuration-surface.md`](design/configuration-surface.md) OQ-2),
+> it stays on the CPU regardless. That is fine: the preview model is small by
+> design and costs about one core.
+
+**Next step:** measure before building. Run the ggml Parakeet against the
+catalog's ONNX Parakeet on this machine, CPU and Vulkan, through `just bench`.
+If ggml on Vulkan beats ONNX on CPU by the margin whisper sees, route three
+answers the question without a line of provider plumbing, and routes one and
+two can stay closed.
 
 ### 🧊 AOT-compiled runtimes (ExecuTorch / IREE)
 
