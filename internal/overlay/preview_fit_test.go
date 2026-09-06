@@ -1,6 +1,7 @@
 package overlay
 
 import (
+	"image"
 	"strings"
 	"testing"
 )
@@ -82,5 +83,79 @@ func TestCappedSceneStaysWithinItsWidth(t *testing.T) {
 	}
 	if uw <= w {
 		t.Errorf("uncapped width %d is not wider than capped %d — the cap did nothing", uw, w)
+	}
+}
+
+// The overlay is centre-anchored, so a width that hugs the text re-centres the
+// whole thing on every new word. A capped scene must therefore be a CONSTANT
+// width regardless of how much text is in it.
+func TestCappedSceneWidthDoesNotChangeAsTextGrows(t *testing.T) {
+	widthFor := func(text string) int {
+		t.Helper()
+		w, _, err := SceneSize(Scene{Visual: Recording, Preview: text, MaxPreviewWidth: 600})
+		if err != nil {
+			t.Fatalf("SceneSize: %v", err)
+		}
+		return w
+	}
+
+	short := widthFor("one")
+	medium := widthFor("one two three four five six seven")
+	long := widthFor(strings.Repeat("chatter ", 200))
+
+	if short != medium || medium != long {
+		t.Errorf("widths %d, %d, %d differ; a capped preview must not resize as it grows", short, medium, long)
+	}
+	if short != 600 {
+		t.Errorf("capped width = %d, want the cap 600", short)
+	}
+}
+
+// An uncapped scene keeps the old hug-the-text behaviour, which is what the
+// storybook and every hand-built test Scene rely on.
+func TestUncappedSceneStillHugsItsText(t *testing.T) {
+	// Both strings must be long enough to out-measure the pill itself, which
+	// is ~330px wide and otherwise sets the scene width on its own.
+	narrow, _, err := SceneSize(Scene{Visual: Recording, Preview: strings.Repeat("word ", 20)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wide, _, err := SceneSize(Scene{Visual: Recording, Preview: strings.Repeat("word ", 60)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wide <= narrow {
+		t.Errorf("uncapped widths %d and %d: more text should be wider", narrow, wide)
+	}
+}
+
+// RenderInto is the reused-buffer path; it must clear what the previous frame
+// left behind, or old glyphs ghost through.
+func TestRenderIntoClearsTheBuffer(t *testing.T) {
+	busy := Scene{Visual: Recording, Preview: "aaaaaaaaaaaaaaaaaaaaaaaa", MaxPreviewWidth: 600}
+	w, h, err := SceneSize(busy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	if err := RenderInto(img, busy); err != nil {
+		t.Fatal(err)
+	}
+
+	// Now draw a hidden scene into the same buffer: everything must go.
+	if err := RenderInto(img, Scene{Visual: Hidden}); err != nil {
+		t.Fatal(err)
+	}
+	for i, v := range img.Pix {
+		if v != 0 {
+			t.Fatalf("pixel byte %d = %d after clearing; the buffer still holds the previous frame", i, v)
+		}
+	}
+}
+
+func TestRenderIntoRefusesATooSmallBuffer(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	if err := RenderInto(img, Scene{Visual: Recording, Preview: "plenty of text here", MaxPreviewWidth: 600}); err == nil {
+		t.Error("RenderInto accepted a buffer smaller than the scene")
 	}
 }

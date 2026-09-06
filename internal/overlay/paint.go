@@ -1,6 +1,7 @@
 package overlay
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
@@ -252,31 +253,58 @@ func FitPreviewTail(f font.Face, s string, maxTextPx float64, tracking float64) 
 	if s == "" || maxTextPx <= 0 {
 		return s
 	}
-	if textWidth(f, s, tracking) <= maxTextPx {
-		return s
-	}
 
+	// Walk backwards accumulating one glyph's advance at a time, rather than
+	// re-measuring the whole suffix for every candidate cut. The obvious
+	// version of this is quadratic in the number of characters kept, and it
+	// runs on every frame of the render loop: at ~90 visible characters that
+	// was ~8000 glyph lookups per paint, which showed up as 150 ms frames.
 	r := []rune(s)
 	markPx := textWidth(f, previewEllipsis, tracking)
-	budget := maxTextPx - markPx
-	if budget <= 0 {
-		return previewEllipsis
-	}
 
-	// Walk back from the end while the suffix still fits. Linear in the
-	// length of what is kept rather than of the whole transcript, which
-	// matters when this runs on every frame of a 95-second dictation.
-	keep := 0
+	total := 0.0
+	kept := 0
 	for i := len(r) - 1; i >= 0; i-- {
-		if textWidth(f, string(r[i:]), tracking) > budget {
+		adv, ok := f.GlyphAdvance(r[i])
+		if !ok {
+			continue
+		}
+		w := float64(adv)/64.0 + tracking
+		if i+1 < len(r) {
+			w += float64(f.Kern(r[i], r[i+1])) / 64.0
+		}
+
+		// Everything still fits: no mark is needed, so the whole string
+		// is the answer and there is nothing left to decide.
+		if total+w <= maxTextPx && i == 0 {
+			return s
+		}
+		// Once a cut is certain, the mark has to fit beside the text.
+		if total+w > maxTextPx-markPx {
 			break
 		}
-		keep = len(r) - i
+		total += w
+		kept++
 	}
-	if keep == 0 {
+
+	if kept == 0 {
 		return previewEllipsis
 	}
-	return previewEllipsis + string(r[len(r)-keep:])
+	return previewEllipsis + string(r[len(r)-kept:])
+}
+
+// previewStripWidth is the width of the preview strip in pixels.
+//
+// Capped scenes get a CONSTANT width rather than one that hugs the text. The
+// overlay is centre-anchored, so every width change is a re-centre: a strip
+// that grows with the transcript makes the whole overlay walk sideways while
+// you speak. Holding it at the cap costs one resize when the preview appears
+// and one when it clears, and none in between.
+func previewStripWidth(f *faces, s Scene) int {
+	if s.MaxPreviewWidth > 0 {
+		return s.MaxPreviewWidth
+	}
+	return int(math.Ceil(textWidth(f.preview, previewText(f, s), 0.03*previewSize))) + 2*previewPadX
 }
 
 // previewText is the string actually drawn, and the single place the cap is
@@ -301,7 +329,7 @@ func SceneSize(s Scene) (int, int, error) {
 	pillW, pillH := pillSize(f, s)
 	w, h := pillW, pillH
 	if s.Visual == Recording && s.Preview != "" {
-		pw := int(math.Ceil(textWidth(f.preview, previewText(f, s), 0.03*previewSize))) + 2*previewPadX
+		pw := previewStripWidth(f, s)
 		ph := previewSize + 2*previewPadY + 4
 		if pw > w {
 			w = pw
@@ -342,18 +370,43 @@ const (
 
 // Render draws the scene into a fresh RGBA image of exactly the size
 // SceneSize reports.
+// Render draws a scene into a newly allocated image. Convenient for tests and
+// the storybook; the render loop uses RenderInto so it can reuse its buffer.
 func Render(s Scene) (*image.RGBA, error) {
-	f, err := textFaces()
-	if err != nil {
-		return nil, err
-	}
 	w, h, err := SceneSize(s)
 	if err != nil {
 		return nil, err
 	}
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	if err := RenderInto(img, s); err != nil {
+		return nil, err
+	}
+	return img, nil
+}
+
+// RenderInto draws a scene into an existing image, which must be at least the
+// size SceneSize reports. Separated from Render so the render loop allocates
+// once rather than once per frame: at ~190 KB an image and 33 frames a second
+// that was 6 MB/s of garbage, and the resulting collections showed up as
+// occasional 150 ms paints.
+//
+// The destination is cleared first, since a reused buffer still holds the
+// previous frame.
+func RenderInto(img *image.RGBA, s Scene) error {
+	f, err := textFaces()
+	if err != nil {
+		return err
+	}
+	w, h, err := SceneSize(s)
+	if err != nil {
+		return err
+	}
+	if b := img.Bounds(); b.Dx() < w || b.Dy() < h {
+		return fmt.Errorf("overlay: destination %dx%d is smaller than the scene's %dx%d", b.Dx(), b.Dy(), w, h)
+	}
+	draw.Draw(img, img.Bounds(), image.Transparent, image.Point{}, draw.Src)
 	if s.Visual == Hidden {
-		return img, nil
+		return nil
 	}
 
 	pillW, pillH := pillSize(f, s)
@@ -423,7 +476,7 @@ func Render(s Scene) (*image.RGBA, error) {
 	}
 
 	if s.Visual == Recording && s.Preview != "" {
-		pw := int(math.Ceil(textWidth(f.preview, previewText(f, s), 0.03*previewSize))) + 2*previewPadX
+		pw := previewStripWidth(f, s)
 		ph := previewSize + 2*previewPadY + 4
 		px := (w - pw) / 2
 		py := pillH + previewGap
@@ -440,7 +493,7 @@ func Render(s Scene) (*image.RGBA, error) {
 		drawText(img, f.preview, previewText(f, s), float64(px+previewPadX), pb, previewInk, 0.03*previewSize)
 	}
 
-	return img, nil
+	return nil
 }
 
 // drawWave paints the time-scrolling level trace, newest column at the right.

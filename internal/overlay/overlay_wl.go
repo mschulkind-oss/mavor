@@ -37,8 +37,10 @@ type wlState struct {
 	// resolved once at connect from the screen width and the configured
 	// fraction.
 	maxPreview int
-	levels     []float64
-	mapped     bool
+	// img is the scratch the scene is drawn into, kept between frames.
+	img    *image.RGBA
+	levels []float64
+	mapped bool
 	// reqW/reqH is the size the surface has been asked for. Re-requesting the
 	// same size is not a no-op but a hang: the compositor has no reason to
 	// send another configure, and the resize would wait for one that never
@@ -225,11 +227,16 @@ func (o *WL) paint(st *wlState, start time.Time) error {
 	}
 
 	renderStart := time.Now()
-	img, err := Render(st.scene)
-	if err != nil {
+	// Reused across frames: with the strip width held constant the scene is
+	// almost always the same size, so this allocates once per resize rather
+	// than once per frame.
+	if st.img == nil || st.img.Bounds().Dx() < sw || st.img.Bounds().Dy() < sh {
+		st.img = image.NewRGBA(image.Rect(0, 0, sw, sh))
+	}
+	if err := RenderInto(st.img, st.scene); err != nil {
 		return err
 	}
-	blit(img, st.buf)
+	blit(st.img, st.buf)
 	// Render measures and draws every glyph of the preview, so its cost
 	// grows with the text. This is the number to look at when the overlay
 	// feels like it has lost frames.

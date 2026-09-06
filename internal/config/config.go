@@ -31,6 +31,9 @@ const (
 	DefaultPauseMS     = 450
 	DefaultMinPhraseMS = 600
 	DefaultTopMargin   = 8
+	// DefaultTypingDelayMS is deliberately low but not zero: see
+	// Output.TypingDelayMS.
+	DefaultTypingDelayMS = 1
 	// DefaultPreviewWidth caps the preview at half the screen.
 	DefaultPreviewWidth = 0.5
 	DefaultDuckVolume   = "0%"
@@ -79,8 +82,7 @@ type Logging struct {
 // here is what else happens.
 type Output struct {
 	// TypingDelayMS is the pause wtype leaves between keystrokes, in
-	// milliseconds. Unset leaves wtype's own default alone, which is the
-	// behaviour mavor has always had.
+	// milliseconds. DefaultTypingDelayMS when unset.
 	//
 	// It is a pointer so that "unset" and "zero" are different requests:
 	// zero is a deliberate ask for no delay, and there would be no way to
@@ -89,7 +91,10 @@ type Output struct {
 	// of each cycle is what says whether changing this helped.
 	//
 	// Lower is not always better: an application that drops synthetic
-	// keystrokes will drop more of them the faster they arrive.
+	// keystrokes will drop more of them the faster they arrive. That is why
+	// the default is low rather than zero — measured typing runs at about
+	// 230 characters a second, so 1 ms is a small share of the per-character
+	// cost and leaves a margin for applications that need one.
 	TypingDelayMS *int `toml:"typing_delay_ms"`
 
 	// Clipboard also copies each transcript, replacing whatever was on the
@@ -247,6 +252,7 @@ func Default() Config {
 			Verbose: false,
 		},
 		Output: Output{
+			TypingDelayMS: func() *int { d := DefaultTypingDelayMS; return &d }(),
 			// Off: see the field's own comment. Typing is the product;
 			// clobbering the clipboard is a side effect nobody asked for.
 			Clipboard: false,
