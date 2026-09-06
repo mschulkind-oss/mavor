@@ -36,10 +36,25 @@ default:
     @just --list
 
 # Quality gate (local development) — formats, lints, and runs tests.
-check: format lint test
+check: format lint lint-tagged test
 
 # Quality gate (CI and pre-commit) — read-only validation.
-check-ci: lint-ci test
+check-ci: lint-ci lint-tagged test
+
+# Type-check the build-tagged suites.
+#
+# `go test ./...` and `go vet ./...` DO NOT SEE these files: they are behind
+# `integration` and `e2e` tags and are silently skipped. That is how the
+# integration harness — the only thing that renders the overlay in a real
+# compositor — sat un-compilable through several overlay changes without one
+# gate going red, while the bugs it exists to catch reached a user.
+#
+# `go build -tags=integration ./test/integration/...` is NOT sufficient and was
+# the mistake: it compiles the package's non-test files and ignores every
+# _test.go. Only vet (or an actual test run) type-checks the tests themselves.
+lint-tagged:
+    go vet -tags=integration ./test/integration/...
+    go vet -tags=e2e ./... 
 
 # Format all Go source files in-place.
 format:

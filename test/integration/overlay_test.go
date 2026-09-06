@@ -102,7 +102,7 @@ func TestWaveformReachesTheScreen(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", h.XDGRuntime)
 	t.Setenv("WAYLAND_DISPLAY", h.WaylandDisp)
 
-	ov, err := overlay.NewDefault(testTopMargin, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ov, err := overlay.NewDefault(testTopMargin, testPreviewWidth, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("overlay.NewDefault: %v", err)
 	}

@@ -184,6 +184,13 @@ type Surface struct {
 	Width, Height int
 	Closed        bool
 
+	// reqW and reqH are the size most recently ASKED for. A configure whose
+	// width or height is zero means "the client decides that dimension", and
+	// this is what the client decided — without it a zero leaves Width at
+	// whatever it was, which for a growing overlay means a buffer that stays
+	// the old size while the scene drawn into it gets bigger.
+	reqW, reqH int
+
 	configured bool
 	pendingAck uint32
 	hasAck     bool
@@ -194,7 +201,7 @@ type Surface struct {
 // in a configure event, and attaching a buffer before acking it is a protocol
 // error.
 func (d *Display) NewSurface(namespace string, layer Layer, anchor uint32, width, height int) (*Surface, error) {
-	s := &Surface{d: d, Width: width, Height: height}
+	s := &Surface{d: d, Width: width, Height: height, reqW: width, reqH: height}
 
 	s.surface = d.conn.newID(nil)
 	// wl_compositor.create_surface(id:new_id)
@@ -210,11 +217,19 @@ func (d *Display) NewSurface(namespace string, layer Layer, anchor uint32, width
 			serial := r.uint()
 			w := r.uint()
 			h := r.uint()
+			// Zero means the compositor is leaving the dimension to us, so
+			// the answer is the size we last requested rather than the size
+			// we happen to be. sway does exactly this for a surface anchored
+			// on one edge only, which is how the overlay is anchored.
 			if w > 0 {
 				s.Width = int(w)
+			} else {
+				s.Width = s.reqW
 			}
 			if h > 0 {
 				s.Height = int(h)
+			} else {
+				s.Height = s.reqH
 			}
 			s.pendingAck, s.hasAck, s.configured = serial, true, true
 		case 1: // closed()
@@ -422,6 +437,7 @@ func (b *Buffer) Close() error {
 // confirm. A layer surface must be re-configured before a differently-sized
 // buffer may be attached.
 func (s *Surface) Resize(width, height int) error {
+	s.reqW, s.reqH = width, height
 	// zwlr_layer_surface_v1.set_size(width:uint, height:uint)
 	b := newBuilder(s.layer, 0)
 	b.putUint(uint32(width))
@@ -433,7 +449,38 @@ func (s *Surface) Resize(width, height int) error {
 	if err := s.Commit(); err != nil {
 		return err
 	}
-	return s.WaitConfigure()
+	return s.waitForSize(width, height)
+}
+
+// waitForSize blocks until a configure ARRIVES FOR THIS REQUEST, rather than
+// until any configure arrives.
+//
+// The compositor may already have a configure in flight carrying the previous
+// size when set_size is sent. Accepting it satisfies WaitConfigure, returns a
+// stale Width, and leaves the surface permanently smaller than the scene being
+// drawn into it — the overlay then paints a wide scene into a narrow buffer
+// and all the caller sees is a sliver of it. Observed against sway as
+// configure(serial=9, 329x56) landing after a request for 960x91, with the
+// matching configure(serial=11, 960x91) two events behind it.
+//
+// A compositor is allowed to impose its own size, so this cannot wait forever
+// for an exact match. It gives the right configure a bounded number of
+// dispatches to show up and then accepts whatever it has: a surface sized by
+// the compositor is legitimate, a surface sized by a stale event is not.
+func (s *Surface) waitForSize(width, height int) error {
+	if err := s.WaitConfigure(); err != nil {
+		return err
+	}
+	const maxExtraDispatches = 8
+	for i := 0; i < maxExtraDispatches; i++ {
+		if s.Closed || (s.Width == width && s.Height == height) {
+			return nil
+		}
+		if err := s.d.conn.Dispatch(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // AttachNothing unmaps the surface. Attaching a null buffer is the protocol's

@@ -31,7 +31,10 @@ const (
 	// from the screen edge rather than below waybar's exclusive zone, this
 	// value would put it exactly on waybar's bottom edge and the gap check
 	// would fail.
-	testTopMargin    = 32
+	testTopMargin = 32
+	// testPreviewWidth matches config.DefaultPreviewWidth: the harness should
+	// exercise the overlay the way a default install runs it.
+	testPreviewWidth = 0.5
 	testWaybarHeight = 32
 )
 

@@ -133,7 +133,7 @@ func TestUIStorybookReport(t *testing.T) {
 	// phase and the committed report churns for no reason.
 	t.Setenv("MAVOR_OVERLAY_STATIC", "1")
 
-	ov, err := overlay.NewDefault(topMargin, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ov, err := overlay.NewDefault(topMargin, testPreviewWidth, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("overlay.NewDefault: %v", err)
 	}

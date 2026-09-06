@@ -184,7 +184,13 @@ Two build tags remain, and both are test-only:
 
 ## Justfile Recipes
 
-- `just check` — Format, lint, and run unit tests.
+- `just check` — Format, lint, type-check the tagged suites, and run unit tests.
+- `just lint-tagged` — Type-check the `integration` and `e2e` suites. They are
+  invisible to `go test ./...` and `go vet ./...`, so without this a signature
+  change rots them silently. **`go build -tags=integration ./test/integration/...`
+  does NOT do this** — it compiles the package's non-test files and ignores
+  every `_test.go`. That mistake left the integration harness un-compilable
+  through several overlay changes while every gate stayed green.
 - `just check-ci` — Read-only quality gate (format check, lint, unit tests).
 - `just test` — Run fast unit tests (`go test ./...`).
 - `just test-int` — Run headless Wayland integration tests (`go test -tags=integration ./test/integration/...`).
