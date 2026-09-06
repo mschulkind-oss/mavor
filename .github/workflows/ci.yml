@@ -37,11 +37,17 @@ jobs:
 
       # sway needs a seat and a runtime dir; the harness runs it headless
       # through WLR_BACKENDS=headless, so no GPU and no display are required.
+      #
+      # waybar is not optional: the shared compositor starts it, because one
+      # of the overlay tests exists to prove the overlay does not sit under
+      # the bar. xwayland is here only to quiet sway's startup error — the
+      # tests are all native Wayland — and is cheap enough not to argue with.
       - name: Install the compositor and its tools
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            sway grim slurp wtype wl-clipboard \
+            sway swaybg waybar xwayland \
+            grim slurp wtype wl-clipboard \
             libwayland-client0 xkb-data \
             pipewire pipewire-pulse wireplumber pulseaudio-utils \
             dbus dbus-x11
