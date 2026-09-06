@@ -668,20 +668,71 @@ func saysStreaming(name string) bool {
 	return strings.Contains(name, "streaming") || strings.Contains(name, "online")
 }
 
+// decoding is how a sherpa recognizer will search: the method, the hotwords
+// file it reads if any, and the two numbers that only mean something under
+// beam search.
+type decoding struct {
+	Method         string
+	HotwordsFile   string
+	HotwordsScore  float32
+	MaxActivePaths int
+}
+
+// beamMaxActivePaths is the beam width used when vocabulary turns beam search
+// on. It is upstream's default. It has to be stated rather than left at the
+// zero value: the C API takes the number as given, and a beam of zero paths
+// decodes nothing.
+const beamMaxActivePaths = 4
+
 // resolveDecoding picks the decoding method, hotwords file and boost for a
-// sherpa recognizer.
+// sherpa recognizer, from the [vocabulary] table and the architecture of the
+// model that will run.
 //
 // The user never chooses a decoding method: on LibriSpeech the zipformer
 // transducer scores 2.17% word error rate greedy and 2.15% with modified beam
 // search, for several times the decoder work, and every non-transducer model
 // aborts on anything but greedy. The one thing beam search buys is hotwords,
-// so configuring vocabulary is what will turn it on — see
-// docs/design/configuration-surface.md §7.
-func resolveDecoding(cfg config.Config) (method, hotwordsFile string, hotwordsScore float32) {
-	// The [vocabulary] table is carried by the config but not yet mapped to a
-	// hotwords file; that is a step of its own. Until it lands there is
-	// nothing to bias with, so greedy search is what runs.
-	return "greedy_search", "", cfg.Vocabulary.Boost
+// so configuring vocabulary is what turns it on — and only on the models that
+// can use it. See docs/design/configuration-surface.md §7.
+//
+// A non-transducer model with a vocabulary configured is not an error. sherpa-onnx
+// implements contextual biasing inside transducer beam search and nowhere
+// else, so there is nothing to fail: the phrases are ignored, `mavor doctor`
+// says so, and the model transcribes as it otherwise would.
+func resolveDecoding(cfg config.Config, modelType SherpaModelType, logger *slog.Logger) decoding {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	vocab := LoadVocabulary(cfg, logger)
+	greedy := decoding{Method: "greedy_search", HotwordsScore: vocab.Boost}
+	if vocab.Empty() {
+		return greedy
+	}
+
+	if modelType != ModelTypeTransducer {
+		logger.Info("speech: vocabulary is configured but this model cannot be biased; sherpa-onnx boosts phrases only inside transducer beam search",
+			"model", cfg.Model, "model_type", string(modelType), "phrases", len(vocab.Phrases))
+		return greedy
+	}
+
+	path, err := WriteHotwordsFile(cfg, vocab)
+	if err != nil {
+		// Beam search with no hotwords file is pure cost: it buys the extra
+		// decoder work and none of the biasing that was the reason for it.
+		logger.Warn("speech: could not write the hotwords file; decoding greedily without vocabulary biasing",
+			"err", err)
+		return greedy
+	}
+
+	logger.Info("speech: vocabulary biasing is on; decoding with modified beam search",
+		"phrases", len(vocab.Phrases), "hotwords_file", path, "boost", vocab.Boost)
+	return decoding{
+		Method:         "modified_beam_search",
+		HotwordsFile:   path,
+		HotwordsScore:  vocab.Boost,
+		MaxActivePaths: beamMaxActivePaths,
+	}
 }
 
 // BuildSherpaOfflineConfig constructs a SherpaOfflineConfig from Config and model directory.
@@ -718,16 +769,17 @@ func BuildSherpaOfflineConfig(cfg config.Config) (SherpaOfflineConfig, error) {
 	// on. A provider key on this build could only mislead, so there is none.
 	provider := "cpu"
 
-	decodingMethod, hotwordsFile, hotwordsScore := resolveDecoding(cfg)
+	dec := resolveDecoding(cfg, modelType, nil)
 
 	sc := SherpaOfflineConfig{
 		ModelType:      modelType,
 		Tokens:         tokens,
 		NumThreads:     threads,
 		Provider:       provider,
-		DecodingMethod: decodingMethod,
-		HotwordsFile:   hotwordsFile,
-		HotwordsScore:  hotwordsScore,
+		DecodingMethod: dec.Method,
+		MaxActivePaths: dec.MaxActivePaths,
+		HotwordsFile:   dec.HotwordsFile,
+		HotwordsScore:  dec.HotwordsScore,
 		SampleRate:     16000,
 		FeatureDim:     80,
 	}
@@ -857,7 +909,11 @@ func BuildSherpaOnlineConfig(cfg config.Config) (SherpaOnlineConfig, error) {
 	// on. A provider key on this build could only mislead, so there is none.
 	provider := "cpu"
 
-	decodingMethod, hotwordsFile, hotwordsScore := resolveDecoding(cfg)
+	// Every model that reaches the online recognizer is a streaming
+	// transducer — BuildSherpaOnlineConfig requires the encoder/decoder/joiner
+	// triple below — so the architecture that can take hotwords is the only
+	// one here.
+	dec := resolveDecoding(cfg, ModelTypeTransducer, nil)
 
 	encoder := findFile(modelDir, "encoder.onnx", "encoder.int8.onnx", "encoder-*.onnx")
 	decoder := findFile(modelDir, "decoder.onnx", "decoder.int8.onnx", "decoder-*.onnx")
@@ -876,9 +932,10 @@ func BuildSherpaOnlineConfig(cfg config.Config) (SherpaOnlineConfig, error) {
 		Tokens:         tokens,
 		NumThreads:     threads,
 		Provider:       provider,
-		DecodingMethod: decodingMethod,
-		HotwordsFile:   hotwordsFile,
-		HotwordsScore:  hotwordsScore,
+		DecodingMethod: dec.Method,
+		MaxActivePaths: dec.MaxActivePaths,
+		HotwordsFile:   dec.HotwordsFile,
+		HotwordsScore:  dec.HotwordsScore,
 		SampleRate:     16000,
 		FeatureDim:     80,
 	}, nil

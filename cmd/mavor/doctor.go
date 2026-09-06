@@ -41,6 +41,8 @@ func runDoctor(args []string) error {
 		{"GPU acceleration", checkGPU},
 		{"Configuration file", checkConfig},
 		{"Voice model availability", checkModel},
+		{"Live preview source", checkPreview},
+		{"Vocabulary biasing", checkVocabulary},
 		{"Daemon socket status", checkDaemon},
 		{"Systemd user service", checkServiceUnit},
 	}
@@ -111,17 +113,11 @@ func runSetup(args []string) error {
 		return fmt.Errorf("create model directory %s: %w", cfg.Paths.Models, err)
 	}
 
-	// Step 4: the model the config names. Which path to look at follows from
-	// the model, not from a key: the catalog says which runtime owns it.
-	modelPath := installedModelPath(cfg, cfg.Model)
-	if _, err := os.Stat(modelPath); os.IsNotExist(err) || force {
-		fmt.Printf("📥 Downloading voice model %q into %s...\n", cfg.Model, cfg.Paths.Models)
-		if err := pullModel(cfg.Model); err != nil {
-			return fmt.Errorf("setup model download: %w", err)
-		}
-		fmt.Printf("✅ Downloaded and verified voice model %q\n", cfg.Model)
-	} else {
-		fmt.Printf("✅ Voice model %q is already installed\n", cfg.Model)
+	// Step 4: every model this config names — the main model AND the preview
+	// companion. Which path to look at follows from the model, not from a
+	// key: the catalog says which runtime owns it.
+	if _, err := ensureModels(cfg, configuredModels(cfg), force, pullModel); err != nil {
+		return err
 	}
 
 	// Step 5: Systemd user service installation
@@ -143,6 +139,67 @@ func runSetup(args []string) error {
 	fmt.Println("     mavor start    # start recording")
 	fmt.Println("     mavor stop     # stop and transcribe")
 	return nil
+}
+
+// configuredModels is every model this configuration names, main model first:
+// the model that produces the text, plus the companion the preview will run
+// alongside it if the resolution rule calls for one.
+//
+// It asks what the config NAMES, not what is on disk — a companion that is
+// missing is the thing `mavor setup` exists to install.
+func configuredModels(cfg config.Config) []string {
+	out := []string{cfg.Model}
+	seen := map[string]bool{cfg.Model: true}
+	for _, m := range speech.PreviewModels(cfg) {
+		if m == "" || seen[m] {
+			continue
+		}
+		seen[m] = true
+		out = append(out, m)
+	}
+	return out
+}
+
+// ensureModels downloads each named model that is not already in the cache and
+// reports which ones it fetched. Skipping what is present is what makes
+// `mavor setup` idempotent: run it twice and the second run downloads nothing
+// and exits zero, and run it after an edit to `preview.source` and it fetches
+// just the model that edit named.
+//
+// pull is a parameter so a test can watch what setup decides to download
+// without reaching the network.
+func ensureModels(cfg config.Config, names []string, force bool, pull func(string) error) ([]string, error) {
+	var pulled []string
+	for _, name := range names {
+		path := installedModelPath(cfg, name)
+		if modelInstalled(path) && !force {
+			fmt.Printf("✅ Model %q is already installed (%s)\n", name, path)
+			continue
+		}
+		fmt.Printf("📥 Downloading model %q into %s...\n", name, cfg.Paths.Models)
+		if err := pull(name); err != nil {
+			return pulled, fmt.Errorf("setup: download model %q: %w", name, err)
+		}
+		pulled = append(pulled, name)
+		fmt.Printf("✅ Downloaded and verified model %q\n", name)
+	}
+	return pulled, nil
+}
+
+// modelInstalled reports whether a model is really in the cache. A sherpa
+// model unpacks into a directory, and an empty one is what a download that
+// died halfway leaves behind — it is not an installed model, and `mavor
+// models pull` re-fetches it.
+func modelInstalled(path string) bool {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	if !fi.IsDir() {
+		return true
+	}
+	entries, err := os.ReadDir(path)
+	return err == nil && len(entries) > 0
 }
 
 // installedModelPath is where the model named by a catalog name lands in the
@@ -501,6 +558,30 @@ func checkModel() (bool, string) {
 		return true, fmt.Sprintf("%s runs on the server at %s, so there is nothing to install here", cfg.Model, res.Server)
 	}
 	return true, fmt.Sprintf("%s found at %s", cfg.Model, res.ModelPath)
+}
+
+// checkPreview reports where the overlay's text will come from, which is a
+// derived fact: `preview.source = "auto"` reads the main model's partials, or
+// loads a companion, or falls back to phrase mode, depending on the catalog
+// and on what is installed. A downgrade names the model to pull; a model named
+// in the config and missing is reported as the failure it will be at daemon
+// start.
+func checkPreview() (bool, string) {
+	cfg, _ := config.Load("")
+	plan, err := speech.ResolvePreview(cfg)
+	if err != nil {
+		return false, err.Error()
+	}
+	msg := fmt.Sprintf("%s — %s", plan.Mode, plan.Reason)
+	if plan.Companion != "" {
+		msg = fmt.Sprintf("%s (%s) — %s", plan.Mode, plan.Companion, plan.Reason)
+	}
+	for _, w := range plan.Warnings {
+		msg += "; " + w
+	}
+	// A missing companion is a worse preview and nothing more, so it stays a
+	// passing check that says what to pull.
+	return true, msg
 }
 
 func checkDaemon() (bool, string) {

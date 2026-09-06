@@ -194,6 +194,19 @@ func runDaemon(args []string) error {
 		defer closer.Close()
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// Where the overlay's text comes from, decided here and once (§6.2). A
+	// companion model is loaded now rather than at the first recording, so
+	// the first dictation is not the slow one; a model NAMED in the config
+	// and missing is the one preview failure that stops the daemon.
+	preview, err := speech.LoadPreview(ctx, cfg, logger)
+	if err != nil {
+		return err
+	}
+	defer preview.Close()
+
 	recDir := filepath.Join(os.TempDir(), "mavor-recordings")
 	ov, err := overlay.NewDefault(cfg.Overlay.TopMargin, logger)
 	if err != nil {
@@ -222,13 +235,12 @@ func runDaemon(args []string) error {
 		Ducker:            ducker,
 		Logger:            logger,
 		PreviewEnabled:    cfg.Preview.Enabled,
+		PreviewMode:       preview.Mode,
+		PreviewCompanion:  preview.Companion,
 		History:           transcriptStore(logger),
 		SilenceThreshold:  time.Duration(cfg.Preview.PauseMS) * time.Millisecond,
 		MinPhraseDuration: time.Duration(cfg.Preview.MinPhraseMS) * time.Millisecond,
 	})
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	if starter, ok := transcriber.(interface{ Start(context.Context) error }); ok {
 		if err := starter.Start(ctx); err != nil {
@@ -247,6 +259,9 @@ func runDaemon(args []string) error {
 		"server", resolved.Server,
 		"preview_enabled", cfg.Preview.Enabled,
 		"preview_source", cfg.Preview.Source,
+		"preview_mode", string(preview.Mode),
+		"preview_companion", preview.Model,
+		"preview_reason", preview.Reason,
 		"gpu", cfg.Advanced.GPU,
 		"threads", cfg.Advanced.Threads,
 		"recording_dir", recDir,

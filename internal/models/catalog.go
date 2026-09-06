@@ -95,7 +95,7 @@ var Catalog = []KnownModel{
 		DownloadSize: 77691713,
 		Languages:    "multi (99)",
 		Speed:        "very fast",
-		Vocabulary:   "none — mavor does not pass an initial prompt to whisper-cli",
+		Vocabulary:   "initial prompt — the [vocabulary] table becomes whisper's --prompt, capped at 224 tokens",
 	},
 	{
 		Name:   "whisper-tiny.en",
@@ -108,7 +108,7 @@ var Catalog = []KnownModel{
 		Languages:    "en",
 		Speed:        "very fast",
 		MeasuredRTF:  0.061,
-		Vocabulary:   "none — mavor does not pass an initial prompt to whisper-cli",
+		Vocabulary:   "initial prompt — the [vocabulary] table becomes whisper's --prompt, capped at 224 tokens",
 	},
 	{
 		Name:   "whisper-base",
@@ -120,7 +120,7 @@ var Catalog = []KnownModel{
 		DownloadSize: 147951465,
 		Languages:    "multi (99)",
 		Speed:        "fast",
-		Vocabulary:   "none — mavor does not pass an initial prompt to whisper-cli",
+		Vocabulary:   "initial prompt — the [vocabulary] table becomes whisper's --prompt, capped at 224 tokens",
 	},
 	{
 		Name:   "whisper-base.en",
@@ -133,7 +133,7 @@ var Catalog = []KnownModel{
 		Languages:    "en",
 		Speed:        "fast",
 		MeasuredRTF:  0.136,
-		Vocabulary:   "none — mavor does not pass an initial prompt to whisper-cli",
+		Vocabulary:   "initial prompt — the [vocabulary] table becomes whisper's --prompt, capped at 224 tokens",
 	},
 	{
 		Name:   "whisper-small",
@@ -145,7 +145,7 @@ var Catalog = []KnownModel{
 		DownloadSize: 487601967,
 		Languages:    "multi (99)",
 		Speed:        "moderate",
-		Vocabulary:   "none — mavor does not pass an initial prompt to whisper-cli",
+		Vocabulary:   "initial prompt — the [vocabulary] table becomes whisper's --prompt, capped at 224 tokens",
 	},
 	{
 		Name:   "whisper-small.en",
@@ -157,7 +157,7 @@ var Catalog = []KnownModel{
 		DownloadSize: 487614201,
 		Languages:    "en",
 		Speed:        "moderate",
-		Vocabulary:   "none — mavor does not pass an initial prompt to whisper-cli",
+		Vocabulary:   "initial prompt — the [vocabulary] table becomes whisper's --prompt, capped at 224 tokens",
 	},
 	{
 		Name:   "whisper-medium",
@@ -169,7 +169,7 @@ var Catalog = []KnownModel{
 		DownloadSize: 1533763059,
 		Languages:    "multi (99)",
 		Speed:        "slow",
-		Vocabulary:   "none — mavor does not pass an initial prompt to whisper-cli",
+		Vocabulary:   "initial prompt — the [vocabulary] table becomes whisper's --prompt, capped at 224 tokens",
 	},
 	{
 		Name:   "whisper-medium.en",
@@ -181,7 +181,7 @@ var Catalog = []KnownModel{
 		DownloadSize: 1533774781,
 		Languages:    "en",
 		Speed:        "slow",
-		Vocabulary:   "none — mavor does not pass an initial prompt to whisper-cli",
+		Vocabulary:   "initial prompt — the [vocabulary] table becomes whisper's --prompt, capped at 224 tokens",
 	},
 	{
 		Name:   "whisper-large-v3",
@@ -193,7 +193,7 @@ var Catalog = []KnownModel{
 		DownloadSize: 3095033483,
 		Languages:    "multi (99)",
 		Speed:        "very slow",
-		Vocabulary:   "none — mavor does not pass an initial prompt to whisper-cli",
+		Vocabulary:   "initial prompt — the [vocabulary] table becomes whisper's --prompt, capped at 224 tokens",
 	},
 	{
 		Name:   "whisper-large-v3-turbo",
@@ -206,7 +206,7 @@ var Catalog = []KnownModel{
 		Languages:    "multi (99)",
 		Speed:        "slow",
 		MeasuredRTF:  1.519,
-		Vocabulary:   "none — mavor does not pass an initial prompt to whisper-cli",
+		Vocabulary:   "initial prompt — the [vocabulary] table becomes whisper's --prompt, capped at 224 tokens",
 	},
 	{
 		Name:   "whisper-distil-large-v3",
@@ -218,7 +218,7 @@ var Catalog = []KnownModel{
 		DownloadSize: 1519521155,
 		Languages:    "en",
 		Speed:        "slow",
-		Vocabulary:   "none — mavor does not pass an initial prompt to whisper-cli",
+		Vocabulary:   "initial prompt — the [vocabulary] table becomes whisper's --prompt, capped at 224 tokens",
 	},
 
 	// ---- NVIDIA NeMo (sherpa-onnx) -----------------------------------------

@@ -728,13 +728,13 @@ func TestBuildSherpaOfflineConfigErrors(t *testing.T) {
 }
 
 // The user never chooses a decoding method, and there is no key that sets
-// one. Greedy search is what runs, on every model and both recognizers: on
-// LibriSpeech the zipformer transducer scores 2.17% word error rate greedy
-// against 2.15% with modified beam search, and every non-transducer model
-// aborts on anything else. Beam search exists only to honour hotwords, and
-// configuring [vocabulary] is what will turn it on — see
-// docs/design/configuration-surface.md §7. That mapping is not built yet, so
-// nothing here asks for hotwords and nothing is passed.
+// one. With nothing to bias, greedy search is what runs on every model and
+// both recognizers: on LibriSpeech the zipformer transducer scores 2.17% word
+// error rate greedy against 2.15% with modified beam search, and every
+// non-transducer model aborts on anything else. Beam search exists only to
+// honour hotwords, and configuring [vocabulary] is what turns it on — see
+// docs/design/configuration-surface.md §7 and vocabulary_test.go. This config
+// has no vocabulary, so nothing here asks for hotwords and nothing is passed.
 func TestDecodingIsGreedyWithNothingToBias(t *testing.T) {
 	dir := t.TempDir()
 	for _, f := range []string{"encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"} {

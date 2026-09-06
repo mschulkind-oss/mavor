@@ -28,6 +28,12 @@ type ServerTranscriber struct {
 	// Model is the model name to pass in the request (e.g. "whisper-base.en").
 	Model string
 
+	// Prompt is the initial prompt sent with every request, as the `prompt`
+	// form field both whisper.cpp's server and the OpenAI transcription API
+	// accept. It carries the vocabulary to a server mavor did not start and
+	// cannot pass flags to. Empty sends no field.
+	Prompt string
+
 	// Client is the http.Client used to send requests. If nil, one is created automatically.
 	Client *http.Client
 
@@ -105,6 +111,11 @@ func (s *ServerTranscriber) Transcribe(ctx context.Context, wavPath string) (str
 	if s.Model != "" {
 		if err := writer.WriteField("model", s.Model); err != nil {
 			return "", fmt.Errorf("speech: server: write model field: %w", err)
+		}
+	}
+	if s.Prompt != "" {
+		if err := writer.WriteField("prompt", s.Prompt); err != nil {
+			return "", fmt.Errorf("speech: server: write prompt field: %w", err)
 		}
 	}
 	if err := writer.WriteField("response_format", "json"); err != nil {

@@ -31,33 +31,53 @@ type Transcriber interface {
 // behavior). Injected so tests can substitute a fake binary.
 type CommandFunc func(ctx context.Context, model, wavPath string) *exec.Cmd
 
+// WhisperOpts are the whisper.cpp invocation settings that come from
+// configuration rather than from the recording.
+type WhisperOpts struct {
+	// Threads is the -t value; zero leaves whisper.cpp its own default.
+	Threads int
+
+	// NoGPU forces CPU execution (-ng).
+	NoGPU bool
+
+	// Prompt is the initial prompt (--prompt): the vocabulary, rendered as
+	// text whisper reads as context preceding the audio. Empty means the
+	// flag is not passed at all, which is what an unconfigured [vocabulary]
+	// must produce — a prompt of punctuation biases towards punctuation.
+	Prompt string
+}
+
 // DefaultCommand builds the whisper-cli invocation we use in production.
 //
 //	whisper-cli -m <model> -f <wav> -otxt -nt -np
 //
 // -otxt writes <wav>.txt; -nt suppresses timestamps; -np silences progress.
 func DefaultCommand(ctx context.Context, model, wavPath string) *exec.Cmd {
-	return DefaultCommandWithOpts(ctx, model, wavPath, 0, false)
+	return DefaultCommandWithOpts(ctx, model, wavPath, WhisperOpts{})
 }
 
 // DefaultCommandWithOpts builds the whisper-cli invocation with a CPU thread
-// count (-t) and an optional GPU opt-out (-ng).
+// count (-t), an optional GPU opt-out (-ng) and an optional initial prompt
+// (--prompt).
 //
 // There is no layer-offload flag to pass. whisper.cpp uses whatever GPU
 // backend its build loaded, all or nothing, and rejects -ngl outright:
 // `whisper-cli -ngl 99` exits with "error: unknown argument: -ngl". The only
-// GPU control it accepts is -ng/--no-gpu, which noGPU sets.
-func DefaultCommandWithOpts(ctx context.Context, model, wavPath string, threads int, noGPU bool) *exec.Cmd {
+// GPU control it accepts is -ng/--no-gpu, which opts.NoGPU sets.
+func DefaultCommandWithOpts(ctx context.Context, model, wavPath string, opts WhisperOpts) *exec.Cmd {
 	args := []string{
 		"-m", model,
 		"-f", wavPath,
 		"-otxt", "-nt", "-np",
 	}
-	if threads > 0 {
-		args = append(args, "-t", fmt.Sprint(threads))
+	if opts.Threads > 0 {
+		args = append(args, "-t", fmt.Sprint(opts.Threads))
 	}
-	if noGPU {
+	if opts.NoGPU {
 		args = append(args, "-ng")
+	}
+	if opts.Prompt != "" {
+		args = append(args, "--prompt", opts.Prompt)
 	}
 	return exec.CommandContext(ctx, "whisper-cli", args...)
 }
@@ -67,7 +87,12 @@ type WhisperCli struct {
 	Threads   int
 	// NoGPU forces CPU execution (-ng). Set from config gpu = "off"; the
 	// zero value leaves whisper.cpp to use whatever backend it loaded.
-	NoGPU  bool
+	NoGPU bool
+
+	// Prompt is the vocabulary as whisper's initial prompt. Empty passes no
+	// --prompt flag; see speech.WhisperPrompt.
+	Prompt string
+
 	Build  CommandFunc
 	Logger *slog.Logger
 }
@@ -79,17 +104,26 @@ func NewWhisperCli(modelPath string) *WhisperCli {
 	}
 }
 
+// command builds the invocation this transcriber will run. It is separate
+// from Transcribe so a test can read the argv the configuration produces
+// without a whisper-cli binary to run it.
+func (w *WhisperCli) command(ctx context.Context, wavPath string) *exec.Cmd {
+	if w.Build != nil {
+		return w.Build(ctx, w.ModelPath, wavPath)
+	}
+	return DefaultCommandWithOpts(ctx, w.ModelPath, wavPath, WhisperOpts{
+		Threads: w.Threads,
+		NoGPU:   w.NoGPU,
+		Prompt:  w.Prompt,
+	})
+}
+
 func (w *WhisperCli) Transcribe(ctx context.Context, wavPath string) (string, error) {
 	log := w.Logger
 	if log == nil {
 		log = slog.Default()
 	}
-	var cmd *exec.Cmd
-	if w.Build != nil {
-		cmd = w.Build(ctx, w.ModelPath, wavPath)
-	} else {
-		cmd = DefaultCommandWithOpts(ctx, w.ModelPath, wavPath, w.Threads, w.NoGPU)
-	}
+	cmd := w.command(ctx, wavPath)
 	wavSize := int64(-1)
 	if fi, err := os.Stat(wavPath); err == nil {
 		wavSize = fi.Size()

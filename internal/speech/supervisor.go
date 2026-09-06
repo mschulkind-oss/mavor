@@ -42,6 +42,11 @@ type SupervisorConfig struct {
 	// flag; it uses whatever GPU backend its build loaded unless told not to.
 	NoGPU bool
 
+	// Prompt is the initial prompt (--prompt) the child applies to every
+	// request it serves: the vocabulary, rendered as text. Empty passes no
+	// flag. See speech.WhisperPrompt.
+	Prompt string
+
 	// CommandFunc allows injecting a custom command generator (useful for unit tests).
 	CommandFunc func(ctx context.Context, cfg SupervisorConfig) *exec.Cmd
 
@@ -119,6 +124,9 @@ func DefaultServerCommand(ctx context.Context, cfg SupervisorConfig) *exec.Cmd {
 	}
 	if cfg.NoGPU {
 		args = append(args, "-ng")
+	}
+	if cfg.Prompt != "" {
+		args = append(args, "--prompt", cfg.Prompt)
 	}
 
 	// A host and a port is the only way this binary can be told where to

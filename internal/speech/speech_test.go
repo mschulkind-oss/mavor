@@ -100,7 +100,7 @@ func TestWhisperCliCancelKillsProcess(t *testing.T) {
 }
 
 func TestDefaultCommandWithOpts(t *testing.T) {
-	cmd := DefaultCommandWithOpts(t.Context(), "/models/base.bin", "/tmp/audio.wav", 8, false)
+	cmd := DefaultCommandWithOpts(t.Context(), "/models/base.bin", "/tmp/audio.wav", WhisperOpts{Threads: 8})
 	args := strings.Join(cmd.Args, " ")
 	if !strings.Contains(args, "-t 8") {
 		t.Errorf("expected -t 8 in args, got: %s", args)
@@ -115,7 +115,7 @@ func TestDefaultCommandWithOpts(t *testing.T) {
 func TestWhisperCommandNeverPassesNGL(t *testing.T) {
 	for _, noGPU := range []bool{false, true} {
 		for _, threads := range []int{0, 1, 32} {
-			cmd := DefaultCommandWithOpts(t.Context(), "/models/base.bin", "/tmp/audio.wav", threads, noGPU)
+			cmd := DefaultCommandWithOpts(t.Context(), "/models/base.bin", "/tmp/audio.wav", WhisperOpts{Threads: threads, NoGPU: noGPU})
 			args := strings.Join(cmd.Args, " ")
 			if strings.Contains(args, "-ngl") {
 				t.Fatalf("whisper-cli argv contains -ngl, which the binary rejects (threads=%d no_gpu=%v): %s",
@@ -126,7 +126,7 @@ func TestWhisperCommandNeverPassesNGL(t *testing.T) {
 }
 
 func TestWhisperCommandGPUOffPassesNG(t *testing.T) {
-	cmd := DefaultCommandWithOpts(t.Context(), "/models/base.bin", "/tmp/audio.wav", 4, true)
+	cmd := DefaultCommandWithOpts(t.Context(), "/models/base.bin", "/tmp/audio.wav", WhisperOpts{Threads: 4, NoGPU: true})
 	args := strings.Join(cmd.Args, " ")
 	if !strings.Contains(args, "-ng") {
 		t.Errorf("gpu off should pass -ng, got: %s", args)
@@ -134,7 +134,7 @@ func TestWhisperCommandGPUOffPassesNG(t *testing.T) {
 }
 
 func TestWhisperCommandGPUAutoOmitsNG(t *testing.T) {
-	cmd := DefaultCommandWithOpts(t.Context(), "/models/base.bin", "/tmp/audio.wav", 4, false)
+	cmd := DefaultCommandWithOpts(t.Context(), "/models/base.bin", "/tmp/audio.wav", WhisperOpts{Threads: 4})
 	for _, a := range cmd.Args {
 		if a == "-ng" || a == "--no-gpu" {
 			t.Errorf("gpu auto must not disable the GPU, got argv: %v", cmd.Args)

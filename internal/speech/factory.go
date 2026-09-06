@@ -112,17 +112,29 @@ func FactoryFor(cfg config.Config, res Resolution, logger *slog.Logger) (Transcr
 		logger = slog.Default()
 	}
 
+	// The vocabulary reaches a whisper model as an initial prompt, and it is
+	// rendered once here rather than per utterance: the truncation warning it
+	// can raise is a fact about the configuration, and a user should hear it
+	// at start rather than on every dictation. A sherpa model takes a
+	// different road entirely — see resolveDecoding.
+	var prompt string
+	if res.Runtime == models.RuntimeWhisper {
+		prompt = WhisperPrompt(LoadVocabulary(cfg, logger), logger)
+	}
+
 	switch res.Placement {
 	case models.PlacementSubprocess:
 		cli := NewWhisperCli(res.ModelPath)
 		cli.Threads = cfg.Advanced.Threads
 		cli.NoGPU = cfg.GPUOff()
+		cli.Prompt = prompt
 		cli.Logger = logger
 		return cli, nil
 
 	case models.PlacementRemote:
 		st := NewServerTranscriber(res.Server)
 		st.Model = cfg.Model
+		st.Prompt = prompt
 		st.Logger = logger
 		return st, nil
 
@@ -132,12 +144,17 @@ func FactoryFor(cfg config.Config, res Resolution, logger *slog.Logger) (Transcr
 		// reads back through Supervisor.Endpoint.
 		st := NewServerTranscriber("")
 		st.Model = cfg.Model
+		st.Prompt = prompt
 		st.Logger = logger
 		st.Supervisor = NewSupervisor(SupervisorConfig{
 			ModelPath: res.ModelPath,
 			Threads:   cfg.Advanced.Threads,
 			NoGPU:     cfg.GPUOff(),
-			Logger:    logger,
+			// The child gets the prompt as a flag as well as in each
+			// request, so a whisper.cpp build that ignores the form field
+			// still applies it.
+			Prompt: prompt,
+			Logger: logger,
 		})
 		return st, nil
 

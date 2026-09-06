@@ -42,15 +42,25 @@ type Daemon struct {
 	logger            *slog.Logger
 	errorDuration     time.Duration
 	previewEnabled    bool
+	previewMode       speech.PreviewMode
+	companion         speech.StreamTranscriber
 	history           TranscriptRecorder
 	silenceThreshold  time.Duration
 	minPhraseDuration time.Duration
 
-	levelCancel   context.CancelFunc
-	levelMu       sync.Mutex
-	streamCancel  context.CancelFunc
+	levelCancel  context.CancelFunc
+	levelMu      sync.Mutex
+	streamCancel context.CancelFunc
+
+	// streamMu guards every field below it AND the overlay's text. The
+	// overlay has one writer — the preview driver, between start and stop
+	// (§10.3 of docs/design/configuration-surface.md) — and streamGen is how
+	// that is enforced: it moves on when a recording stops, so a result still
+	// in flight finds its generation gone and is dropped rather than painted.
 	streamMu      sync.Mutex
 	streamHistory string
+	streamGen     uint64
+	streamSource  speech.StreamTranscriber
 }
 
 type Config struct {
@@ -67,6 +77,18 @@ type Config struct {
 	// speaks. It never emits output: the transcript is typed once, when
 	// transcription completes.
 	PreviewEnabled bool
+
+	// PreviewMode is where that text comes from, decided once at daemon
+	// start by speech.ResolvePreview. The empty value means "read the main
+	// model's partials if it has any, otherwise phrase mode", which is what
+	// a caller that never resolved a preview gets.
+	PreviewMode speech.PreviewMode
+
+	// PreviewCompanion is the small streaming recognizer loaded alongside
+	// the main model, read only when PreviewMode is speech.PreviewCompanion.
+	// It paints the overlay and nothing else: it never reaches the output
+	// emitter and never contributes to the final transcript.
+	PreviewCompanion speech.StreamTranscriber
 
 	History           TranscriptRecorder
 	SilenceThreshold  time.Duration
@@ -104,6 +126,8 @@ func New(c Config) *Daemon {
 		logger:            c.Logger,
 		errorDuration:     errDur,
 		previewEnabled:    c.PreviewEnabled,
+		previewMode:       c.PreviewMode,
+		companion:         c.PreviewCompanion,
 		history:           c.History,
 		silenceThreshold:  silenceThresh,
 		minPhraseDuration: minPhrase,
@@ -132,6 +156,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	_ = d.ducker.Restore()
 	_ = d.overlay.Close()
 	if closer, ok := d.transcriber.(io.Closer); ok {
+		_ = closer.Close()
+	}
+	if closer, ok := d.companion.(io.Closer); ok {
 		_ = closer.Close()
 	}
 	return err
@@ -267,7 +294,7 @@ func (d *Daemon) startStreamingMonitoring(ctx context.Context) {
 		d.logger.Info("streaming: preview disabled (preview.enabled = false)")
 		return
 	}
-	st, isStreaming := d.transcriber.(speech.StreamTranscriber)
+	src := d.previewStreamSource()
 
 	d.streamMu.Lock()
 	if d.streamCancel != nil {
@@ -276,50 +303,91 @@ func (d *Daemon) startStreamingMonitoring(ctx context.Context) {
 	ctxStream, cancel := context.WithCancel(ctx)
 	d.streamCancel = cancel
 	d.streamHistory = ""
+	d.streamGen++
+	gen := d.streamGen
+	d.streamSource = src
 	d.streamMu.Unlock()
 
-	if isStreaming {
-		d.logger.Info("streaming: initializing transducer stream session")
-		if err := st.StartStream(ctxStream); err != nil {
-			d.logger.Warn("streaming: start stream failed", "err", err)
-			return
-		}
+	if src != nil {
+		d.runStreamPreview(ctxStream, gen, src)
+		return
+	}
+	d.runPhrasePreview(ctxStream, gen)
+}
 
-		go func() {
-			ticker := time.NewTicker(30 * time.Millisecond)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctxStream.Done():
-					return
-				case <-ticker.C:
-					if cr, ok := d.recorder.(audio.ChunkReader); ok {
-						chunk, err := cr.ReadChunk()
-						if err != nil {
-							d.logger.Debug("streaming: read chunk failed", "err", err)
-							continue
-						}
-						if len(chunk) > 0 {
-							partial, err := st.FeedChunk(ctxStream, chunk)
-							if err != nil {
-								d.logger.Warn("streaming: feed chunk failed", "err", err)
-								continue
-							}
-							if partial != "" && d.overlay != nil {
-								_ = d.overlay.SetText(partial)
-							}
-						}
-					}
-				}
-			}
-		}()
+// previewStreamSource is the recognizer that will paint the overlay, or nil
+// for phrase mode. Which one it is was decided at daemon start by
+// speech.ResolvePreview, from the catalog and from what is installed; this
+// only reads off the value that mode names.
+func (d *Daemon) previewStreamSource() speech.StreamTranscriber {
+	switch d.previewMode {
+	case speech.PreviewCompanion:
+		if d.companion == nil {
+			d.logger.Warn("streaming: preview mode is companion but no companion was loaded — using phrase mode")
+			return nil
+		}
+		return d.companion
+	case speech.PreviewPhrases:
+		return nil
+	}
+	// speech.PreviewMainModel, and the empty mode a caller that never
+	// resolved a preview leaves behind: read the main model's own partials
+	// when it has any, and fall back to phrases when it has not.
+	if st, ok := d.transcriber.(speech.StreamTranscriber); ok {
+		return st
+	}
+	return nil
+}
+
+// runStreamPreview feeds captured audio to a recognizer that decodes
+// incrementally — the main model when it can do that, otherwise the companion
+// loaded alongside it — and paints what it emits.
+func (d *Daemon) runStreamPreview(ctx context.Context, gen uint64, src speech.StreamTranscriber) {
+	d.logger.Info("streaming: initializing transducer stream session")
+	if err := src.StartStream(ctx); err != nil {
+		d.logger.Warn("streaming: start stream failed", "err", err)
 		return
 	}
 
-	// Phrase mode: the model does not decode incrementally, so the audio
-	// since the last pause is transcribed with it and appended to the
-	// preview. There is no strategy to select — a model either decodes as you
-	// speak or it does not.
+	go func() {
+		ticker := time.NewTicker(30 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				cr, ok := d.recorder.(audio.ChunkReader)
+				if !ok {
+					continue
+				}
+				chunk, err := cr.ReadChunk()
+				if err != nil {
+					d.logger.Debug("streaming: read chunk failed", "err", err)
+					continue
+				}
+				if len(chunk) == 0 {
+					continue
+				}
+				partial, err := src.FeedChunk(ctx, chunk)
+				if err != nil {
+					d.logger.Warn("streaming: feed chunk failed", "err", err)
+					continue
+				}
+				if partial != "" {
+					d.setPreview(ctx, gen, partial)
+				}
+			}
+		}
+	}()
+}
+
+// runPhrasePreview is the fallback of §6.2: no second model, so on a pause the
+// audio since the last pause is transcribed with the MAIN model and appended
+// to the preview. It is what runs when the main model does not decode
+// incrementally and no companion is available — cheaper, slower, and prone to
+// filling silence with words that were not said.
+func (d *Daemon) runPhrasePreview(ctx context.Context, gen uint64) {
 	d.logger.Info("streaming: initializing phrase-mode preview",
 		"silence_threshold", d.silenceThreshold,
 		"min_phrase", d.minPhraseDuration)
@@ -334,7 +402,7 @@ func (d *Daemon) startStreamingMonitoring(ctx context.Context) {
 
 		for {
 			select {
-			case <-ctxStream.Done():
+			case <-ctx.Done():
 				return
 			case <-ticker.C:
 				cr, ok := d.recorder.(audio.ChunkReader)
@@ -357,53 +425,93 @@ func (d *Daemon) startStreamingMonitoring(ctx context.Context) {
 				if rms >= audio.SpeechRMSThreshold {
 					speechFrames++
 					silenceFrames = 0
-				} else if speechFrames*30 >= int(d.minPhraseDuration.Milliseconds()) {
-					silenceFrames++
-					if time.Duration(silenceFrames*30)*time.Millisecond >= d.silenceThreshold {
-						phrase := accumulatedSamples
-						accumulatedSamples = nil
-						speechFrames = 0
-						silenceFrames = 0
-
-						go func(p []int16) {
-							if len(p) == 0 {
-								return
-							}
-							tempWav := filepath.Join(os.TempDir(), fmt.Sprintf("mavor-slice-%d.wav", time.Now().UnixNano()))
-							if err := audio.WriteWAV(tempWav, p, audio.DefaultSampleRate); err != nil {
-								d.logger.Warn("streaming: write slice WAV failed", "err", err)
-								return
-							}
-							defer os.Remove(tempWav)
-
-							txt, err := d.transcriber.Transcribe(ctxStream, tempWav)
-							if err != nil {
-								d.logger.Warn("streaming: transcribe slice failed", "err", err)
-								return
-							}
-							txt = strings.TrimSpace(txt)
-							if txt != "" {
-								d.streamMu.Lock()
-								if d.streamHistory != "" {
-									d.streamHistory += " "
-								}
-								d.streamHistory += txt
-								d.streamMu.Unlock()
-
-								d.logger.Info("streaming: recognized phrase slice", "text", txt)
-								if d.overlay != nil {
-									d.streamMu.Lock()
-									preview := d.streamHistory
-									d.streamMu.Unlock()
-									_ = d.overlay.SetText(preview)
-								}
-							}
-						}(phrase)
-					}
+					continue
 				}
+				if speechFrames*30 < int(d.minPhraseDuration.Milliseconds()) {
+					continue
+				}
+				silenceFrames++
+				if time.Duration(silenceFrames*30)*time.Millisecond < d.silenceThreshold {
+					continue
+				}
+
+				phrase := accumulatedSamples
+				accumulatedSamples = nil
+				speechFrames = 0
+				silenceFrames = 0
+				go d.transcribePhrase(ctx, gen, phrase)
 			}
 		}
 	}()
+}
+
+// transcribePhrase decodes one phrase with the main model for the preview.
+// A failure drops that phrase and nothing else: it must never abort the
+// recording or the final transcript (§10.2).
+func (d *Daemon) transcribePhrase(ctx context.Context, gen uint64, phrase []int16) {
+	if len(phrase) == 0 {
+		return
+	}
+	tempWav := filepath.Join(os.TempDir(), fmt.Sprintf("mavor-phrase-%d.wav", time.Now().UnixNano()))
+	if err := audio.WriteWAV(tempWav, phrase, audio.DefaultSampleRate); err != nil {
+		d.logger.Warn("streaming: write phrase WAV failed", "err", err)
+		return
+	}
+	defer os.Remove(tempWav)
+
+	txt, err := d.transcriber.Transcribe(ctx, tempWav)
+	if err != nil {
+		d.logger.Warn("streaming: transcribe phrase failed", "err", err)
+		return
+	}
+	d.appendPhrase(ctx, gen, txt)
+}
+
+// appendPhrase adds one phrase-mode result to the preview. On stop all preview
+// work is cancelled and its results discarded (§10.3), and a transcription
+// still in flight is precisely the result that can outlive its recording: it
+// is dropped here, not appended.
+func (d *Daemon) appendPhrase(ctx context.Context, gen uint64, text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+
+	d.streamMu.Lock()
+	defer d.streamMu.Unlock()
+	if !d.previewLive(ctx, gen) {
+		d.logger.Debug("streaming: phrase result arrived after stop — dropped", "text", text)
+		return
+	}
+	if d.streamHistory != "" {
+		d.streamHistory += " "
+	}
+	d.streamHistory += text
+	d.logger.Info("streaming: recognized phrase", "text", text)
+	if d.overlay != nil {
+		_ = d.overlay.SetText(d.streamHistory)
+	}
+}
+
+// setPreview paints preview text for one recording, dropping anything that
+// arrives after that recording stopped. Both preview mechanisms write the
+// overlay through here, which is what makes the driver its one writer.
+func (d *Daemon) setPreview(ctx context.Context, gen uint64, text string) {
+	d.streamMu.Lock()
+	defer d.streamMu.Unlock()
+	if !d.previewLive(ctx, gen) {
+		d.logger.Debug("streaming: partial arrived after stop — dropped", "text", text)
+		return
+	}
+	if d.overlay != nil {
+		_ = d.overlay.SetText(text)
+	}
+}
+
+// previewLive reports whether the recording that produced a preview result is
+// still the current one. Callers hold streamMu.
+func (d *Daemon) previewLive(ctx context.Context, gen uint64) bool {
+	return gen == d.streamGen && ctx.Err() == nil
 }
 
 func (d *Daemon) stopStreamingMonitoring() {
@@ -412,15 +520,26 @@ func (d *Daemon) stopStreamingMonitoring() {
 		d.streamCancel()
 		d.streamCancel = nil
 	}
-	d.streamMu.Unlock()
-
-	if st, ok := d.transcriber.(speech.StreamTranscriber); ok {
-		if finalText, err := st.StopStream(context.Background()); err == nil && finalText != "" {
-			d.logger.Info("streaming: final stream text", "text", finalText)
-		}
-	}
+	src := d.streamSource
+	d.streamSource = nil
+	// Moving the generation on under the same lock the writers take is what
+	// discards the work still in flight: a phrase transcription or a partial
+	// that lands after this finds its generation gone and paints nothing.
+	d.streamGen++
+	d.streamHistory = ""
 	if d.overlay != nil {
 		_ = d.overlay.SetText("")
+	}
+	d.streamMu.Unlock()
+
+	if src != nil {
+		if finalText, err := src.StopStream(context.Background()); err == nil && finalText != "" {
+			// Logged and dropped. The preview never contributes to the
+			// transcript, and a companion never influences it at all — the
+			// text the user gets comes from the main model, once, in
+			// runTranscription.
+			d.logger.Info("streaming: final preview text discarded", "text", finalText)
+		}
 	}
 }
 
