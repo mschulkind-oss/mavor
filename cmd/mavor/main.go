@@ -218,10 +218,26 @@ func runDaemon(args []string) error {
 
 	recorder := audio.NewParecRecorder(recDir)
 	recorder.SetLogger(logger)
-	outDispatch := output.NewWayland()
-	outDispatch.Logger = logger
-	outDispatch.Clipboard = cfg.Output.Clipboard
-	outDispatch.TypingDelayMS = cfg.Output.TypingDelayMS
+	// Type in-process where the compositor allows it, and fall back to wtype
+	// where it does not. Both need the same protocol, so the fallback is for
+	// a missing binding rather than a missing feature — but it keeps a
+	// working path if the in-process one ever misbehaves.
+	var outDispatch output.Dispatcher
+	var closeOutput func() error
+	if native, err := output.NewNative(logger); err == nil {
+		native.Clipboard = cfg.Output.Clipboard
+		outDispatch, closeOutput = native, native.Close
+	} else {
+		logger.Warn("output: falling back to wtype", "err", err)
+		w := output.NewWayland()
+		w.Logger = logger
+		w.Clipboard = cfg.Output.Clipboard
+		w.TypingDelayMS = cfg.Output.TypingDelayMS
+		outDispatch = w
+	}
+	if closeOutput != nil {
+		defer func() { _ = closeOutput() }()
+	}
 
 	var ducker audio.Ducker = &audio.NoopDucker{}
 	if cfg.Ducking.Enabled {

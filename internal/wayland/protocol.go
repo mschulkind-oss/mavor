@@ -43,6 +43,12 @@ type Display struct {
 	shm        ObjectID
 	layerShell ObjectID
 
+	// seat and vkManager are optional: they are what synthetic typing needs,
+	// and a compositor may offer the overlay's protocols without them. Zero
+	// means absent, and NewVirtualKeyboard says so in words.
+	seat      ObjectID
+	vkManager ObjectID
+
 	// OutputWidth and OutputHeight are the current mode of the first output
 	// the compositor advertises, in pixels. Zero when the compositor offers
 	// no wl_output, or advertises none as current — callers must treat zero
@@ -125,6 +131,38 @@ func Connect() (*Display, error) {
 		conn.Close()
 		return nil, fmt.Errorf("%w — mavor's overlay needs a compositor with wlr-layer-shell, such as sway, hyprland or river", err)
 	}
+	// A seat and a virtual-keyboard manager are optional in the same way as
+	// wl_output: the overlay works without them, and only typing does not.
+	// Bound here rather than on demand so one connection serves both, and so
+	// a compositor that lacks them is discovered at startup where `mavor
+	// doctor` can say so.
+	if g, ok := found["wl_seat"]; ok {
+		id := conn.newID(nil)
+		b := newBuilder(registry, 0)
+		b.putUint(g.name)
+		b.putString("wl_seat")
+		b.putUint(min(uint32(7), g.version))
+		b.putObject(id)
+		if err := conn.send(b); err != nil {
+			conn.Close()
+			return nil, err
+		}
+		d.seat = id
+	}
+	if g, ok := found["zwp_virtual_keyboard_manager_v1"]; ok {
+		id := conn.newID(nil)
+		b := newBuilder(registry, 0)
+		b.putUint(g.name)
+		b.putString("zwp_virtual_keyboard_manager_v1")
+		b.putUint(min(uint32(1), g.version))
+		b.putObject(id)
+		if err := conn.send(b); err != nil {
+			conn.Close()
+			return nil, err
+		}
+		d.vkManager = id
+	}
+
 	// wl_output is optional. The overlay works without it; it only loses the
 	// ability to size the preview against the screen, and the caller falls
 	// back to a fixed budget.
