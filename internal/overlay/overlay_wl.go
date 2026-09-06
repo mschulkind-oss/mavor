@@ -42,6 +42,16 @@ type WL struct {
 	mu      sync.Mutex
 	want    desired
 	wantSeq uint64
+
+	// wake lets Show reach the render loop without waiting for the next
+	// tick, which is what makes it safe for the loop to tick slowly while
+	// nothing is on screen.
+	//
+	// ONLY Show signals it. Waking on a level sample would put the loop back
+	// on the recorder's 30ms clock instead of its own 37.5ms one, and since
+	// the waveform advances exactly one column per iteration, that is the
+	// uneven scroll all over again — see the comment in apply.
+	wake chan struct{}
 }
 
 // desired is what the producers want on screen. Guarded by WL.mu.
@@ -103,6 +113,18 @@ type wlState struct {
 // pulsePeriod matches the CSS keyframes the GTK pill animated on.
 const pulsePeriod = 900 * time.Millisecond
 
+const (
+	// frameInterval is the animation frame rate: 24 frames per pulse.
+	frameInterval = pulsePeriod / 24
+
+	// idleInterval is how often the loop dispatches while nothing is on
+	// screen. It exists only to keep the compositor's events drained — a
+	// Wayland client that stops reading is disconnected when the socket
+	// fills — and while hidden the only events are the last frame's buffer
+	// releases. Half a second is far more often than that needs.
+	idleInterval = 500 * time.Millisecond
+)
+
 // NewWL connects to the compositor and starts the render loop.
 // fallbackPreviewWidth caps the preview when the compositor advertises no
 // wl_output and the screen width is unknown. Wide enough to be useful, narrow
@@ -163,6 +185,7 @@ func NewWL(topMargin int, previewFraction float64, log *slog.Logger) (*WL, error
 		quit: make(chan struct{}),
 		done: make(chan struct{}),
 		err:  make(chan error, 1),
+		wake: make(chan struct{}, 1),
 	}
 	go o.run(&wlState{
 		display:    d,
@@ -188,8 +211,16 @@ func (o *WL) run(st *wlState) {
 		close(o.done)
 	}()
 
-	tick := time.NewTicker(pulsePeriod / 24)
+	// Two rates. Painting an animation needs the frame rate; sitting hidden
+	// needs only enough dispatching to keep the compositor's events drained,
+	// and the daemon is hidden for almost all of its life. At the frame rate
+	// that was 27 wakeups a second forever — each one blocking a millisecond
+	// in a read for events that were not coming — for a surface drawing
+	// nothing. Show signals o.wake, so dropping to the idle rate costs no
+	// latency when a dictation starts.
+	tick := time.NewTicker(frameInterval)
 	defer tick.Stop()
+	interval := frameInterval
 	start := time.Now()
 	var seen uint64
 
@@ -240,34 +271,47 @@ func (o *WL) run(st *wlState) {
 		select {
 		case <-o.quit:
 			return
+		case <-o.wake:
 		case <-tick.C:
-			// Read first. Releases arrive here, and a client that never
-			// reads is disconnected once the buffer fills.
-			if err := st.display.DispatchPending(); err != nil {
-				o.fail(err)
-				return
-			}
-			// A change is reason to paint even when nothing is animating:
-			// it is how a state the producer asked for reaches the screen.
-			changed := apply()
+		}
 
-			// Scroll here rather than in apply: apply returns early when
-			// nothing arrived, and a frame with no new sample must still
-			// advance the ring by one column or the motion is uneven again.
-			// This is the ONLY place the waveform scrolls, so its rate is
-			// the frame rate and nothing else.
-			if st.scene.Visual == Recording {
-				shiftWave(st.levels, waveDisplayLevel(st.lastLevel))
-				st.scene.Levels = st.levels
-				changed = true
-			}
-			if !st.animate && !changed {
-				continue
-			}
+		// Read first. Releases arrive here, and a client that never
+		// reads is disconnected once the buffer fills.
+		if err := st.display.DispatchPending(); err != nil {
+			o.fail(err)
+			return
+		}
+		// A change is reason to paint even when nothing is animating:
+		// it is how a state the producer asked for reaches the screen.
+		changed := apply()
+
+		// Scroll here rather than in apply: apply returns early when
+		// nothing arrived, and a frame with no new sample must still
+		// advance the ring by one column or the motion is uneven again.
+		// This is the ONLY place the waveform scrolls, so its rate is
+		// the frame rate and nothing else.
+		if st.scene.Visual == Recording {
+			shiftWave(st.levels, waveDisplayLevel(st.lastLevel))
+			st.scene.Levels = st.levels
+			changed = true
+		}
+		if st.animate || changed {
 			if err := o.paint(st, start); err != nil {
 				o.fail(err)
 				return
 			}
+		}
+
+		// paint sets st.animate from the scene it just drew, so this reads
+		// the rate the NEXT iteration should run at.
+		want := idleInterval
+		if st.animate {
+			want = frameInterval
+		}
+		if want != interval {
+			interval = want
+			tick.Reset(interval)
+			o.log.Debug("overlay: tick rate changed", "interval", interval, "animating", st.animate)
 		}
 	}
 }
@@ -450,6 +494,10 @@ func (o *WL) Show(v Visual) error {
 	o.want.setAt = time.Now()
 	o.wantSeq++
 	o.mu.Unlock()
+	select {
+	case o.wake <- struct{}{}:
+	default: // already pending; the loop will see the latest state anyway
+	}
 	return nil
 }
 

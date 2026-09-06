@@ -37,6 +37,7 @@ type Conn struct {
 	closed   bool
 
 	readBuf  []byte
+	oobBuf   []byte
 	pending  []byte
 	errEvent error // an error the compositor reported via wl_display.error
 }
@@ -66,6 +67,7 @@ func Dial() (*Conn, error) {
 		nextID:   firstClientID,
 		handlers: map[ObjectID]handler{},
 		readBuf:  make([]byte, 8192),
+		oobBuf:   make([]byte, syscall.CmsgSpace(4*8)),
 	}, nil
 }
 
@@ -126,7 +128,10 @@ func (c *Conn) send(b *builder) error {
 // Dispatch reads at least once from the socket and runs the handler for every
 // whole message received. It blocks until the socket has something to say.
 func (c *Conn) Dispatch() error {
-	oob := make([]byte, syscall.CmsgSpace(4*8))
+	// oobBuf is reused across calls the way readBuf already was. Dispatch
+	// runs on every render tick for the life of the daemon, so a fresh
+	// 48-byte buffer each time is permanent, pointless garbage.
+	oob := c.oobBuf
 	n, oobn, _, _, err := c.sock.ReadMsgUnix(c.readBuf, oob)
 	if err != nil {
 		return fmt.Errorf("wayland: receive: %w", err)
@@ -155,7 +160,13 @@ func (c *Conn) Dispatch() error {
 	if err != nil {
 		return err
 	}
-	c.pending = c.pending[consumed:]
+	// Slide the remainder to the front rather than advancing the slice
+	// header. Reslicing forward strands the consumed bytes ahead of the
+	// window, so the usable capacity shrinks on every read until append has
+	// to reallocate; copying the tail back — almost always nothing, since a
+	// partial message is the exception — keeps one buffer for the life of
+	// the connection.
+	c.pending = c.pending[:copy(c.pending, c.pending[consumed:])]
 
 	for _, m := range msgs {
 		c.mu.Lock()
