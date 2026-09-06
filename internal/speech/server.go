@@ -48,6 +48,9 @@ type ServerTranscriber struct {
 	// every utterance would put it in the latency of every dictation. It is a
 	// path rather than a whole URL because the address can move under us: a
 	// supervised child that restarts comes back on a different port.
+	clientOnce sync.Once
+	built      *http.Client
+
 	mu          sync.Mutex
 	learnedPath string
 }
@@ -125,10 +128,7 @@ func (s *ServerTranscriber) Transcribe(ctx context.Context, wavPath string) (str
 		return "", fmt.Errorf("speech: server: close multipart writer: %w", err)
 	}
 
-	client := s.Client
-	if client == nil {
-		client = s.buildClient()
-	}
+	client := s.client()
 	contentType := writer.FormDataContentType()
 	payload := body.Bytes()
 
@@ -281,6 +281,18 @@ func (s *ServerTranscriber) rememberURL(u string) {
 // endpoint is a server problem and trying another path would hide it.
 func wrongPath(status int) bool {
 	return status == http.StatusNotFound || status == http.StatusMethodNotAllowed
+}
+
+// client returns the HTTP client for this transcriber, building it once. A
+// fresh http.Client per utterance means a fresh Transport, which means no
+// connection is ever kept alive between them — every dictation reopened the
+// socket to a server running on this same machine.
+func (s *ServerTranscriber) client() *http.Client {
+	if s.Client != nil {
+		return s.Client
+	}
+	s.clientOnce.Do(func() { s.built = s.buildClient() })
+	return s.built
 }
 
 func (s *ServerTranscriber) buildClient() *http.Client {
