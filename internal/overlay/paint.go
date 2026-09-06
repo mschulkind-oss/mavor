@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"image/draw"
 	"math"
+	"sync"
 
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/gofont/gobold"
@@ -309,20 +310,125 @@ func shapeRect(x, y, w, h float64) image.Rectangle {
 	)
 }
 
+// rasterScratch holds the three things fillPath and fillGradient used to
+// allocate on every call: the rasterizer, the alpha mask it draws into, and
+// the uniform source colour draw.DrawMask composites through.
+//
+// A frame makes about sixty of those calls — one per waveform bar, one per
+// dot, one for the pill — so at 27 frames a second that was 9,000 allocations
+// and 6 MB of garbage a second while dictating, all of it immediately dead.
+// Nothing about the shapes changes between frames, only their sizes, and
+// vector.Rasterizer.Reset reuses its own buffers when they are big enough.
+//
+// The mask is drawn with draw.Src rather than the rasterizer's default
+// draw.Over, which is what makes reuse safe: Over composites onto whatever
+// the mask already held, so a reused mask would accumulate every shape ever
+// drawn through it. Src overwrites, so no clearing step is needed either.
+type rasterScratch struct {
+	rz   *vector.Rasterizer
+	pix  []uint8
+	mask image.Alpha
+	src  image.Uniform
+	col  color.NRGBA
+	pth  path
+}
+
+// prepare returns a rasterizer and a mask of exactly w by h, reusing the
+// storage from the last call whenever it is large enough.
+func (s *rasterScratch) prepare(w, h int) (*vector.Rasterizer, *image.Alpha) {
+	if s.rz == nil {
+		s.rz = vector.NewRasterizer(w, h)
+	} else {
+		s.rz.Reset(w, h)
+	}
+	s.rz.DrawOp = draw.Src
+
+	if n := w * h; cap(s.pix) < n {
+		s.pix = make([]uint8, n)
+	} else {
+		s.pix = s.pix[:n]
+	}
+	s.mask = image.Alpha{Pix: s.pix, Stride: w, Rect: image.Rect(0, 0, w, h)}
+	return s.rz, &s.mask
+}
+
+// outline is the path handed to a build closure. It lives on the scratch
+// because taking its address for the closure is otherwise enough to make it
+// escape to the heap, once per shape.
+func (s *rasterScratch) outline(r *vector.Rasterizer, origin image.Point) *path {
+	s.pth = path{r: r, off: origin}
+	return &s.pth
+}
+
+// uniform is the source image for a solid fill, reused the same way.
+//
+// It holds a POINTER to the scratch's own colour rather than the colour
+// itself. Assigning a color.NRGBA to a color.Color field boxes it, and that
+// is a heap allocation on every fill — forty-six a frame for the waveform
+// alone. An interface holding a pointer stores the pointer directly, so this
+// allocates nothing after the first call.
+func (s *rasterScratch) uniform(c color.NRGBA) *image.Uniform {
+	s.col = c
+	if s.src.C == nil {
+		s.src.C = &s.col
+	}
+	return &s.src
+}
+
+// scratch, like cache and gradients, is process-wide and guarded by renderMu.
+var (
+	scratch  rasterScratch
+	renderMu sync.Mutex
+)
+
 // fillPath rasterizes a path into dst with a solid colour, compositing over
 // what is already there. bounds is the region the path may touch, in dst's
 // coordinates: it clips the result and, more importantly, sizes the work.
-func fillPath(dst *image.RGBA, bounds image.Rectangle, c color.Color, build func(*path)) {
+func fillPath(dst *image.RGBA, bounds image.Rectangle, c color.NRGBA, build func(*path)) {
 	bounds = bounds.Intersect(dst.Bounds())
 	w, h := bounds.Dx(), bounds.Dy()
 	if w <= 0 || h <= 0 {
 		return
 	}
-	r := vector.NewRasterizer(w, h)
-	build(&path{r: r, off: bounds.Min})
-	mask := image.NewAlpha(image.Rect(0, 0, w, h))
+	r, mask := scratch.prepare(w, h)
+	build(scratch.outline(r, bounds.Min))
+	compositeMask(dst, bounds, c, r, mask)
+}
+
+// compositeMask turns a built path into pixels. It is the tail of every fill
+// in this file, split out so the shapes drawn most often can skip fillPath's
+// closure — see fillRoundRect.
+func compositeMask(dst *image.RGBA, bounds image.Rectangle, c color.NRGBA, r *vector.Rasterizer, mask *image.Alpha) {
 	r.Draw(mask, mask.Bounds(), image.Opaque, image.Point{})
-	draw.DrawMask(dst, bounds, image.NewUniform(c), image.Point{}, mask, image.Point{}, draw.Over)
+	draw.DrawMask(dst, bounds, scratch.uniform(c), image.Point{}, mask, image.Point{}, draw.Over)
+}
+
+// fillRoundRect and fillCircle are fillPath without the closure.
+//
+// The closure fillPath takes captures the shape's geometry, and a closure
+// with captured variables is a heap allocation. That is invisible for the
+// pill, drawn once a frame — and it is forty-six allocations a frame for the
+// waveform, which is one per bar for the life of every dictation.
+func fillRoundRect(dst *image.RGBA, x, y, w, h, rad float32, c color.NRGBA) {
+	bounds := shapeRect(float64(x), float64(y), float64(w), float64(h)).Intersect(dst.Bounds())
+	bw, bh := bounds.Dx(), bounds.Dy()
+	if bw <= 0 || bh <= 0 {
+		return
+	}
+	r, mask := scratch.prepare(bw, bh)
+	roundRectPath(scratch.outline(r, bounds.Min), x, y, w, h, rad)
+	compositeMask(dst, bounds, c, r, mask)
+}
+
+func fillCircle(dst *image.RGBA, cx, cy, rad float32, c color.NRGBA) {
+	bounds := shapeRect(float64(cx-rad), float64(cy-rad), float64(2*rad), float64(2*rad)).Intersect(dst.Bounds())
+	bw, bh := bounds.Dx(), bounds.Dy()
+	if bw <= 0 || bh <= 0 {
+		return
+	}
+	r, mask := scratch.prepare(bw, bh)
+	circlePath(scratch.outline(r, bounds.Min), cx, cy, rad)
+	compositeMask(dst, bounds, c, r, mask)
 }
 
 // fillGradient rasterizes a path and fills it with a vertical gradient, which
@@ -333,9 +439,8 @@ func fillGradient(dst *image.RGBA, bounds image.Rectangle, top, bottom color.NRG
 	if w <= 0 || h <= 0 {
 		return
 	}
-	r := vector.NewRasterizer(w, h)
-	build(&path{r: r, off: bounds.Min})
-	mask := image.NewAlpha(image.Rect(0, 0, w, h))
+	r, mask := scratch.prepare(w, h)
+	build(scratch.outline(r, bounds.Min))
 	r.Draw(mask, mask.Bounds(), image.Opaque, image.Point{})
 
 	grad := gradients.ramp(w, h, top, bottom)
@@ -484,6 +589,41 @@ const (
 // Render draws the scene into a fresh RGBA image of exactly the size
 // SceneSize reports.
 // Render draws a scene into a newly allocated image. Convenient for tests and
+// SceneBounds is the rectangle a scene actually paints into, which is much
+// smaller than the surface: the pill is a few hundred pixels wide in the
+// middle of a screen-wide surface, and a hidden scene paints nothing at all.
+//
+// It exists so a commit can tell the compositor which part of the buffer
+// changed instead of claiming all of it. Everything outside this rectangle is
+// left fully transparent by RenderInto, and TestSceneBoundsContainsEveryPixel
+// checks exactly that against the rendered pixels.
+func SceneBounds(s Scene) (image.Rectangle, error) {
+	if s.Visual == Hidden {
+		return image.Rectangle{}, nil
+	}
+	f, err := textFaces()
+	if err != nil {
+		return image.Rectangle{}, err
+	}
+	w, _, err := SceneSize(s)
+	if err != nil {
+		return image.Rectangle{}, err
+	}
+
+	pillW, pillH := pillSize(f, s)
+	pillX := (w - pillW) / 2
+	r := image.Rect(pillX, 0, pillX+pillW, pillH)
+
+	if s.Visual == Recording && s.Preview != "" {
+		pw := previewStripWidth(f, s)
+		ph := previewSize + 2*previewPadY + 4
+		px := (w - pw) / 2
+		py := pillH + previewGap
+		r = r.Union(image.Rect(px, py, px+pw, py+ph))
+	}
+	return r, nil
+}
+
 // the storybook; the render loop uses RenderInto so it can reuse its buffer.
 func Render(s Scene) (*image.RGBA, error) {
 	w, h, err := SceneSize(s)
@@ -506,6 +646,15 @@ func Render(s Scene) (*image.RGBA, error) {
 // The destination is cleared first, since a reused buffer still holds the
 // previous frame.
 func RenderInto(img *image.RGBA, s Scene) error {
+	// The scratch buffers and the two caches below are package-level, which
+	// is right for what they hold — one overlay is on screen at a time and
+	// the render loop owns a single goroutine — but the storybook and the
+	// tests do call this from wherever they like. One uncontended lock a
+	// frame is nothing against half a millisecond of rasterizing, and it is
+	// what makes the reuse sound rather than merely usually sound.
+	renderMu.Lock()
+	defer renderMu.Unlock()
+
 	f, err := textFaces()
 	if err != nil {
 		return err
@@ -539,9 +688,8 @@ func RenderInto(img *image.RGBA, s Scene) error {
 	})
 
 	// A one-pixel light line inside the top edge, the CSS inset highlight.
-	fillPath(img, pillRect, color.NRGBA{0xff, 0xff, 0xff, 0x40}, func(r *path) {
-		roundRectPath(r, float32(pillX)+pillRadius/2, 0, float32(pillW)-pillRadius, 1, 0.5)
-	})
+	fillRoundRect(img, float32(pillX)+pillRadius/2, 0, float32(pillW)-pillRadius, 1, 0.5,
+		color.NRGBA{0xff, 0xff, 0xff, 0x40})
 
 	// Baseline that centres the caps vertically in the pill.
 	m := f.label.Metrics()
@@ -557,9 +705,7 @@ func RenderInto(img *image.RGBA, s Scene) error {
 		dc := dotWarm
 		dc.A = alpha
 		rad := recDotDiameter / 2 * scale
-		fillPath(img, shapeRect(x+recDotBoxW/2-rad, cy-rad, 2*rad, 2*rad), dc, func(r *path) {
-			circlePath(r, float32(x+recDotBoxW/2), float32(cy), float32(rad))
-		})
+		fillCircle(img, float32(x+recDotBoxW/2), float32(cy), float32(rad), dc)
 		x += recDotBoxW + 10
 
 		drawText(img, f.label, recordingLabelText, x, baseline, inkWhite, labelTracking*labelSize)
@@ -578,9 +724,7 @@ func RenderInto(img *image.RGBA, s Scene) error {
 			c := typingInk
 			c.A = uint8(a * 255)
 			dx := x + float64(i*typingDotPitch)
-			fillPath(img, shapeRect(dx-typingDotRadius, cy-typingDotRadius, 2*typingDotRadius, 2*typingDotRadius), c, func(r *path) {
-				circlePath(r, float32(dx), float32(cy), typingDotRadius)
-			})
+			fillCircle(img, float32(dx), float32(cy), typingDotRadius, c)
 		}
 
 	case Error:
@@ -617,9 +761,7 @@ func drawWave(img *image.RGBA, levels []float64, x, y float64, height int) {
 		alpha := uint8(90 + 165*float64(i)/float64(waveCols-1))
 		c := inkWhite
 		c.A = alpha
-		fillPath(img, shapeRect(bx, by, waveBarWidth, float64(bh)), c, func(r *path) {
-			roundRectPath(r, float32(bx), float32(by), waveBarWidth, float32(bh), waveBarWidth/2)
-		})
+		fillRoundRect(img, float32(bx), float32(by), waveBarWidth, float32(bh), waveBarWidth/2, c)
 	}
 }
 
@@ -660,18 +802,25 @@ func drawWarning(img *image.RGBA, x, cy float64, size int, c color.NRGBA) {
 // almost every one of those redraws produced pixels identical to the last.
 // Caching them turns the common frame into a blit.
 type stripCache struct {
-	img *image.RGBA
-	key string
+	img    *image.RGBA
+	pw, ph int
+	raw    string
 }
 
 // strip returns the rendered preview strip, drawing it only when something
 // about it has actually changed.
 func (c *stripCache) strip(f *faces, s Scene, pw, ph int) *image.RGBA {
-	text := previewText(f, s)
-	key := fmt.Sprintf("%d\x00%d\x00%s", pw, ph, text)
-	if c.img != nil && c.key == key {
+	// Keyed on the RAW preview text, not the fitted tail.
+	//
+	// The tail is a pure function of the raw text and the strip size, so
+	// comparing it would mean computing it — and fitting the tail walks the
+	// string measuring glyphs. Keying on the input instead means a frame
+	// whose text has not changed does no work at all. Comparing the fields
+	// rather than a formatted key string keeps it allocation-free too.
+	if c.img != nil && c.pw == pw && c.ph == ph && c.raw == s.Preview {
 		return c.img
 	}
+	text := previewText(f, s)
 
 	img := image.NewRGBA(image.Rect(0, 0, pw, ph))
 	rect := img.Bounds()
@@ -686,7 +835,7 @@ func (c *stripCache) strip(f *faces, s Scene, pw, ph int) *image.RGBA {
 	baseline := float64(ph)/2 + float64(pm.Ascent-pm.Descent)/128.0
 	drawText(img, f.preview, text, float64(previewPadX), baseline, previewInk, 0.03*previewSize)
 
-	c.img, c.key = img, key
+	c.img, c.pw, c.ph, c.raw = img, pw, ph, s.Preview
 	return img
 }
 

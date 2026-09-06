@@ -50,7 +50,7 @@ func TestBlitCropsASceneLargerThanTheSurface(t *testing.T) {
 	buf := &wayland.Buffer{Width: sw, Height: sh, Stride: sw * 4, Pix: make([]byte, sw*sh*4)}
 
 	// Must not panic and must not write past the destination.
-	blit(img, buf)
+	blit(img, buf, img.Bounds())
 
 	if len(buf.Pix) != sw*sh*4 {
 		t.Fatalf("blit resized the destination: %d bytes, want %d", len(buf.Pix), sw*sh*4)
@@ -79,7 +79,7 @@ func TestBlitHandlesASceneSmallerThanTheSurface(t *testing.T) {
 
 	const sw, sh = 1280, 91
 	buf := &wayland.Buffer{Width: sw, Height: sh, Stride: sw * 4, Pix: make([]byte, sw*sh*4)}
-	blit(img, buf)
+	blit(img, buf, img.Bounds())
 
 	painted := false
 	for _, v := range buf.Pix {

@@ -2,6 +2,7 @@ package wayland
 
 import (
 	"fmt"
+	"image"
 	"os"
 )
 
@@ -384,6 +385,20 @@ func (s *Surface) WaitConfigure() error {
 // Attach binds a buffer to the surface, marks the whole surface damaged and
 // commits, which is the three-step sequence that puts pixels on screen.
 func (s *Surface) Attach(buf *Buffer) error {
+	return s.AttachDamaged(buf, image.Rect(0, 0, buf.Width, buf.Height))
+}
+
+// AttachDamaged is Attach with an explicit changed region, in buffer
+// coordinates. The compositor only has to re-read and re-composite what is
+// named here, and an overlay's pill is a few hundred pixels in the middle of
+// a surface as wide as the screen — claiming all of it every frame asks for
+// roughly ten times the work that actually changed.
+//
+// A damage rectangle that is too small leaves stale pixels on screen, so the
+// caller must name everything that changed since the LAST commit, not just
+// what it drew this time. overlay.SceneBounds gives the region for one scene;
+// the render loop unions it with the previous frame's.
+func (s *Surface) AttachDamaged(buf *Buffer, damage image.Rectangle) error {
 	buf.busy = true
 	// wl_surface.attach(buffer:object, x:int, y:int)
 	b := newBuilder(s.surface, 1)
@@ -394,14 +409,17 @@ func (s *Surface) Attach(buf *Buffer) error {
 		return err
 	}
 
-	// wl_surface.damage_buffer(x:int, y:int, width:int, height:int)
-	b = newBuilder(s.surface, 9)
-	b.putInt(0)
-	b.putInt(0)
-	b.putInt(int32(buf.Width))
-	b.putInt(int32(buf.Height))
-	if err := s.d.conn.send(b); err != nil {
-		return err
+	damage = damage.Intersect(image.Rect(0, 0, buf.Width, buf.Height))
+	if !damage.Empty() {
+		// wl_surface.damage_buffer(x:int, y:int, width:int, height:int)
+		b = newBuilder(s.surface, 9)
+		b.putInt(int32(damage.Min.X))
+		b.putInt(int32(damage.Min.Y))
+		b.putInt(int32(damage.Dx()))
+		b.putInt(int32(damage.Dy()))
+		if err := s.d.conn.send(b); err != nil {
+			return err
+		}
 	}
 	return s.Commit()
 }

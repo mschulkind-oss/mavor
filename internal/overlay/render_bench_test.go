@@ -13,6 +13,14 @@ import (
 // which is exactly what happened when the preview arrived and started costing
 // 40ms a frame.
 func TestFrameRendersWellInsideItsBudget(t *testing.T) {
+	if raceEnabled {
+		// The race detector instruments every memory access, so this would
+		// measure the instrumentation — about twenty times the real cost.
+		// TestFrameCostDoesNotScaleWithTheScreen still runs and is the
+		// stronger assertion anyway.
+		t.Skip("wall-clock frame timing is meaningless under the race detector")
+	}
+
 	const budget = 37500 * time.Microsecond
 
 	scene := Scene{

@@ -85,6 +85,13 @@ type wlState struct {
 	// three gives it room to hold one while another is being painted.
 	bufs   [3]*wayland.Buffer
 	bufIdx int
+	// bufDirty[i] is the region of bufs[i] that currently holds anything but
+	// transparent pixels. A shm buffer starts zeroed, so the zero rectangle
+	// is the truthful initial value. Refilling a buffer copies the union of
+	// its own dirty region and the new scene's — the first clears what it
+	// used to show, the second draws what it must show now — and everything
+	// outside that union is already transparent in both.
+	bufDirty [3]image.Rectangle
 
 	scene Scene
 	// maxPreview is the pixel cap applied to every scene before painting,
@@ -108,6 +115,13 @@ type wlState struct {
 	reqW, reqH int
 	bufW, bufH int
 	animate    bool
+	// lastDamage is the region the previous commit painted. A frame damages
+	// the union of that and its own: what the scene shrank away from has to
+	// be re-read by the compositor too, or the pixels it dropped stay on
+	// screen. The buffers rotate, so the union is against the last COMMIT
+	// rather than against the buffer's own previous contents — a wider
+	// claim, and the safe direction to err in.
+	lastDamage image.Rectangle
 }
 
 // pulsePeriod matches the CSS keyframes the GTK pill animated on.
@@ -384,6 +398,7 @@ func (o *WL) paint(st *wlState, start time.Time) error {
 				return err
 			}
 			st.bufs[i] = b
+			st.bufDirty[i] = image.Rectangle{} // a new shm buffer is zeroed
 		}
 		st.bufW, st.bufH = sw, sh
 	}
@@ -391,10 +406,11 @@ func (o *WL) paint(st *wlState, start time.Time) error {
 	// Take one the compositor has given back. Skipping a frame is a frame
 	// nobody misses; committing a buffer still in use loses the connection.
 	var buf *wayland.Buffer
+	bufIdx := -1
 	for range st.bufs {
 		st.bufIdx = (st.bufIdx + 1) % len(st.bufs)
 		if !st.bufs[st.bufIdx].Busy() {
-			buf = st.bufs[st.bufIdx]
+			buf, bufIdx = st.bufs[st.bufIdx], st.bufIdx
 			break
 		}
 	}
@@ -423,7 +439,11 @@ func (o *WL) paint(st *wlState, start time.Time) error {
 		o.debug("overlay: frame skipped", "err", err)
 		return nil
 	}
-	blit(st.img, buf)
+	bounds, err := SceneBounds(st.scene)
+	if err != nil {
+		return err
+	}
+	st.bufDirty[bufIdx] = fillBuffer(st.img, buf, bounds, st.bufDirty[bufIdx])
 	// Render measures and draws every glyph of the preview, so its cost
 	// grows with the text. This is the number to look at when the overlay
 	// feels like it has lost frames.
@@ -440,30 +460,56 @@ func (o *WL) paint(st *wlState, start time.Time) error {
 		"update_age_ms", ageMS,
 		"visual", st.scene.Visual)
 
-	if err := st.surface.Attach(buf); err != nil {
+	// The compositor compares against the LAST COMMIT, not against this
+	// buffer's history, so this union is over one frame rather than three.
+	if err := st.surface.AttachDamaged(buf, bounds.Union(st.lastDamage)); err != nil {
 		return err
 	}
+	st.lastDamage = bounds
 	st.mapped = true
 	return nil
 }
 
-// blit copies a Go RGBA image into a Wayland shared buffer. Go's RGBA is
-// already alpha-premultiplied, which is what ARGB8888 wants, so this is a
+// blit copies part of a Go RGBA image into a Wayland shared buffer. Go's RGBA
+// is already alpha-premultiplied, which is what ARGB8888 wants, so this is a
 // channel reorder rather than a conversion: the wire format is little-endian
 // ARGB, so bytes run B, G, R, A.
+//
+// Only `region` is touched. The pill occupies about a tenth of a screen-wide
+// surface, and rewriting the whole thing every frame cost roughly as much as
+// drawing it did — a full 1280x91 pass runs about 300µs against a 37.5ms
+// budget, all but a tenth of it copying transparent pixels onto transparent
+// pixels.
+//
+// The caller is responsible for region covering everything that differs
+// between this buffer's current contents and the scene, which is why each
+// buffer carries the region it was last filled with; see wlState.bufDirty.
 // The image and the buffer can disagree in size for one frame if the
 // compositor assigned something other than what was asked for, so the copy is
-// clipped to the overlap and the rest of the buffer cleared.
-func blit(img *image.RGBA, buf *wayland.Buffer) {
-	for i := range buf.Pix {
-		buf.Pix[i] = 0
+// clipped to the overlap.
+// fillBuffer makes buf hold exactly the scene in img, and returns the region
+// buf now has content in — which the caller must hand back on the next fill
+// of this same buffer.
+//
+// The correctness argument, in one line: outside `bounds` the scene is fully
+// transparent, and outside `wasDirty` the buffer already is, so writing their
+// union both draws what must appear and clears what this buffer still showed
+// from up to three frames ago. Everything outside the union is transparent in
+// the buffer and must stay that way.
+func fillBuffer(img *image.RGBA, buf *wayland.Buffer, bounds, wasDirty image.Rectangle) image.Rectangle {
+	blit(img, buf, bounds.Union(wasDirty))
+	return bounds
+}
+
+func blit(img *image.RGBA, buf *wayland.Buffer, region image.Rectangle) {
+	region = region.Intersect(img.Bounds()).Intersect(image.Rect(0, 0, buf.Width, buf.Height))
+	if region.Empty() {
+		return
 	}
-	h := min(img.Bounds().Dy(), buf.Height)
-	w := min(img.Bounds().Dx(), buf.Width)
-	for y := 0; y < h; y++ {
+	for y := region.Min.Y; y < region.Max.Y; y++ {
 		src := img.Pix[y*img.Stride:]
 		dst := buf.Pix[y*buf.Stride:]
-		for x := 0; x < w; x++ {
+		for x := region.Min.X; x < region.Max.X; x++ {
 			s := src[x*4:]
 			d := dst[x*4:]
 			d[0] = s[2] // B

@@ -24,12 +24,13 @@ func BenchmarkBlit(b *testing.B) {
 		img.Pix[i] = byte(i)
 	}
 	buf := &wayland.Buffer{Width: w, Height: h, Stride: w * 4, Pix: make([]byte, w*h*4)}
+	full := image.Rect(0, 0, w, h)
 
 	b.ReportAllocs()
 	b.SetBytes(int64(w * h * 4))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		blit(img, buf)
+		blit(img, buf, full)
 	}
 }
 
@@ -42,12 +43,13 @@ func BenchmarkBlitSmall(b *testing.B) {
 		img.Pix[i] = byte(i)
 	}
 	buf := &wayland.Buffer{Width: w, Height: h, Stride: w * 4, Pix: make([]byte, w*h*4)}
+	full := image.Rect(0, 0, w, h)
 
 	b.ReportAllocs()
 	b.SetBytes(int64(w * h * 4))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		blit(img, buf)
+		blit(img, buf, full)
 	}
 }
 
@@ -80,6 +82,43 @@ func BenchmarkFrameFull(b *testing.B) {
 		if err := RenderInto(img, scene); err != nil {
 			b.Fatal(err)
 		}
-		blit(img, buf)
+		blit(img, buf, image.Rect(0, 0, w, h))
+	}
+}
+
+// BenchmarkFrameSteadyState is what the render loop actually pays per tick:
+// RenderInto plus the partial fill of the shm buffer, with the buffer already
+// holding the previous frame — which is the case for every frame but the
+// first of a dictation.
+func BenchmarkFrameSteadyState(b *testing.B) {
+	const w, h = 1280, 91
+	scene := Scene{
+		Visual: Recording, Preview: "the quick brown fox jumps over the lazy dog",
+		MaxPreviewWidth: 640, SurfaceW: w, SurfaceH: h,
+		Levels: make([]float64, waveCols),
+	}
+	for i := range scene.Levels {
+		scene.Levels[i] = float64(i%10) / 10
+	}
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	buf := &wayland.Buffer{Width: w, Height: h, Stride: w * 4, Pix: make([]byte, w*h*4)}
+
+	bounds, err := SceneBounds(scene)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if err := RenderInto(img, scene); err != nil { // warm the caches
+		b.Fatal(err)
+	}
+	dirty := fillBuffer(img, buf, bounds, image.Rectangle{})
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		scene.Phase = float64(i%24) / 24
+		if err := RenderInto(img, scene); err != nil {
+			b.Fatal(err)
+		}
+		dirty = fillBuffer(img, buf, bounds, dirty)
 	}
 }
