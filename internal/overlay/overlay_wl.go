@@ -83,6 +83,9 @@ type wlState struct {
 	maxPreview int
 	// img is the scratch the scene is drawn into, kept between frames.
 	img *image.RGBA
+	// lastLevel is the most recent audio level, carried between frames so a
+	// frame that received no sample still scrolls at the same rate.
+	lastLevel float64
 	// sceneSetAt is when the newest update in the current scene was written
 	// by its producer, so a frame can report how long it waited.
 	sceneSetAt time.Time
@@ -202,10 +205,31 @@ func (o *WL) run(st *wlState) {
 		}
 		st.scene.Visual = d.visual
 		st.scene.Preview = d.preview
-		// One shift per sample, in order: the ring is a time history and a
-		// dropped sample is a missing column.
-		for _, lv := range d.levels {
-			shiftWave(st.levels, waveDisplayLevel(lv))
+		// EXACTLY ONE column per frame, whatever arrived.
+		//
+		// The recorder samples every 30 ms and this loop paints every
+		// 37.5 ms, so a frame receives one sample or two depending on how
+		// the two clocks line up. Shifting once per sample therefore
+		// advanced the ring by one column on some frames and two on others,
+		// which is the stutter — the ring was scrolling at the sampler's
+		// rate but being LOOKED at on the painter's.
+		//
+		// A waveform is read as motion, not as data: even spacing matters
+		// more than keeping every sample. One column per frame is uniform by
+		// construction. Where two samples arrive, the newer wins and the
+		// older is folded in as the peak, so a transient is not lost —
+		// silence between two loud samples is the one thing that would look
+		// wrong if the newest simply replaced the pair.
+		if n := len(d.levels); n > 0 {
+			lv := d.levels[n-1]
+			if n > 1 {
+				for _, older := range d.levels[:n-1] {
+					if older > lv {
+						lv = older
+					}
+				}
+			}
+			st.lastLevel = lv
 		}
 		st.scene.Levels = st.levels
 		st.sceneSetAt = d.setAt
@@ -226,6 +250,17 @@ func (o *WL) run(st *wlState) {
 			// A change is reason to paint even when nothing is animating:
 			// it is how a state the producer asked for reaches the screen.
 			changed := apply()
+
+			// Scroll here rather than in apply: apply returns early when
+			// nothing arrived, and a frame with no new sample must still
+			// advance the ring by one column or the motion is uneven again.
+			// This is the ONLY place the waveform scrolls, so its rate is
+			// the frame rate and nothing else.
+			if st.scene.Visual == Recording {
+				shiftWave(st.levels, waveDisplayLevel(st.lastLevel))
+				st.scene.Levels = st.levels
+				changed = true
+			}
 			if !st.animate && !changed {
 				continue
 			}
