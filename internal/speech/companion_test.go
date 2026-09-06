@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mschulkind-oss/mavor/internal/config"
+	"github.com/mschulkind-oss/mavor/internal/models"
 )
 
 // previewConfig is a config whose model cache is a directory this test owns,
@@ -39,7 +40,15 @@ func installWhisperModel(t *testing.T, cfg config.Config, name string) {
 
 func installSherpaModel(t *testing.T, cfg config.Config, name string) {
 	t.Helper()
-	dir := filepath.Join(cfg.Paths.Models, "sherpa", name)
+	// Under the directory `models pull` would use, which is not always the
+	// catalog name: fastconformer-streaming pins TargetDir to "parakeet" so
+	// the rename did not orphan existing downloads. A test that writes to the
+	// name instead would pass while the real thing cannot find its model.
+	dirName := name
+	if m, ok := models.Lookup(name); ok && m.TargetDir != "" {
+		dirName = m.TargetDir
+	}
+	dir := filepath.Join(cfg.Paths.Models, "sherpa", dirName)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", dir, err)
 	}

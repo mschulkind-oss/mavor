@@ -1,6 +1,9 @@
 package speech
 
 import (
+	"github.com/mschulkind-oss/mavor/internal/config"
+	"github.com/mschulkind-oss/mavor/internal/models"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -74,5 +77,49 @@ func TestIsWhisperModelFile(t *testing.T) {
 	}
 	if IsWhisperModelFile("ggml-partial.bin.part") {
 		t.Error("an in-progress download is not a whisper model file")
+	}
+}
+
+// A catalog entry may live on disk under a directory that is not its name.
+// fastconformer-streaming pins TargetDir to "parakeet" so renaming it did not
+// orphan an existing multi-hundred-megabyte download — and the resolver looked
+// models up by NAME, so it could not find what `models pull` had just written.
+// The model was unusable from a clean install, and the error said the model
+// was "not found" right after downloading it.
+func TestSherpaResolverFindsAModelUnderItsTargetDir(t *testing.T) {
+	var pinned string
+	for _, m := range models.Catalog {
+		if m.TargetDir != "" && m.TargetDir != m.Name {
+			pinned = m.Name
+			break
+		}
+	}
+	if pinned == "" {
+		t.Skip("no catalog entry pins a TargetDir different from its name")
+	}
+	entry, _ := models.Lookup(pinned)
+
+	root := t.TempDir()
+	dir := filepath.Join(root, "sherpa", entry.TargetDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"encoder.onnx", "tokens.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cfg := config.Default()
+	cfg.Model = pinned
+	cfg.Paths.Models = root
+
+	got, err := ResolveSherpaModelDir(cfg)
+	if err != nil {
+		t.Fatalf("ResolveSherpaModelDir(%q): %v — `models pull` writes to %q, so the resolver must look there",
+			pinned, err, entry.TargetDir)
+	}
+	if got != dir {
+		t.Errorf("resolved %q, want %q", got, dir)
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mschulkind-oss/mavor/internal/config"
+	"github.com/mschulkind-oss/mavor/internal/models"
 )
 
 // SherpaModelType represents supported Sherpa ONNX model architectures.
@@ -453,6 +454,17 @@ func (s *SherpaTranscriber) Transcribe(ctx context.Context, wavPath string) (str
 // 7. cfg.Paths.Models/sherpa/ (base) or cfg.Paths.Models
 func ResolveSherpaModelDir(cfg config.Config) (string, error) {
 	modelName := cfg.Model
+
+	// A catalog entry may live on disk under a different directory than its
+	// name. `fastconformer-streaming` pins TargetDir to "parakeet" so the
+	// rename did not orphan an existing multi-hundred-megabyte download —
+	// and looking the model up by NAME then failed to find what `models
+	// pull` had just written, so the model was unusable from a clean start.
+	// The download and the lookup have to agree, and TargetDir is what the
+	// download uses.
+	if m, ok := models.Lookup(modelName); ok && m.TargetDir != "" {
+		modelName = m.TargetDir
+	}
 
 	// 1. Check if modelName is an existing directory
 	if modelName != "" {

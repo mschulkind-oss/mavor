@@ -27,11 +27,24 @@ import (
 )
 
 // DefaultCompanionModel is the recognizer `preview.source = "auto"` loads
-// alongside a main model that cannot decode incrementally: the 20M-parameter
-// streaming zipformer, which is in the catalog for this purpose and is small
-// enough that painting an overlay with it is a fair trade (Decision Ledger
-// OQ-2). The larger `zipformer-streaming` stays selectable by name.
-const DefaultCompanionModel = "zipformer-streaming-20m"
+// alongside a main model that cannot decode incrementally.
+//
+// The NeMo streaming FastConformer, not the 20M zipformer that Decision Ledger
+// OQ-2 chose on size. Measured against the same fixture, the same 30 ms chunks
+// and the same decode loop:
+//
+//	zipformer-streaming-20m   first output 1.68s   "'S IS"   -> "'S IS IN THE PIT ..."
+//	fastconformer-streaming   first output 1.53s   "lux"     -> "luxe is in the pit ..."
+//
+// The zipformer loses the opening words and shouts; the FastConformer gets
+// them and is already lower case. That is the difference between a preview a
+// user trusts and one that makes them wonder what else is wrong, and it is
+// worth 429 MB against 121 MB — the model is a one-time download and the
+// preview is on screen every time anyone dictates.
+//
+// zipformer-streaming-20m stays selectable by name for anyone who wants the
+// smaller download.
+const DefaultCompanionModel = "fastconformer-streaming"
 
 // PreviewMode is which of the mechanisms above produces the preview text.
 type PreviewMode string
