@@ -1,7 +1,7 @@
 ---
 title: "Ongoing Work: mavor Roadmap"
 author: "Matthew Schulkind"
-date: 2026-09-03
+date: 2026-09-05
 status: in-review
 tags: [roadmap, benchmarks, doctor, models, gpu, sherpa, whisper, release]
 summary: "Living roadmap for the mavor dictation daemon: open decisions, the ready-to-build queue, and active workstreams across benchmarking, diagnostics, and the first public release."
@@ -9,7 +9,7 @@ summary: "Living roadmap for the mavor dictation daemon: open decisions, the rea
 
 # Ongoing Work: `mavor` Voice-to-Text Utility
 
-**Status:** 2 Needs Attention (💬), 4 Ready to Implement (📦), 4 Open Threads (🔒 2, 🛑 1, 🧊 1)
+**Status:** 2 Needs Attention (💬), 5 Ready to Implement (📦), 4 Open Threads (🔒 2, 🛑 1, 🧊 1)
 
 ---
 
@@ -62,6 +62,12 @@ still `in-review` — which derives vocabulary from the focused window via
 config key wired to `--prompt` is a small change that closes the gap for every
 whisper model. The window-context half is a much bigger build and can follow if
 the static version proves useful.
+
+[`design/configuration-surface.md`](design/configuration-surface.md) §7 designs
+that key as a runtime-neutral `[vocabulary]` table — a prompt on whisper, a
+hotwords file on the transducers, and nothing on the models that cannot use one
+— and asks in its OQ-4 whether to land it before the window-context design
+settles.
 
 ---
 
@@ -224,6 +230,28 @@ not retired but withdrawn. See the note on fabricated reports below.
 What is left in `docs/design/`: `active-window-context-and-vocabulary-prompting.md`,
 which is `in-review` and unbuilt, and `next-gen-runtimes-executorch-iree.md`,
 which is frozen. Both are proposals, which is what that tree is for.
+
+### 📦 7. The config file has 29 keys and three of them are wrong
+
+[`design/configuration-surface.md`](design/configuration-surface.md) — DESIGN,
+2026-09-05, five open questions.
+
+Three findings worth reading even if the redesign is rejected. `gpu_layers`
+passes `-ngl` to whisper.cpp, which does not accept it, so **any non-zero value
+breaks every transcription** — and `doctor` currently recommends setting it.
+`device` is written into a struct field nothing reads. And `mavor config init`
+scaffolds a file that disagrees with the compiled defaults on `mode` and
+`duck_audio`, so a user who runs it gets different behavior from one who does
+not.
+
+The design proposes 20 keys grouped into tables, separates *which model* from
+*where its runtime runs* (the `engine` enum welds them together today), prefixes
+every whisper catalog name with its family, and makes a small streaming model
+the default source of the live preview instead of re-running the main model at
+every pause.
+
+The first two steps — fixing `gpu_layers`, and the catalog rename — are
+self-contained and worth landing on their own.
 
 ---
 
