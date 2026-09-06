@@ -251,7 +251,12 @@ func (s *SherpaTranscriber) FeedChunk(ctx context.Context, chunk []byte) (string
 	if sr, ok := rec.(SherpaStreamRecognizer); ok {
 		return sr.FeedChunk(ctx, chunk)
 	}
-	return "", nil
+	// Not a silent "": a SherpaTranscriber satisfies StreamTranscriber
+	// whatever it loaded, so an offline recognizer reached here would feed
+	// audio into nothing and return empty text forever, with no error and
+	// nothing in the log. That is indistinguishable from a working preview
+	// that has not spoken yet, and it is the reason this returns an error.
+	return "", fmt.Errorf("speech: model %q cannot decode while you speak — it loaded an offline recognizer", s.ModelDir)
 }
 
 // StopStream concludes the active streaming session and returns any final accumulated text.

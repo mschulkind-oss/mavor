@@ -349,32 +349,63 @@ func (d *Daemon) runStreamPreview(ctx context.Context, gen uint64, src speech.St
 		return
 	}
 
+	cr, ok := d.recorder.(audio.ChunkReader)
+	if !ok {
+		// The recorder cannot hand out audio as it arrives, so a streaming
+		// preview has nothing to read. Said once, loudly, rather than
+		// discovered as a preview that never appears.
+		d.logger.Warn("streaming: recorder cannot supply live audio — no preview will appear",
+			"recorder", fmt.Sprintf("%T", d.recorder))
+		return
+	}
+
 	go func() {
 		ticker := time.NewTicker(30 * time.Millisecond)
 		defer ticker.Stop()
+
+		// A preview that silently never appears is the failure this whole
+		// path is prone to: every way of getting nothing — no audio, an
+		// offline recognizer, a model that needs more speech — looks
+		// identical from the outside. So count what happens and say so once.
+		var fed, gotText int
+		var warned bool
+		began := time.Now()
 		for {
 			select {
 			case <-ctx.Done():
+				if fed > 0 && gotText == 0 {
+					d.logger.Warn("streaming: fed audio to the preview model but it returned no text",
+						"chunks", fed, "preview_mode", d.previewMode)
+				}
 				return
 			case <-ticker.C:
-				cr, ok := d.recorder.(audio.ChunkReader)
-				if !ok {
-					continue
-				}
 				chunk, err := cr.ReadChunk()
 				if err != nil {
 					d.logger.Debug("streaming: read chunk failed", "err", err)
 					continue
 				}
 				if len(chunk) == 0 {
+					// Two seconds of ticks with no bytes means the
+					// recording is not growing, which is a broken preview
+					// however good the model is. Checked in this goroutine
+					// rather than a timer, so `fed` needs no lock.
+					if !warned && fed == 0 && time.Since(began) > 2*time.Second {
+						warned = true
+						d.logger.Warn("streaming: no audio has reached the preview in 2s — the recording is not growing")
+					}
 					continue
 				}
+				fed++
 				partial, err := src.FeedChunk(ctx, chunk)
 				if err != nil {
 					d.logger.Warn("streaming: feed chunk failed", "err", err)
 					continue
 				}
 				if partial != "" {
+					if gotText == 0 {
+						d.logger.Info("streaming: preview is producing text", "after_chunks", fed)
+					}
+					gotText++
 					d.setPreview(ctx, gen, partial)
 				}
 			}
