@@ -157,7 +157,14 @@ func (h *Harness) startDBus() {
 
 func (h *Harness) startSway(opts Options) {
 	confPath := filepath.Join(h.XDGRuntime, "sway.conf")
+	// The backdrop is set HERE, in the config sway reads at startup, rather
+	// than by swaymsg afterwards. Issued as a command it needs swaybg to be
+	// running and reachable, and when that quietly does not happen the
+	// desktop keeps sway's own default of #3F3F3F — dark enough to look
+	// deliberate, bright enough that every "is anything drawn" assertion in
+	// this package counts the whole screen. In the config it is sway's job.
 	body := fmt.Sprintf("output HEADLESS-1 mode %dx%d\n", opts.Width, opts.Height)
+	body += "output HEADLESS-1 bg #000000 solid_color\n"
 	if err := os.WriteFile(confPath, []byte(body), 0o644); err != nil {
 		h.t.Fatal(err)
 	}
@@ -223,6 +230,9 @@ func (h *Harness) configureOutput(w, hpx int) {
 	// Fixing the background is better than teaching each test to subtract
 	// one: it makes the two environments produce the same pixels, which is
 	// the only reason to trust a screenshot taken in either.
+	// Re-issued for the same reason the mode is: a headless output is
+	// sometimes reconfigured after the compositor comes up. Harmless when the
+	// config already took.
 	h.swaymsg("output HEADLESS-1 bg #000000 solid_color")
 	h.requireDarkBackdrop()
 }
