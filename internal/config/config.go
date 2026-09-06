@@ -2,47 +2,114 @@
 // $XDG_CONFIG_HOME/mavor/config.toml. A missing file is not an error — the
 // daemon falls back to Default() so first-run users get sane behavior
 // without having to write a config file.
+//
+// The schema is one top-level key, `model`, plus six tables. It is described
+// in full, with the reasoning, in docs/design/configuration-surface.md §8;
+// the scaffolded `mavor config init` file is generated from Default() so the
+// two cannot disagree.
 package config
 
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 
 	toml "github.com/pelletier/go-toml/v2"
 )
 
+// Default values that more than one place needs to state. Every one of them
+// is also the value Default() carries; these constants exist so a clamp and
+// the default cannot drift apart.
+const (
+	DefaultModel       = "whisper-base.en"
+	DefaultPauseMS     = 450
+	DefaultMinPhraseMS = 600
+	DefaultTopMargin   = 8
+	DefaultDuckVolume  = "0%"
+	DefaultBoost       = 1.5
+)
+
+// Config is the whole configuration. Field order follows the scaffolded file.
 type Config struct {
-	// Mode controls the live preview while you speak. Text is inserted once
-	// either way — when transcription completes — because partial results are
-	// provisional and inserting them would type the same words twice.
-	// - "streaming" (default): show partial results in the overlay preview.
-	// - "batch": no live preview; the overlay shows only the recording state.
-	Mode string `toml:"mode"`
+	// Model is a catalog name, e.g. "whisper-base.en" or "parakeet-tdt-0.6b",
+	// as `mavor models list` prints them. It is not a filename: a whisper
+	// model keeps the name upstream serves it under, and
+	// speech.WhisperModelPath maps between the two.
+	//
+	// The model decides the runtime — whisper models run on whisper.cpp,
+	// everything else on ONNX Runtime through sherpa-onnx — which is why
+	// there is no engine key. See internal/models.RuntimeFor.
+	Model string `toml:"model"`
 
-	// Preset specifies the quality/speed balance: "balanced" (default), "accurate", or "fast".
-	// - "balanced": Whisper Base (100% accuracy, ~1.2s) or Parakeet-TDT (80ms streaming).
-	// - "accurate": Whisper Large-v3 Turbo (maximum vocabulary nuance).
-	// - "fast": Whisper Tiny (ultra-light, sub-0.7s) or Moonshine.
-	Preset string `toml:"preset"`
+	Preview    Preview    `toml:"preview"`
+	Ducking    Ducking    `toml:"ducking"`
+	Vocabulary Vocabulary `toml:"vocabulary"`
+	Overlay    Overlay    `toml:"overlay"`
+	Advanced   Advanced   `toml:"advanced"`
+	Paths      Paths      `toml:"paths"`
+}
 
-	// StreamingStrategy specifies the streaming implementation: "auto" (default), "vad_batch", or "transducer".
-	// - "auto": Uses Parakeet transducer if Sherpa is present; otherwise VAD-segmented batch.
-	// - "vad_batch": Slices phrases on natural speech pauses and fires warm batch inference.
-	// - "transducer": Causal 80ms chunk streaming with Sherpa-ONNX.
-	StreamingStrategy string `toml:"streaming_strategy"`
+// Preview configures the text shown in the overlay while you speak. It is
+// never typed: the final transcript always comes from Model, produced once,
+// when you release the key.
+type Preview struct {
+	// Enabled turns the live preview on. With it off the overlay shows only
+	// that mavor is recording.
+	Enabled bool `toml:"enabled"`
 
-	// SilenceThresholdMS specifies the pause duration in ms before slicing audio in VAD-batch mode.
-	// Defaults to 450 ms.
-	SilenceThresholdMS int `toml:"silence_threshold_ms"`
+	// Source is where the preview text comes from: "auto", "phrases", or the
+	// name of a model to run alongside Model as the preview source.
+	Source string `toml:"source"`
 
-	// MinPhraseMS specifies the minimum speech duration before slicing audio in VAD-batch mode.
-	// Defaults to 600 ms.
+	// PauseMS is how long a pause ends a phrase, in milliseconds. "phrases"
+	// only.
+	PauseMS int `toml:"pause_ms"`
+
+	// MinPhraseMS is how much speech a phrase needs before a pause can end
+	// it, in milliseconds. "phrases" only.
 	MinPhraseMS int `toml:"min_phrase_ms"`
+}
 
+// Ducking lowers other audio while mavor is recording.
+type Ducking struct {
+	Enabled bool `toml:"enabled"`
+
+	// Volume is what other audio is set to: a percentage ("0%", "25%") or a
+	// fraction ("0", "0.25"). "0%" mutes.
+	Volume string `toml:"volume"`
+
+	// Apps names the application or media streams to duck. Empty means every
+	// stream, which is the default.
+	Apps []string `toml:"apps"`
+
+	// Sink is a specific output to act on instead of the default one.
+	Sink string `toml:"sink"`
+}
+
+// Vocabulary is the words the model gets wrong: names, jargon, commands.
+// How it reaches a model depends on the model — a prompt for whisper, a
+// hotwords file for a transducer, nothing at all for the rest — which is why
+// the table is stated in runtime-neutral terms.
+type Vocabulary struct {
+	Words []string `toml:"words"`
+
+	// File is a path to a file with one phrase per line, unioned with Words.
+	File string `toml:"file"`
+
+	// Boost is the per-token score added while decoding whenever a
+	// hypothesis extends a listed phrase. Transducer models only. 1.5 to 3.0
+	// is the useful range.
+	Boost float32 `toml:"boost"`
+}
+
+// Overlay configures the on-screen HUD.
+type Overlay struct {
 	// TopMargin is the gap (px) between the overlay and the top of the
 	// usable area — which is below Waybar, not the screen edge.
 	//
@@ -52,176 +119,142 @@ type Config struct {
 	// the compositor; mavor never learns it and does not need to. A bar of any
 	// height, or no bar at all, is handled without changing this value.
 	TopMargin int `toml:"top_margin"`
+}
 
-	// Model is a catalog name, e.g. "whisper-base.en" or "whisper-tiny.en".
-	// It is not the filename: the file on disk keeps the name upstream
-	// serves it under, and speech.WhisperModelPath maps between the two.
-	Model string `toml:"model"`
+// Advanced holds the settings mavor picks for you. A key belongs here only if
+// mavor cannot compute the right value — see the design's principle P1.
+type Advanced struct {
+	// Placement is where the model's runtime executes: "auto", or
+	// "subprocess" to spawn a fresh whisper-cli per utterance. The other
+	// placements are derived from the model and cannot be asked for. See
+	// internal/models.Select.
+	Placement string `toml:"placement"`
 
-	// ModelDir is where downloaded model files live.
-	ModelDir string `toml:"model_dir"`
+	// Server is the URL of a whisper server you run yourself. Setting it
+	// makes Placement irrelevant: audio goes to that URL.
+	Server string `toml:"server"`
 
-	// Socket is the daemon's IPC socket path.
-	Socket string `toml:"socket"`
-
-	// GPU controls whether whisper.cpp may use a GPU: "auto" (default) or
-	// "off". There is no layer count to set — whisper.cpp uses whatever GPU
-	// backend its build loaded, for the whole model or not at all, and the
-	// only control it offers is -ng/--no-gpu, which "off" maps to. An empty
-	// value means "auto".
-	//
-	// This applies to whisper models only. sherpa models run on the CPU
-	// whatever this says, because the ONNX Runtime vendored by the Go binding
-	// is a CPU-only build. `mavor doctor` reports which backend actually
-	// loaded, which is the only reliable answer.
-	GPU string `toml:"gpu"`
-
-	// Threads is the number of CPU threads to use for inference (-t). Defaults to 4.
+	// Threads is the number of CPU threads inference may use. It defaults to
+	// this machine's physical core count, where the measured thread-scaling
+	// curve flattens.
 	Threads int `toml:"threads"`
 
-	// Engine specifies the speech-to-text inference engine: "cli", "server",
-	// or "sherpa".
-	// Defaults to "cli".
-	Engine string `toml:"engine"`
-
-	// ServerSocket is the Unix domain socket path or HTTP URL for the warm server.
-	// Defaults to "$XDG_RUNTIME_DIR/mavor-server.sock".
-	ServerSocket string `toml:"server_socket"`
-
-	// DuckAudio enables automatic audio playback ducking during recording.
-	// Defaults to false so tests and standard setups never alter host audio unexpectedly.
-	DuckAudio bool `toml:"duck_audio"`
-
-	// LogFile specifies the daemon log destination. Defaults to ~/.local/state/mavor/daemon.log.
-	LogFile string `toml:"log_file"`
-
-	// DuckVolume is the volume background media is set to while recording,
-	// as a percentage ("0%", "25%") or a fraction ("0", "0.25").
-	// Defaults to "0%" — muted. Set a higher value to merely lower the volume
-	// instead of silencing it.
-	DuckVolume string `toml:"duck_volume"`
-
-	// DuckSink specifies the target audio sink name or ID instead of the default sink.
-	// Defaults to "" (default sink).
-	DuckSink string `toml:"duck_sink"`
-
-	// DuckStreams lists application names to duck (e.g. ["spotify", "firefox", "vlc"]).
-	// When non-empty, only sink-inputs matching these application/media names are ducked,
-	// preserving other streams (e.g. Discord, Zoom, voice calls).
-	DuckStreams []string `toml:"duck_streams"`
-
-	// SherpaModel is the model identifier or subfolder name under ModelDir/sherpa.
-	// Examples: "parakeet-tdt-0.6b", "canary-1b", "moonshine-tiny",
-	// "sensevoice-small", "zipformer-streaming" — catalog names, as
-	// `mavor models list` prints them.
-	SherpaModel string `toml:"sherpa_model"`
-
-	// SherpaModelType specifies the model architecture:
-	// - "auto": Inferred automatically from model directory contents (default).
-	// - "transducer": Parakeet-TDT, FastConformer, Zipformer Transducer.
-	// - "moonshine": Useful Sensors Moonshine Tiny/Base (v1/v2).
-	// - "sensevoice": Alibaba SenseVoice-Small multilingual.
-	// - "paraformer": Alibaba FunASR Paraformer, Canary enc-dec.
-	// - "zipformer_ctc": Offline Zipformer CTC.
-	// - "nemo_ctc": NVIDIA NeMo CTC / Parakeet CTC.
-	// - "whisper": Whisper ONNX models.
-	SherpaModelType string `toml:"sherpa_model_type"`
-
-	// SherpaTokens is the path to tokens.txt or BPE vocab file.
-	SherpaTokens string `toml:"sherpa_tokens"`
-
-	// SherpaEncoder is the path to the encoder ONNX model file.
-	SherpaEncoder string `toml:"sherpa_encoder"`
-
-	// SherpaDecoder is the path to the decoder ONNX model file.
-	SherpaDecoder string `toml:"sherpa_decoder"`
-
-	// SherpaJoiner is the path to the joiner ONNX model file (for transducer models).
-	SherpaJoiner string `toml:"sherpa_joiner"`
-
-	// SherpaProvider specifies the ONNX Runtime execution provider: "cpu",
-	// "cuda", or "coreml". There is no Vulkan execution provider in ONNX
-	// Runtime. Note that the ONNX Runtime bundled with the sherpa-onnx Go
-	// binding is a CPU-only build with no provider libraries, so "cuda"
-	// needs a runtime built against CUDA to have any effect —
-	// `mavor doctor` reports which one you have. Defaults to "cpu".
-	SherpaProvider string `toml:"sherpa_provider"`
-
-	// SherpaHotwordsFile is an optional path to a hotwords file for shallow fusion boosting.
-	SherpaHotwordsFile string `toml:"sherpa_hotwords_file"`
-
-	// SherpaHotwordsScore specifies the hotword boost score bonus.
-	// Defaults to 1.5 when hotwords are used.
-	SherpaHotwordsScore float32 `toml:"sherpa_hotwords_score"`
-
-	// SherpaDecodingMethod specifies the decoding algorithm: "greedy_search" (default) or "modified_beam_search".
-	SherpaDecodingMethod string `toml:"sherpa_decoding_method"`
+	// GPU is "auto" or "off", and applies to whisper models only.
+	// whisper.cpp uses whatever GPU backend its build loaded, for the whole
+	// model or not at all, and the only control it offers is -ng/--no-gpu,
+	// which "off" maps to. There is no layer count to set.
+	//
+	// sherpa models run on the CPU whatever this says, because the ONNX
+	// Runtime vendored by the Go binding is a CPU-only build. `mavor doctor`
+	// reports which backend actually loaded, which is the only reliable
+	// answer.
+	GPU string `toml:"gpu"`
 }
 
+// Paths is where mavor keeps its files.
+type Paths struct {
+	// Models is the model cache directory.
+	Models string `toml:"models"`
+	// Log is the daemon log destination.
+	Log string `toml:"log"`
+	// Socket is the daemon's IPC socket path.
+	Socket string `toml:"socket"`
+}
+
+// Default is the configuration a machine with no config file runs. It is the
+// single source of the defaults: `mavor config init` scaffolds its file from
+// this value rather than from a second literal, which is what stopped the two
+// drifting apart.
 func Default() Config {
 	return Config{
-		Mode:                 "streaming",
-		Preset:               "balanced",
-		StreamingStrategy:    "auto",
-		SilenceThresholdMS:   450,
-		MinPhraseMS:          600,
-		TopMargin:            8,
-		Model:                "whisper-base.en",
-		ModelDir:             defaultModelDir(),
-		Socket:               defaultSocket(),
-		GPU:                  "auto",
-		Threads:              4,
-		Engine:               "cli",
-		LogFile:              defaultLogFile(),
-		ServerSocket:         defaultServerSocket(),
-		DuckAudio:            false,
-		DuckVolume:           "0%",
-		DuckSink:             "",
-		DuckStreams:          nil,
-		SherpaModel:          "",
-		SherpaModelType:      "auto",
-		SherpaTokens:         "",
-		SherpaEncoder:        "",
-		SherpaDecoder:        "",
-		SherpaJoiner:         "",
-		SherpaProvider:       "cpu",
-		SherpaHotwordsFile:   "",
-		SherpaHotwordsScore:  1.5,
-		SherpaDecodingMethod: "greedy_search",
+		Model: DefaultModel,
+		Preview: Preview{
+			Enabled:     true,
+			Source:      "auto",
+			PauseMS:     DefaultPauseMS,
+			MinPhraseMS: DefaultMinPhraseMS,
+		},
+		Ducking: Ducking{
+			Enabled: false,
+			Volume:  DefaultDuckVolume,
+		},
+		Vocabulary: Vocabulary{
+			Boost: DefaultBoost,
+		},
+		Overlay: Overlay{
+			TopMargin: DefaultTopMargin,
+		},
+		Advanced: Advanced{
+			Placement: "auto",
+			Threads:   PhysicalCores(),
+			GPU:       "auto",
+		},
+		Paths: Paths{
+			Models: defaultModelDir(),
+			Log:    defaultLogFile(),
+			Socket: defaultSocket(),
+		},
 	}
 }
 
-// Resolve applies smart defaults based on Mode and Preset.
+// Resolve fills in every value a config file left empty or out of range. It is
+// idempotent, and running it on a Config that came from Default() changes
+// nothing — which is what makes the scaffolded-template test meaningful.
+//
+// The clamps here are the §10.1 table of the design: a degenerate value takes
+// the default rather than being rejected, because none of them is worth
+// refusing to start over.
 func (c *Config) Resolve() {
-	if c.Mode == "" {
-		c.Mode = "streaming"
-	}
-	if c.Preset == "" {
-		c.Preset = "balanced"
-	}
-	if c.StreamingStrategy == "" {
-		c.StreamingStrategy = "auto"
-	}
-	if c.SilenceThresholdMS <= 0 {
-		c.SilenceThresholdMS = 450
-	}
-	if c.MinPhraseMS <= 0 {
-		c.MinPhraseMS = 600
-	}
-	if c.GPU == "" {
-		c.GPU = "auto"
+	if c.Model == "" {
+		c.Model = DefaultModel
 	}
 
-	// Apply Preset to Model if model was not explicitly overridden
-	if c.Model == "" || c.Model == "whisper-base.en" {
-		switch c.Preset {
-		case "accurate":
-			c.Model = "whisper-large-v3-turbo"
-		case "fast":
-			c.Model = "whisper-tiny.en"
-		case "balanced":
-			c.Model = "whisper-base.en"
-		}
+	if c.Preview.Source == "" {
+		c.Preview.Source = "auto"
+	}
+	if c.Preview.PauseMS <= 0 {
+		c.Preview.PauseMS = DefaultPauseMS
+	}
+	if c.Preview.MinPhraseMS <= 0 {
+		c.Preview.MinPhraseMS = DefaultMinPhraseMS
+	}
+
+	if c.Ducking.Volume == "" {
+		c.Ducking.Volume = DefaultDuckVolume
+	}
+	if len(c.Ducking.Apps) == 0 {
+		c.Ducking.Apps = nil
+	}
+
+	if len(c.Vocabulary.Words) == 0 {
+		c.Vocabulary.Words = nil
+	}
+	if c.Vocabulary.Boost <= 0 {
+		c.Vocabulary.Boost = DefaultBoost
+	}
+
+	if c.Overlay.TopMargin < 0 {
+		c.Overlay.TopMargin = 0
+	}
+
+	if c.Advanced.Placement == "" {
+		c.Advanced.Placement = "auto"
+	}
+	if c.Advanced.GPU == "" {
+		c.Advanced.GPU = "auto"
+	}
+	if c.Advanced.Threads <= 0 {
+		c.Advanced.Threads = PhysicalCores()
+	}
+
+	if c.Paths.Models == "" {
+		c.Paths.Models = defaultModelDir()
+	}
+	if c.Paths.Log == "" {
+		c.Paths.Log = defaultLogFile()
+	}
+	if c.Paths.Socket == "" {
+		c.Paths.Socket = defaultSocket()
 	}
 }
 
@@ -229,7 +262,7 @@ func (c *Config) Resolve() {
 // than "off" — including the empty value a Config literal starts with — means
 // "auto", so a caller that never ran Resolve still gets the default.
 func (c Config) GPUOff() bool {
-	return strings.EqualFold(strings.TrimSpace(c.GPU), "off")
+	return strings.EqualFold(strings.TrimSpace(c.Advanced.GPU), "off")
 }
 
 // Path returns the canonical config file location. Honors XDG_CONFIG_HOME.
@@ -252,34 +285,201 @@ func ExpandPath(p string) string {
 	return p
 }
 
-// Load reads from path. If path is empty, Path() is used. A missing file is
-// treated as "no overrides" and Default() is returned without error.
-func Load(path string) (Config, error) {
+// File is what Load learned about a config file besides the values in it. The
+// extra facts exist for `mavor doctor`, which reports as an error what the
+// daemon only warns about.
+type File struct {
+	Config
+
+	// Path is the file that was read, whether or not it exists.
+	Path string
+
+	// Exists reports whether there was a file at all. A missing file is not
+	// an error: every default applies.
+	Exists bool
+
+	// UnknownKeys are dotted key paths present in the file that the schema
+	// does not have. They are warned about and otherwise ignored — the
+	// schema was rewritten without compatibility aliases, so an old file's
+	// keys land here.
+	UnknownKeys []string
+
+	// KnownKeys counts the keys in the file that the schema does have.
+	KnownKeys int
+}
+
+// SchemaLooksStale reports a file whose every key is unknown, which is what a
+// config written against the pre-rewrite schema looks like. `mavor doctor`
+// says so plainly and points at `mavor config init --force`, because such a
+// file silently contributes nothing.
+func (f File) SchemaLooksStale() bool {
+	return f.Exists && f.KnownKeys == 0 && len(f.UnknownKeys) > 0
+}
+
+// LoadFile reads path and reports what it found. If path is empty, Path() is
+// used. A missing file is treated as "no overrides" and Default() is returned
+// without error; an unknown key is recorded rather than refused.
+func LoadFile(path string) (File, error) {
 	if path == "" {
 		path = Path()
 	}
-	cfg := Default()
+	out := File{Config: Default(), Path: path}
+
 	body, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			cfg.Resolve()
-			return cfg, nil
+			out.Config.Resolve()
+			return out, nil
 		}
-		return cfg, fmt.Errorf("config: read %s: %w", path, err)
+		return out, fmt.Errorf("config: read %s: %w", path, err)
 	}
-	if err := toml.Unmarshal(body, &cfg); err != nil {
-		return cfg, fmt.Errorf("config: parse %s: %w", path, err)
+	out.Exists = true
+
+	dec := toml.NewDecoder(strings.NewReader(string(body)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&out.Config); err != nil {
+		var strict *toml.StrictMissingError
+		if !errors.As(err, &strict) {
+			return out, fmt.Errorf("config: parse %s: %w", path, err)
+		}
+		for _, e := range strict.Errors {
+			out.UnknownKeys = append(out.UnknownKeys, strings.Join(e.Key(), "."))
+		}
+		sort.Strings(out.UnknownKeys)
 	}
-	cfg.ModelDir = ExpandPath(cfg.ModelDir)
-	cfg.Socket = ExpandPath(cfg.Socket)
-	cfg.ServerSocket = ExpandPath(cfg.ServerSocket)
-	cfg.SherpaTokens = ExpandPath(cfg.SherpaTokens)
-	cfg.SherpaEncoder = ExpandPath(cfg.SherpaEncoder)
-	cfg.SherpaDecoder = ExpandPath(cfg.SherpaDecoder)
-	cfg.SherpaJoiner = ExpandPath(cfg.SherpaJoiner)
-	cfg.SherpaHotwordsFile = ExpandPath(cfg.SherpaHotwordsFile)
-	cfg.Resolve()
-	return cfg, nil
+	out.KnownKeys = countKnownKeys(body, out.UnknownKeys)
+
+	out.Config.Paths.Models = ExpandPath(out.Config.Paths.Models)
+	out.Config.Paths.Log = ExpandPath(out.Config.Paths.Log)
+	out.Config.Paths.Socket = ExpandPath(out.Config.Paths.Socket)
+	out.Config.Vocabulary.File = ExpandPath(out.Config.Vocabulary.File)
+	out.Config.Resolve()
+	return out, nil
+}
+
+// Load reads a config file and returns just the values. It is what every
+// command that only wants the settings calls.
+//
+// It says nothing about an unknown key. Warning is the caller's to do, once,
+// somewhere a person will read it: the daemon logs the warnings at start (see
+// File.LogWarnings) and `mavor doctor` reports them as an error. A `Load`
+// that warned would repeat itself for every check doctor runs and for every
+// `mavor status`.
+func Load(path string) (Config, error) {
+	f, err := LoadFile(path)
+	return f.Config, err
+}
+
+// LogWarnings writes one warning per key the schema does not have, and one
+// more for a file that is entirely stale. The daemon calls it at start, after
+// its logger exists, because a key that is silently ignored is the failure
+// mode this schema rewrite is most likely to produce.
+func (f File) LogWarnings(logger *slog.Logger) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	for _, k := range f.UnknownKeys {
+		logger.Warn("config: unknown key, ignored", "key", k, "file", f.Path)
+	}
+	if f.SchemaLooksStale() {
+		logger.Warn("config: no key in this file is part of the current schema — it predates the rewrite; `mavor config init --force` scaffolds the new one",
+			"file", f.Path)
+	}
+}
+
+// countKnownKeys counts the leaf keys in a TOML document that the schema
+// recognizes: every leaf, minus the ones reported unknown and the ones nested
+// inside an unknown table. It exists so `doctor` can tell a file with one
+// stale key from a file that is entirely stale.
+func countKnownKeys(body []byte, unknown []string) int {
+	var doc map[string]any
+	if err := toml.Unmarshal(body, &doc); err != nil {
+		return 0
+	}
+	bad := make(map[string]bool, len(unknown))
+	for _, u := range unknown {
+		bad[u] = true
+	}
+	known := 0
+	for _, leaf := range leafKeys(doc, "") {
+		if isUnknownKey(leaf, bad) {
+			continue
+		}
+		known++
+	}
+	return known
+}
+
+func isUnknownKey(leaf string, bad map[string]bool) bool {
+	for prefix := leaf; prefix != ""; {
+		if bad[prefix] {
+			return true
+		}
+		i := strings.LastIndex(prefix, ".")
+		if i < 0 {
+			break
+		}
+		prefix = prefix[:i]
+	}
+	return false
+}
+
+// leafKeys flattens a decoded TOML document to dotted paths, one per value
+// that is not itself a table. Sub-tables are traversed; arrays are leaves,
+// because that is how the schema treats them.
+func leafKeys(doc map[string]any, prefix string) []string {
+	var out []string
+	for k, v := range doc {
+		path := k
+		if prefix != "" {
+			path = prefix + "." + k
+		}
+		if sub, ok := v.(map[string]any); ok {
+			out = append(out, leafKeys(sub, path)...)
+			continue
+		}
+		out = append(out, path)
+	}
+	return out
+}
+
+// PhysicalCores reports how many physical CPU cores this machine has, which
+// is where the measured thread-scaling curve flattens: on a 6-core/12-thread
+// machine, 6 threads was best or within noise for every model and 8 bought
+// nothing.
+//
+// Linux publishes the topology under /sys, one core_id per logical CPU, so
+// counting the distinct values counts the cores behind the hyperthreads. A
+// kernel that does not publish it — or any other OS — falls back to the
+// logical count, which is never zero.
+func PhysicalCores() int {
+	if n := countCoreIDs(); n > 0 {
+		return n
+	}
+	if n := runtime.NumCPU(); n > 0 {
+		return n
+	}
+	return 1
+}
+
+// cpuTopologyRoot is /sys/devices/system/cpu, as a variable so a test can
+// point it at a directory it built.
+var cpuTopologyRoot = "/sys/devices/system/cpu"
+
+func countCoreIDs() int {
+	matches, err := filepath.Glob(filepath.Join(cpuTopologyRoot, "cpu[0-9]*", "topology", "core_id"))
+	if err != nil {
+		return 0
+	}
+	seen := map[string]bool{}
+	for _, m := range matches {
+		body, err := os.ReadFile(m)
+		if err != nil {
+			continue
+		}
+		seen[strings.TrimSpace(string(body))] = true
+	}
+	return len(seen)
 }
 
 // XDGDataHome returns the canonical data directory, honoring XDG_DATA_HOME.
@@ -331,11 +531,6 @@ func DefaultSocket() string {
 	return defaultSocket()
 }
 
-// DefaultServerSocket returns the default warm server socket path ($XDG_RUNTIME_DIR/mavor-server.sock).
-func DefaultServerSocket() string {
-	return defaultServerSocket()
-}
-
 func homeDir() string {
 	if h, err := os.UserHomeDir(); err == nil {
 		return h
@@ -349,10 +544,6 @@ func defaultModelDir() string {
 
 func defaultSocket() string {
 	return filepath.Join(xdgRuntimeDir(), "mavor.sock")
-}
-
-func defaultServerSocket() string {
-	return filepath.Join(xdgRuntimeDir(), "mavor-server.sock")
 }
 
 func defaultLogFile() string {

@@ -39,7 +39,6 @@ type workerRequest struct {
 	ModelDir  string `json:"model_dir"`
 	Audio     string `json:"audio"`
 	Threads   int    `json:"threads"`
-	Provider  string `json:"provider"`
 	Streaming bool   `json:"streaming"`
 }
 
@@ -67,7 +66,7 @@ func runWorkerIfRequested() bool {
 		return true
 	}
 
-	s := sherpaRunner{modelDir: req.ModelDir, threads: req.Threads, provider: req.Provider}
+	s := sherpaRunner{modelDir: req.ModelDir, threads: req.Threads}
 	ctx := context.Background()
 
 	if req.Streaming {

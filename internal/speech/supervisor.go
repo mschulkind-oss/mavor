@@ -28,7 +28,11 @@ type SupervisorConfig struct {
 	// ModelPath is the absolute path to the model binary.
 	ModelPath string
 
-	// ServerSocket is the Unix domain socket path or HTTP URL/address.
+	// ServerSocket is where the child should listen: an HTTP URL or a bare
+	// host:port. Anything else — including the empty value, which is what
+	// the daemon passes — means "pick somewhere", and Start binds a free
+	// loopback port. There is no config key behind this any more; the
+	// placement decides whether there is a child at all.
 	ServerSocket string
 
 	// Threads is the number of CPU threads (-t).
@@ -173,10 +177,10 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	}
 
 	// whisper.cpp's server binds a host and a port and cannot bind a Unix
-	// socket, so a socket path in the config means "run one for me" rather
-	// than naming a transport. Honour the intent on loopback, and say so:
-	// silently listening somewhere other than where a user pointed is worse
-	// than the failure it replaces.
+	// socket, so anything that is not a TCP address means "pick somewhere and
+	// run one for me". Honour that on loopback, and say so: silently
+	// listening somewhere other than where a caller pointed is worse than the
+	// failure it replaces.
 	endpoint := s.cfg.ServerSocket
 	if isUnix, socketPath := IsUnixSocket(endpoint); isUnix {
 		port, err := freeLoopbackPort()
@@ -184,8 +188,12 @@ func (s *Supervisor) Start(ctx context.Context) error {
 			return fmt.Errorf("speech: supervisor: find a port for the child server: %w", err)
 		}
 		endpoint = fmt.Sprintf("http://127.0.0.1:%d", port)
-		s.logger.Info("speech: server_socket is a Unix socket path, which whisper-server cannot bind; supervising on loopback instead",
-			"configured", socketPath, "listening_on", endpoint)
+		if socketPath == "" {
+			s.logger.Info("speech: supervising whisper-server on loopback", "listening_on", endpoint)
+		} else {
+			s.logger.Info("speech: the configured endpoint is a Unix socket path, which whisper-server cannot bind; supervising on loopback instead",
+				"configured", socketPath, "listening_on", endpoint)
+		}
 	}
 	s.endpoint = endpoint
 

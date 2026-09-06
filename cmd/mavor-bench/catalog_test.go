@@ -103,7 +103,7 @@ func TestWorkerRequestRoundTripsThroughTheEnvironment(t *testing.T) {
 	// report blames the models.
 	req := workerRequest{
 		Model: "zipformer-streaming", ModelDir: "/models", Audio: "a.wav",
-		Threads: 6, Provider: "cpu", Streaming: true,
+		Threads: 6, Streaming: true,
 	}
 	payload, err := json.Marshal(req)
 	if err != nil {

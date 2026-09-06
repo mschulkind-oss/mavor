@@ -66,8 +66,8 @@ options:
 	logPath := customFile
 	if logPath == "" {
 		cfg, err := config.Load("")
-		if err == nil && cfg.LogFile != "" {
-			logPath = cfg.LogFile
+		if err == nil && cfg.Paths.Log != "" {
+			logPath = cfg.Paths.Log
 		} else {
 			stateHome := os.Getenv("XDG_STATE_HOME")
 			if stateHome == "" {

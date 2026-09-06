@@ -30,6 +30,9 @@ func newTestDaemon(t *testing.T, opts ...func(*Config)) (*Daemon, string) {
 		Overlay:       &overlay.Noop{},
 		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 		ErrorDuration: 1 * time.Millisecond,
+		// config.Default() has the preview on, so the daemon under test does
+		// too; the tests that care about it off say so.
+		PreviewEnabled: true,
 	}
 	for _, o := range opts {
 		o(&cfg)
@@ -582,7 +585,7 @@ func TestStreamingDoesNotEmitOutput(t *testing.T) {
 		c.Output = out
 		c.Transcriber = speech.NewMockStreamTranscriber("final transcript", "hel", "hello")
 		c.Recorder = &audio.MockRecorder{FixturePath: "/tmp/fake.wav"}
-		c.Mode = "streaming"
+		c.PreviewEnabled = true
 	})
 	stop := runDaemon(t, d)
 	defer stop()
@@ -606,14 +609,14 @@ func TestStreamingDoesNotEmitOutput(t *testing.T) {
 	}
 }
 
-// mode = "batch" suppresses the live preview; the key is documented as
-// meaningful and must actually gate something.
-func TestBatchModeSuppressesStreamingPreview(t *testing.T) {
+// preview.enabled = false suppresses the live preview; the key is documented
+// as meaningful and must actually gate something.
+func TestPreviewDisabledSuppressesOverlayText(t *testing.T) {
 	ov := &overlay.Noop{}
 	d, sock := newTestDaemon(t, func(c *Config) {
 		c.Overlay = ov
 		c.Transcriber = speech.NewMockStreamTranscriber("final transcript", "hel", "hello")
-		c.Mode = "batch"
+		c.PreviewEnabled = false
 	})
 	stop := runDaemon(t, d)
 	defer stop()
@@ -624,7 +627,7 @@ func TestBatchModeSuppressesStreamingPreview(t *testing.T) {
 
 	for _, txt := range ov.Texts() {
 		if txt != "" {
-			t.Fatalf("batch mode set preview text %q, want none", txt)
+			t.Fatalf("preview.enabled = false still set overlay text %q, want none", txt)
 		}
 	}
 }

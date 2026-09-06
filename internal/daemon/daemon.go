@@ -41,8 +41,7 @@ type Daemon struct {
 	ducker            audio.Ducker
 	logger            *slog.Logger
 	errorDuration     time.Duration
-	streamingStrategy string
-	mode              string
+	previewEnabled    bool
 	history           TranscriptRecorder
 	silenceThreshold  time.Duration
 	minPhraseDuration time.Duration
@@ -55,16 +54,20 @@ type Daemon struct {
 }
 
 type Config struct {
-	Socket            string
-	Recorder          audio.Recorder
-	Transcriber       speech.Transcriber
-	Output            output.Dispatcher
-	Overlay           overlay.Overlay
-	Ducker            audio.Ducker
-	Logger            *slog.Logger
-	ErrorDuration     time.Duration
-	StreamingStrategy string
-	Mode              string
+	Socket        string
+	Recorder      audio.Recorder
+	Transcriber   speech.Transcriber
+	Output        output.Dispatcher
+	Overlay       overlay.Overlay
+	Ducker        audio.Ducker
+	Logger        *slog.Logger
+	ErrorDuration time.Duration
+
+	// PreviewEnabled shows partial text in the overlay while the user
+	// speaks. It never emits output: the transcript is typed once, when
+	// transcription completes.
+	PreviewEnabled bool
+
 	History           TranscriptRecorder
 	SilenceThreshold  time.Duration
 	MinPhraseDuration time.Duration
@@ -90,14 +93,6 @@ func New(c Config) *Daemon {
 	if minPhrase == 0 {
 		minPhrase = 600 * time.Millisecond
 	}
-	mode := c.Mode
-	if mode == "" {
-		mode = "streaming"
-	}
-	strat := c.StreamingStrategy
-	if strat == "" {
-		strat = "auto"
-	}
 	return &Daemon{
 		socket:            c.Socket,
 		machine:           state.New(),
@@ -108,8 +103,7 @@ func New(c Config) *Daemon {
 		ducker:            ducker,
 		logger:            c.Logger,
 		errorDuration:     errDur,
-		streamingStrategy: strat,
-		mode:              mode,
+		previewEnabled:    c.PreviewEnabled,
 		history:           c.History,
 		silenceThreshold:  silenceThresh,
 		minPhraseDuration: minPhrase,
@@ -269,8 +263,8 @@ func (d *Daemon) stopLevelMonitoring() {
 // user speaks. It never emits output: partial results are provisional, and the
 // cleaned-up transcript is inserted once, when transcription completes.
 func (d *Daemon) startStreamingMonitoring(ctx context.Context) {
-	if d.mode == "batch" {
-		d.logger.Info("streaming: preview disabled (mode=batch)")
+	if !d.previewEnabled {
+		d.logger.Info("streaming: preview disabled (preview.enabled = false)")
 		return
 	}
 	st, isStreaming := d.transcriber.(speech.StreamTranscriber)
@@ -322,93 +316,94 @@ func (d *Daemon) startStreamingMonitoring(ctx context.Context) {
 		return
 	}
 
-	// VAD-Segmented Batch Streaming (e.g. Whisper Server or CLI)
-	if d.streamingStrategy == "vad_batch" || d.streamingStrategy == "auto" {
-		d.logger.Info("streaming: initializing VAD-segmented batch streaming",
-			"silence_threshold", d.silenceThreshold,
-			"min_phrase", d.minPhraseDuration)
+	// Phrase mode: the model does not decode incrementally, so the audio
+	// since the last pause is transcribed with it and appended to the
+	// preview. There is no strategy to select — a model either decodes as you
+	// speak or it does not.
+	d.logger.Info("streaming: initializing phrase-mode preview",
+		"silence_threshold", d.silenceThreshold,
+		"min_phrase", d.minPhraseDuration)
 
-		go func() {
-			ticker := time.NewTicker(30 * time.Millisecond)
-			defer ticker.Stop()
+	go func() {
+		ticker := time.NewTicker(30 * time.Millisecond)
+		defer ticker.Stop()
 
-			var accumulatedSamples []int16
-			var speechFrames int
-			var silenceFrames int
+		var accumulatedSamples []int16
+		var speechFrames int
+		var silenceFrames int
 
-			for {
-				select {
-				case <-ctxStream.Done():
-					return
-				case <-ticker.C:
-					cr, ok := d.recorder.(audio.ChunkReader)
-					if !ok {
-						continue
-					}
-					chunk, err := cr.ReadChunk()
-					if err != nil || len(chunk) == 0 {
-						continue
-					}
+		for {
+			select {
+			case <-ctxStream.Done():
+				return
+			case <-ticker.C:
+				cr, ok := d.recorder.(audio.ChunkReader)
+				if !ok {
+					continue
+				}
+				chunk, err := cr.ReadChunk()
+				if err != nil || len(chunk) == 0 {
+					continue
+				}
 
-					sampleCount := len(chunk) / 2
-					frameSamples := make([]int16, sampleCount)
-					for i := 0; i < sampleCount; i++ {
-						frameSamples[i] = int16(binary.LittleEndian.Uint16(chunk[i*2 : i*2+2]))
-					}
-					accumulatedSamples = append(accumulatedSamples, frameSamples...)
+				sampleCount := len(chunk) / 2
+				frameSamples := make([]int16, sampleCount)
+				for i := 0; i < sampleCount; i++ {
+					frameSamples[i] = int16(binary.LittleEndian.Uint16(chunk[i*2 : i*2+2]))
+				}
+				accumulatedSamples = append(accumulatedSamples, frameSamples...)
 
-					rms := audio.CalculateRMS(frameSamples)
-					if rms >= audio.SpeechRMSThreshold {
-						speechFrames++
+				rms := audio.CalculateRMS(frameSamples)
+				if rms >= audio.SpeechRMSThreshold {
+					speechFrames++
+					silenceFrames = 0
+				} else if speechFrames*30 >= int(d.minPhraseDuration.Milliseconds()) {
+					silenceFrames++
+					if time.Duration(silenceFrames*30)*time.Millisecond >= d.silenceThreshold {
+						phrase := accumulatedSamples
+						accumulatedSamples = nil
+						speechFrames = 0
 						silenceFrames = 0
-					} else if speechFrames*30 >= int(d.minPhraseDuration.Milliseconds()) {
-						silenceFrames++
-						if time.Duration(silenceFrames*30)*time.Millisecond >= d.silenceThreshold {
-							phrase := accumulatedSamples
-							accumulatedSamples = nil
-							speechFrames = 0
-							silenceFrames = 0
 
-							go func(p []int16) {
-								if len(p) == 0 {
-									return
-								}
-								tempWav := filepath.Join(os.TempDir(), fmt.Sprintf("mavor-slice-%d.wav", time.Now().UnixNano()))
-								if err := audio.WriteWAV(tempWav, p, audio.DefaultSampleRate); err != nil {
-									d.logger.Warn("streaming: write slice WAV failed", "err", err)
-									return
-								}
-								defer os.Remove(tempWav)
+						go func(p []int16) {
+							if len(p) == 0 {
+								return
+							}
+							tempWav := filepath.Join(os.TempDir(), fmt.Sprintf("mavor-slice-%d.wav", time.Now().UnixNano()))
+							if err := audio.WriteWAV(tempWav, p, audio.DefaultSampleRate); err != nil {
+								d.logger.Warn("streaming: write slice WAV failed", "err", err)
+								return
+							}
+							defer os.Remove(tempWav)
 
-								txt, err := d.transcriber.Transcribe(ctxStream, tempWav)
-								if err != nil {
-									d.logger.Warn("streaming: transcribe slice failed", "err", err)
-									return
+							txt, err := d.transcriber.Transcribe(ctxStream, tempWav)
+							if err != nil {
+								d.logger.Warn("streaming: transcribe slice failed", "err", err)
+								return
+							}
+							txt = strings.TrimSpace(txt)
+							if txt != "" {
+								d.streamMu.Lock()
+								if d.streamHistory != "" {
+									d.streamHistory += " "
 								}
-								txt = strings.TrimSpace(txt)
-								if txt != "" {
+								d.streamHistory += txt
+								d.streamMu.Unlock()
+
+								d.logger.Info("streaming: recognized phrase slice", "text", txt)
+								if d.overlay != nil {
 									d.streamMu.Lock()
-									if d.streamHistory != "" {
-										d.streamHistory += " "
-									}
-									d.streamHistory += txt
+									preview := d.streamHistory
 									d.streamMu.Unlock()
-
-									d.logger.Info("streaming: recognized phrase slice", "text", txt)
-									if d.overlay != nil {
-										d.streamMu.Lock()
-										preview := d.streamHistory
-										d.streamMu.Unlock()
-										_ = d.overlay.SetText(preview)
-									}
+									_ = d.overlay.SetText(preview)
 								}
-							}(phrase)
-						}
+							}
+						}(phrase)
 					}
 				}
 			}
-		}()
-	}
+		}
+	}()
 }
 
 func (d *Daemon) stopStreamingMonitoring() {

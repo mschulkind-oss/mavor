@@ -341,8 +341,10 @@ func writeThreadScalingSection(b *strings.Builder, r *report) {
 	b.WriteString("and it cannot be read off a curve that stops at the optimum.\n\n")
 }
 
-// writeWarmServerSection answers `engine = "server"`: whether keeping the
-// model in memory between utterances is worth running a child process for.
+// writeWarmServerSection answers the default placement for a whisper model:
+// whether keeping the model in memory between utterances is worth running a
+// child process for. It is what `advanced.placement = "subprocess"` opts out
+// of.
 func writeWarmServerSection(b *strings.Builder, r *report) {
 	b.WriteString("## Warm server vs cold CLI\n\n")
 	if len(r.WarmServer) == 0 {
@@ -350,9 +352,10 @@ func writeWarmServerSection(b *strings.Builder, r *report) {
 		b.WriteString("measure](#what-this-run-could-not-measure).\n\n")
 		return
 	}
-	b.WriteString("`engine = \"cli\"` spawns `whisper-cli` per utterance and reloads the model\n")
-	b.WriteString("every time; `engine = \"server\"` keeps a `whisper-server` child warm and\n")
-	b.WriteString("posts the audio to it. The warm column is the per-utterance time with the\n")
+	b.WriteString("`advanced.placement = \"subprocess\"` spawns `whisper-cli` per utterance and\n")
+	b.WriteString("reloads the model every time; the default placement for a whisper model\n")
+	b.WriteString("keeps a `whisper-server` child warm and posts the audio to it. The warm\n")
+	b.WriteString("column is the per-utterance time with the\n")
 	b.WriteString("model already resident. Startup is what the daemon pays once, at login,\n")
 	b.WriteString("and is excluded from it.\n\n")
 	b.WriteString("These rows drive `internal/speech`, the same client the daemon uses, so\n")

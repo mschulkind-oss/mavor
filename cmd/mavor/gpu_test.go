@@ -63,7 +63,7 @@ func TestDetectGPUBackendsFromLinkedLibraries(t *testing.T) {
 // transcription fail.
 
 func TestGPUReportNoBackendIsNormal(t *testing.T) {
-	ok, msg := gpuReport(config.Config{Engine: "cli"}, nil, nil)
+	ok, msg := gpuReport(config.Config{Model: "whisper-base.en"}, nil, nil)
 	if !ok {
 		t.Errorf("a machine with no GPU is a normal setup, got failure: %s", msg)
 	}
@@ -73,7 +73,7 @@ func TestGPUReportNoBackendIsNormal(t *testing.T) {
 }
 
 func TestGPUReportNamesTheLoadedBackendAndDeviceCount(t *testing.T) {
-	ok, msg := gpuReport(config.Config{Engine: "cli"}, []string{"vulkan"}, []string{"/dev/dri/renderD128"})
+	ok, msg := gpuReport(config.Config{Model: "whisper-base.en"}, []string{"vulkan"}, []string{"/dev/dri/renderD128"})
 	if !ok {
 		t.Errorf("a loaded backend with a device behind it is healthy, got failure: %s", msg)
 	}
@@ -88,7 +88,7 @@ func TestGPUReportNamesTheLoadedBackendAndDeviceCount(t *testing.T) {
 // A backend with nothing behind it is the one genuine failure: whisper.cpp
 // will fall back to the CPU and say nothing.
 func TestGPUReportFailsWhenBackendLoadedButNoDevice(t *testing.T) {
-	ok, msg := gpuReport(config.Config{Engine: "cli"}, []string{"vulkan"}, nil)
+	ok, msg := gpuReport(config.Config{Model: "whisper-base.en"}, []string{"vulkan"}, nil)
 	if ok {
 		t.Errorf("a loaded backend with no device should be flagged, got ok (msg: %s)", msg)
 	}
@@ -99,7 +99,7 @@ func TestGPUReportFailsWhenBackendLoadedButNoDevice(t *testing.T) {
 
 func TestGPUReportSaysWhenConfigDisabledTheGPU(t *testing.T) {
 	ok, msg := gpuReport(
-		config.Config{Engine: "cli", GPU: "off"},
+		config.Config{Model: "whisper-base.en", Advanced: config.Advanced{GPU: "off"}},
 		[]string{"vulkan"},
 		[]string{"/dev/dri/renderD128"},
 	)
@@ -115,20 +115,21 @@ func TestGPUReportSaysWhenConfigDisabledTheGPU(t *testing.T) {
 // which appended a flag whisper-cli rejects. No report may recommend a
 // setting again, under any combination of backends and devices.
 func TestGPUReportNeverAdvisesASetting(t *testing.T) {
-	engines := []string{"cli", "server", "sherpa"}
+	modelNames := []string{"whisper-base.en", "whisper-large-v3-turbo", "parakeet-tdt-0.6b"}
 	gpus := []string{"", "auto", "off"}
 	backendSets := [][]string{nil, {"vulkan"}, {"cuda", "vulkan"}}
 	deviceSets := [][]string{nil, {"/dev/dri/renderD128"}}
 
-	for _, engine := range engines {
+	for _, model := range modelNames {
 		for _, gpu := range gpus {
 			for _, backends := range backendSets {
 				for _, devices := range deviceSets {
-					_, msg := gpuReport(config.Config{Engine: engine, GPU: gpu}, backends, devices)
+					cfg := config.Config{Model: model, Advanced: config.Advanced{GPU: gpu}}
+					_, msg := gpuReport(cfg, backends, devices)
 					for _, banned := range []string{"gpu_layers", "-ngl"} {
 						if strings.Contains(msg, banned) {
-							t.Errorf("gpuReport(engine=%q gpu=%q backends=%v devices=%v) mentions %q: %s",
-								engine, gpu, backends, devices, banned, msg)
+							t.Errorf("gpuReport(model=%q gpu=%q backends=%v devices=%v) mentions %q: %s",
+								model, gpu, backends, devices, banned, msg)
 						}
 					}
 				}
@@ -141,7 +142,7 @@ func TestGPUReportNeverAdvisesASetting(t *testing.T) {
 // vendors a CPU-only ONNX Runtime with no provider libraries. The report says
 // so plainly rather than reasoning about a provider key.
 func TestGPUReportForSherpaSaysCPU(t *testing.T) {
-	ok, msg := gpuReport(config.Config{Engine: "sherpa"}, nil, nil)
+	ok, msg := gpuReport(config.Config{Model: "parakeet-tdt-0.6b"}, nil, nil)
 	if !ok {
 		t.Errorf("sherpa on the CPU is the only thing this build does; not a fault: %s", msg)
 	}
@@ -151,7 +152,7 @@ func TestGPUReportForSherpaSaysCPU(t *testing.T) {
 }
 
 func TestGPUReportForSherpaMentionsUnusableDevices(t *testing.T) {
-	ok, msg := gpuReport(config.Config{Engine: "sherpa"}, nil, []string{"/dev/dri/renderD128"})
+	ok, msg := gpuReport(config.Config{Model: "parakeet-tdt-0.6b"}, nil, []string{"/dev/dri/renderD128"})
 	if !ok {
 		t.Errorf("a GPU that sherpa cannot reach is not a fault: %s", msg)
 	}
@@ -160,13 +161,15 @@ func TestGPUReportForSherpaMentionsUnusableDevices(t *testing.T) {
 	}
 }
 
-// A GPU-capable whisper build is not reported differently because the user
-// also set a sherpa provider: the sherpa line does not consult it any more.
-func TestGPUReportForSherpaIgnoresProviderKey(t *testing.T) {
-	_, withProvider := gpuReport(config.Config{Engine: "sherpa", SherpaProvider: "cuda"}, nil, nil)
-	_, without := gpuReport(config.Config{Engine: "sherpa"}, nil, nil)
-	if withProvider != without {
-		t.Errorf("sherpa report varied with sherpa_provider:\n  %q\n  %q", withProvider, without)
+// The runtime is read off the model, not off a key: every sherpa model gets
+// the same line, and there is no provider setting left to vary it.
+func TestGPUReportIsTheSameForEverySherpaModel(t *testing.T) {
+	_, first := gpuReport(config.Config{Model: "parakeet-tdt-0.6b"}, nil, nil)
+	for _, model := range []string{"moonshine-tiny", "zipformer-streaming", "sensevoice-small"} {
+		_, got := gpuReport(config.Config{Model: model}, nil, nil)
+		if got != first {
+			t.Errorf("sherpa report varied by model (%s):\n  %q\n  %q", model, first, got)
+		}
 	}
 }
 

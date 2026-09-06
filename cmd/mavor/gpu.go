@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/mschulkind-oss/mavor/internal/config"
+	"github.com/mschulkind-oss/mavor/internal/models"
 )
 
 // GPU acceleration in mavor is a property of the build you are running, not of
@@ -138,7 +139,7 @@ func checkGPU() (bool, string) {
 	return gpuReport(cfg, whisperGPUBackends(), gpuDevices())
 }
 
-// gpuReport turns the configured engine, the backends whisper.cpp actually
+// gpuReport turns the model's runtime, the backends whisper.cpp actually
 // loaded, and the devices present into a single doctor line.
 //
 // It reports; it does not advise a setting. whisper.cpp offers no way to ask
@@ -147,7 +148,7 @@ func checkGPU() (bool, string) {
 // config can say is `gpu = "off"`. Having no GPU is a normal setup, so the
 // only failure is a build that loaded a backend with no device behind it.
 func gpuReport(cfg config.Config, backends, devices []string) (bool, string) {
-	if cfg.Engine == "sherpa" {
+	if models.RuntimeFor(cfg.Model) == models.RuntimeSherpa {
 		return sherpaGPUReport(devices)
 	}
 

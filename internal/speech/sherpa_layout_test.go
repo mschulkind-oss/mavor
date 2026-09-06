@@ -134,7 +134,7 @@ func TestDetectRecognizesEveryCataloguedLayout(t *testing.T) {
 			dir := writeLayout(t, c.modelName, c.files...)
 			got, err := DetectSherpaModel(dir, c.modelName)
 			if err != nil {
-				t.Fatalf("DetectSherpaModel: %v", err)
+				t.Fatalf("DetectModel: %v", err)
 			}
 			if got.Type != c.wantType {
 				t.Errorf("type = %q, want %q", got.Type, c.wantType)
@@ -205,9 +205,7 @@ func TestFindFileIsDeterministicAcrossMultipleGlobMatches(t *testing.T) {
 
 func TestBuildOfflineConfigForCanaryPopulatesTheCanaryFields(t *testing.T) {
 	dir := writeLayout(t, "canary-180m", "encoder.int8.onnx", "decoder.int8.onnx", "tokens.txt")
-	sc, err := BuildSherpaOfflineConfig(config.Config{
-		Engine: "sherpa", SherpaModel: dir, Model: dir,
-	})
+	sc, err := BuildSherpaOfflineConfig(config.Config{Model: dir})
 	if err != nil {
 		t.Fatalf("BuildSherpaOfflineConfig: %v", err)
 	}
@@ -230,7 +228,7 @@ func TestBuildOfflineConfigSetsOnlyTheMatchingCTCConfig(t *testing.T) {
 	// NeMo for a zipformer model, which is where 'vocab_size does not exist'
 	// came from.
 	zip := writeLayout(t, "zipformer-ctc", "model.onnx", "tokens.txt", "words.txt")
-	sc, err := BuildSherpaOfflineConfig(config.Config{SherpaModel: zip, Model: zip})
+	sc, err := BuildSherpaOfflineConfig(config.Config{Model: zip})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +240,7 @@ func TestBuildOfflineConfigSetsOnlyTheMatchingCTCConfig(t *testing.T) {
 	}
 
 	nemo := writeLayout(t, "parakeet-ctc", "model.onnx", "tokens.txt")
-	sc, err = BuildSherpaOfflineConfig(config.Config{SherpaModel: nemo, Model: nemo})
+	sc, err = BuildSherpaOfflineConfig(config.Config{Model: nemo})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +259,7 @@ func TestBuildOnlineConfigFindsEpochSuffixedStreamingFiles(t *testing.T) {
 		"joiner-epoch-99-avg-1-chunk-16-left-128.onnx",
 		"tokens.txt")
 
-	sc, err := BuildSherpaOnlineConfig(config.Config{SherpaModel: dir, Model: dir})
+	sc, err := BuildSherpaOnlineConfig(config.Config{Model: dir})
 	if err != nil {
 		t.Fatalf("BuildSherpaOnlineConfig: %v", err)
 	}
@@ -348,15 +346,23 @@ func TestDetectMatchesTheBaseNameNotTheWholePath(t *testing.T) {
 }
 
 func TestDetectRefusesADirectoryItCannotIdentify(t *testing.T) {
-	// Better a clear error naming the config key than a guess that aborts
-	// the process inside sherpa-onnx.
+	// Better a clear error naming the directory than a guess that aborts the
+	// process inside sherpa-onnx. There is no config key to point at any
+	// more — describing a model by hand was five keys that all left the
+	// config — so the message says what it looked for and where.
 	dir := writeLayout(t, "mystery", "readme.txt")
 	_, err := DetectSherpaModel(dir, "mystery")
 	if err == nil {
 		t.Fatal("an unidentifiable directory was accepted; want an error")
 	}
-	if !strings.Contains(err.Error(), "sherpa_model_type") {
-		t.Errorf("error %q does not say how to resolve it", err)
+	if !strings.Contains(err.Error(), dir) {
+		t.Errorf("error %q does not name the directory it could not identify", err)
+	}
+	if !strings.Contains(err.Error(), "mavor models pull") {
+		t.Errorf("error %q does not say how to get a model mavor can identify", err)
+	}
+	if strings.Contains(err.Error(), "sherpa_model_type") {
+		t.Errorf("error %q still points at a config key that no longer exists", err)
 	}
 }
 

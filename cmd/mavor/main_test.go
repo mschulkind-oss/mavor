@@ -77,10 +77,10 @@ func TestConfigCommands(t *testing.T) {
 	}
 }
 
-// The scaffold is the only description of `mode` most users will ever read,
-// and it used to promise "real-time incremental typing while speaking" — a
-// feature the daemon does not have: streaming mode previews text in the
-// overlay and types it once, when transcription finishes.
+// The scaffold is the only description of the preview most users will ever
+// read, and it used to promise "real-time incremental typing while speaking" —
+// a feature the daemon does not have: the preview paints the overlay and the
+// text is typed once, when transcription finishes.
 func TestScaffoldDoesNotPromiseIncrementalTyping(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
@@ -93,15 +93,13 @@ func TestScaffoldDoesNotPromiseIncrementalTyping(t *testing.T) {
 	}
 	scaffold := string(data)
 	if strings.Contains(scaffold, "incremental typing") {
-		t.Error("the scaffold promises incremental typing; streaming mode only previews")
+		t.Error("the scaffold promises incremental typing; the preview only paints the overlay")
 	}
 	if !strings.Contains(scaffold, "typed once") {
 		t.Error("the scaffold does not tell the reader the text is typed once, when transcription finishes")
 	}
-	// server_socket names a path that nothing ever creates; a reader who is
-	// not told that goes looking for the socket when the engine misbehaves.
-	if !strings.Contains(scaffold, "run a local") {
-		t.Error("the scaffold does not explain what a filesystem path in server_socket means")
+	if !strings.Contains(scaffold, "The preview types nothing") {
+		t.Error("the scaffold does not say outright that the preview never emits text")
 	}
 }
 

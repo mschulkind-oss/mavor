@@ -69,7 +69,6 @@ func benchSherpa(ctx context.Context, s sherpaRunner, self string, m catalogMode
 		ModelDir:  s.modelDir,
 		Audio:     o.audio,
 		Threads:   s.threads,
-		Provider:  s.provider,
 		Streaming: streaming,
 	}
 

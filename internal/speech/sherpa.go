@@ -277,10 +277,7 @@ func NewSherpaTranscriber(cfg config.Config, logger *slog.Logger) (*SherpaTransc
 		return nil, fmt.Errorf("speech: resolve sherpa model directory: %w", err)
 	}
 
-	modelName := cfg.SherpaModel
-	if modelName == "" {
-		modelName = cfg.Model
-	}
+	modelName := cfg.Model
 
 	// Streaming has to be decided before the model is opened. sherpa-onnx
 	// offers no way to ask a file which recognizer it wants, and guessing
@@ -442,18 +439,15 @@ func (s *SherpaTranscriber) Transcribe(ctx context.Context, wavPath string) (str
 }
 
 // ResolveSherpaModelDir locates the model directory according to standard resolution order:
-// 1. cfg.SherpaModel or cfg.Model as explicit path if exists
+// 1. cfg.Model as explicit path if exists
 // 2. $XDG_DATA_HOME/mavor/models/sherpa/<model>
 // 3. $XDG_DATA_HOME/mavor/models/<model>
-// 4. cfg.ModelDir/sherpa/<model>
-// 5. cfg.ModelDir/<model>
+// 4. cfg.Paths.Models/sherpa/<model>
+// 5. cfg.Paths.Models/<model>
 // 6. $XDG_DATA_HOME/mavor/models/sherpa/ (base)
-// 7. cfg.ModelDir/sherpa/ (base) or cfg.ModelDir
+// 7. cfg.Paths.Models/sherpa/ (base) or cfg.Paths.Models
 func ResolveSherpaModelDir(cfg config.Config) (string, error) {
-	modelName := cfg.SherpaModel
-	if modelName == "" {
-		modelName = cfg.Model
-	}
+	modelName := cfg.Model
 
 	// 1. Check if modelName is an existing directory
 	if modelName != "" {
@@ -470,10 +464,10 @@ func ResolveSherpaModelDir(cfg config.Config) (string, error) {
 			filepath.Join(dataHome, "mavor", "models", "sherpa", modelName),
 			filepath.Join(dataHome, "mavor", "models", modelName),
 		)
-		if cfg.ModelDir != "" {
+		if cfg.Paths.Models != "" {
 			specificCandidates = append(specificCandidates,
-				filepath.Join(cfg.ModelDir, "sherpa", modelName),
-				filepath.Join(cfg.ModelDir, modelName),
+				filepath.Join(cfg.Paths.Models, "sherpa", modelName),
+				filepath.Join(cfg.Paths.Models, modelName),
 			)
 		}
 	}
@@ -488,10 +482,10 @@ func ResolveSherpaModelDir(cfg config.Config) (string, error) {
 	baseCandidates = append(baseCandidates,
 		filepath.Join(dataHome, "mavor", "models", "sherpa"),
 	)
-	if cfg.ModelDir != "" {
+	if cfg.Paths.Models != "" {
 		baseCandidates = append(baseCandidates,
-			filepath.Join(cfg.ModelDir, "sherpa"),
-			cfg.ModelDir,
+			filepath.Join(cfg.Paths.Models, "sherpa"),
+			cfg.Paths.Models,
 		)
 	}
 
@@ -625,7 +619,7 @@ func DetectSherpaModel(modelDir string, modelName string) (SherpaModelInfo, erro
 		return SherpaModelInfo{Type: ModelTypeNemoCTC}, nil
 	}
 
-	return SherpaModelInfo{}, fmt.Errorf("speech: cannot tell what kind of model %s holds — no recognised encoder/decoder/joiner, preprocessor or model.onnx. Set sherpa_model_type in the config to say explicitly", modelDir)
+	return SherpaModelInfo{}, fmt.Errorf("speech: cannot tell what kind of model %s holds — it has no recognised encoder/decoder/joiner, preprocessor or model.onnx. A model mavor cannot identify has to be installed the way `mavor models pull` installs one; there is no config key that describes a layout", modelDir)
 }
 
 // isStreamingLayout reports whether a transducer decodes incrementally.
@@ -674,27 +668,20 @@ func saysStreaming(name string) bool {
 	return strings.Contains(name, "streaming") || strings.Contains(name, "online")
 }
 
-// resolveDecoding picks the decoding method and hotword boost for a sherpa
-// recognizer. sherpa-onnx honours a hotwords file only under
-// modified_beam_search — greedy_search ignores it without complaint — so
-// configuring hotwords selects the beam search unless the user asked for a
-// specific method themselves. Without hotwords, greedy_search stays the
-// default: it is faster and the beam buys nothing.
-func resolveDecoding(cfg config.Config) (method string, hotwordsScore float32) {
-	method = cfg.SherpaDecodingMethod
-	if method == "" {
-		if cfg.SherpaHotwordsFile != "" {
-			method = "modified_beam_search"
-		} else {
-			method = "greedy_search"
-		}
-	}
-
-	hotwordsScore = cfg.SherpaHotwordsScore
-	if hotwordsScore == 0 && cfg.SherpaHotwordsFile != "" {
-		hotwordsScore = 1.5
-	}
-	return method, hotwordsScore
+// resolveDecoding picks the decoding method, hotwords file and boost for a
+// sherpa recognizer.
+//
+// The user never chooses a decoding method: on LibriSpeech the zipformer
+// transducer scores 2.17% word error rate greedy and 2.15% with modified beam
+// search, for several times the decoder work, and every non-transducer model
+// aborts on anything but greedy. The one thing beam search buys is hotwords,
+// so configuring vocabulary is what will turn it on — see
+// docs/design/configuration-surface.md §7.
+func resolveDecoding(cfg config.Config) (method, hotwordsFile string, hotwordsScore float32) {
+	// The [vocabulary] table is carried by the config but not yet mapped to a
+	// hotwords file; that is a step of its own. Until it lands there is
+	// nothing to bias with, so greedy search is what runs.
+	return "greedy_search", "", cfg.Vocabulary.Boost
 }
 
 // BuildSherpaOfflineConfig constructs a SherpaOfflineConfig from Config and model directory.
@@ -704,39 +691,34 @@ func BuildSherpaOfflineConfig(cfg config.Config) (SherpaOfflineConfig, error) {
 		return SherpaOfflineConfig{}, err
 	}
 
-	modelName := cfg.SherpaModel
-	if modelName == "" {
-		modelName = cfg.Model
+	modelName := cfg.Model
+
+	// The architecture is detected from the directory's contents rather than
+	// configured. Describing a model mavor cannot identify is a manual topic
+	// that needs a walkthrough, not five keys sharing top billing with
+	// `model` — see docs/design/configuration-surface.md §5.
+	modelType, err := DetectSherpaModelType(modelDir, modelName)
+	if err != nil {
+		return SherpaOfflineConfig{}, err
 	}
 
-	modelType := SherpaModelType(strings.ToLower(strings.TrimSpace(cfg.SherpaModelType)))
-	if modelType == "" || modelType == ModelTypeAuto {
-		detected, err := DetectSherpaModelType(modelDir, modelName)
-		if err != nil {
-			return SherpaOfflineConfig{}, err
-		}
-		modelType = detected
-	}
-
-	tokens := cfg.SherpaTokens
-	if tokens == "" {
-		tokens = findFile(modelDir, "tokens.txt", "bpe.model", "vocab.txt", "tokens.json")
-	}
+	tokens := findFile(modelDir, "tokens.txt", "bpe.model", "vocab.txt", "tokens.json")
 	if tokens == "" {
 		return SherpaOfflineConfig{}, fmt.Errorf("speech: sherpa tokens file (tokens.txt/bpe.model) not found in %s", modelDir)
 	}
 
-	threads := cfg.Threads
+	threads := cfg.Advanced.Threads
 	if threads <= 0 {
 		threads = 4
 	}
 
-	provider := cfg.SherpaProvider
-	if provider == "" {
-		provider = "cpu"
-	}
+	// The ONNX Runtime vendored by the sherpa-onnx Go binding is a CPU-only
+	// build shipping no execution-provider libraries, and sherpa-onnx answers
+	// a provider it cannot honour by logging "Fallback to cpu!" and carrying
+	// on. A provider key on this build could only mislead, so there is none.
+	provider := "cpu"
 
-	decodingMethod, hotwordsScore := resolveDecoding(cfg)
+	decodingMethod, hotwordsFile, hotwordsScore := resolveDecoding(cfg)
 
 	sc := SherpaOfflineConfig{
 		ModelType:      modelType,
@@ -744,7 +726,7 @@ func BuildSherpaOfflineConfig(cfg config.Config) (SherpaOfflineConfig, error) {
 		NumThreads:     threads,
 		Provider:       provider,
 		DecodingMethod: decodingMethod,
-		HotwordsFile:   cfg.SherpaHotwordsFile,
+		HotwordsFile:   hotwordsFile,
 		HotwordsScore:  hotwordsScore,
 		SampleRate:     16000,
 		FeatureDim:     80,
@@ -752,18 +734,9 @@ func BuildSherpaOfflineConfig(cfg config.Config) (SherpaOfflineConfig, error) {
 
 	switch modelType {
 	case ModelTypeTransducer:
-		encoder := cfg.SherpaEncoder
-		if encoder == "" {
-			encoder = findFile(modelDir, "encoder.onnx", "encoder.int8.onnx", "encoder-*.onnx", "encode.onnx")
-		}
-		decoder := cfg.SherpaDecoder
-		if decoder == "" {
-			decoder = findFile(modelDir, "decoder.onnx", "decoder.int8.onnx", "decoder-*.onnx", "decode.onnx")
-		}
-		joiner := cfg.SherpaJoiner
-		if joiner == "" {
-			joiner = findFile(modelDir, "joiner.onnx", "joiner.int8.onnx", "joiner-*.onnx", "join.onnx")
-		}
+		encoder := findFile(modelDir, "encoder.onnx", "encoder.int8.onnx", "encoder-*.onnx", "encode.onnx")
+		decoder := findFile(modelDir, "decoder.onnx", "decoder.int8.onnx", "decoder-*.onnx", "decode.onnx")
+		joiner := findFile(modelDir, "joiner.onnx", "joiner.int8.onnx", "joiner-*.onnx", "join.onnx")
 
 		if encoder == "" || decoder == "" || joiner == "" {
 			return SherpaOfflineConfig{}, fmt.Errorf("speech: transducer model in %s requires encoder, decoder, and joiner onnx files (found: encoder=%q, decoder=%q, joiner=%q)", modelDir, encoder, decoder, joiner)
@@ -776,14 +749,8 @@ func BuildSherpaOfflineConfig(cfg config.Config) (SherpaOfflineConfig, error) {
 
 	case ModelTypeMoonshine:
 		pre := findFile(modelDir, "preprocess.onnx", "preprocessor.onnx", "preprocess.int8.onnx")
-		enc := cfg.SherpaEncoder
-		if enc == "" {
-			enc = findFile(modelDir, "encode.onnx", "encoder.onnx", "encode.int8.onnx", "encoder.int8.onnx")
-		}
-		uncached := cfg.SherpaDecoder
-		if uncached == "" {
-			uncached = findFile(modelDir, "uncached_decode.onnx", "uncached_decoder.onnx", "uncached_decode.int8.onnx")
-		}
+		enc := findFile(modelDir, "encode.onnx", "encoder.onnx", "encode.int8.onnx", "encoder.int8.onnx")
+		uncached := findFile(modelDir, "uncached_decode.onnx", "uncached_decoder.onnx", "uncached_decode.int8.onnx")
 		cached := findFile(modelDir, "cached_decode.onnx", "cached_decoder.onnx", "cached_decode.int8.onnx")
 		merged := findFile(modelDir, "merged_decoder.onnx", "merged_decode.onnx", "merged_decoder.int8.onnx")
 
@@ -803,10 +770,7 @@ func BuildSherpaOfflineConfig(cfg config.Config) (SherpaOfflineConfig, error) {
 		}
 
 	case ModelTypeZipformerCTC, ModelTypeNemoCTC:
-		modelFile := cfg.SherpaEncoder
-		if modelFile == "" {
-			modelFile = findFile(modelDir, "model.onnx", "model.int8.onnx")
-		}
+		modelFile := findFile(modelDir, "model.onnx", "model.int8.onnx")
 		if modelFile == "" {
 			return SherpaOfflineConfig{}, fmt.Errorf("speech: CTC model in %s missing model.onnx", modelDir)
 		}
@@ -821,10 +785,7 @@ func BuildSherpaOfflineConfig(cfg config.Config) (SherpaOfflineConfig, error) {
 		}
 
 	case ModelTypeSenseVoice:
-		modelFile := cfg.SherpaEncoder
-		if modelFile == "" {
-			modelFile = findFile(modelDir, "model.onnx", "model.int8.onnx", "sensevoice.onnx")
-		}
+		modelFile := findFile(modelDir, "model.onnx", "model.int8.onnx", "sensevoice.onnx")
 		if modelFile == "" {
 			return SherpaOfflineConfig{}, fmt.Errorf("speech: sensevoice model in %s missing model.onnx", modelDir)
 		}
@@ -839,24 +800,15 @@ func BuildSherpaOfflineConfig(cfg config.Config) (SherpaOfflineConfig, error) {
 		// fields belong to the streaming variant and stay empty here; filling
 		// them from an offline directory is what made every encoder-decoder
 		// layout look like a paraformer.
-		modelFile := cfg.SherpaEncoder
-		if modelFile == "" {
-			modelFile = findFile(modelDir, "model.onnx", "model.int8.onnx")
-		}
+		modelFile := findFile(modelDir, "model.onnx", "model.int8.onnx")
 		if modelFile == "" {
 			return SherpaOfflineConfig{}, fmt.Errorf("speech: paraformer model in %s missing model.onnx", modelDir)
 		}
 		sc.Paraformer = ParaformerModelConfig{Model: modelFile}
 
 	case ModelTypeCanary:
-		enc := cfg.SherpaEncoder
-		if enc == "" {
-			enc = findFile(modelDir, "encoder.onnx", "encoder.int8.onnx", "encoder-*.onnx")
-		}
-		dec := cfg.SherpaDecoder
-		if dec == "" {
-			dec = findFile(modelDir, "decoder.onnx", "decoder.int8.onnx", "decoder-*.onnx")
-		}
+		enc := findFile(modelDir, "encoder.onnx", "encoder.int8.onnx", "encoder-*.onnx")
+		dec := findFile(modelDir, "decoder.onnx", "decoder.int8.onnx", "decoder-*.onnx")
 		if enc == "" || dec == "" {
 			return SherpaOfflineConfig{}, fmt.Errorf("speech: canary model in %s requires encoder and decoder onnx files (found: encoder=%q, decoder=%q)", modelDir, enc, dec)
 		}
@@ -869,14 +821,8 @@ func BuildSherpaOfflineConfig(cfg config.Config) (SherpaOfflineConfig, error) {
 		}
 
 	case ModelTypeWhisper:
-		enc := cfg.SherpaEncoder
-		if enc == "" {
-			enc = findFile(modelDir, "encoder.onnx", "encoder.int8.onnx", "*-encoder.onnx", "*-encoder.int8.onnx")
-		}
-		dec := cfg.SherpaDecoder
-		if dec == "" {
-			dec = findFile(modelDir, "decoder.onnx", "decoder.int8.onnx", "*-decoder.onnx", "*-decoder.int8.onnx")
-		}
+		enc := findFile(modelDir, "encoder.onnx", "encoder.int8.onnx", "*-encoder.onnx", "*-encoder.int8.onnx")
+		dec := findFile(modelDir, "decoder.onnx", "decoder.int8.onnx", "*-decoder.onnx", "*-decoder.int8.onnx")
 		sc.Whisper = WhisperModelConfig{
 			Encoder:  enc,
 			Decoder:  dec,
@@ -895,38 +841,27 @@ func BuildSherpaOnlineConfig(cfg config.Config) (SherpaOnlineConfig, error) {
 		return SherpaOnlineConfig{}, err
 	}
 
-	tokens := cfg.SherpaTokens
-	if tokens == "" {
-		tokens = findFile(modelDir, "tokens.txt", "bpe.model", "vocab.txt")
-	}
+	tokens := findFile(modelDir, "tokens.txt", "bpe.model", "vocab.txt")
 	if tokens == "" {
 		return SherpaOnlineConfig{}, fmt.Errorf("speech: online tokens file not found in %s", modelDir)
 	}
 
-	threads := cfg.Threads
+	threads := cfg.Advanced.Threads
 	if threads <= 0 {
 		threads = 4
 	}
 
-	provider := cfg.SherpaProvider
-	if provider == "" {
-		provider = "cpu"
-	}
+	// The ONNX Runtime vendored by the sherpa-onnx Go binding is a CPU-only
+	// build shipping no execution-provider libraries, and sherpa-onnx answers
+	// a provider it cannot honour by logging "Fallback to cpu!" and carrying
+	// on. A provider key on this build could only mislead, so there is none.
+	provider := "cpu"
 
-	decodingMethod, hotwordsScore := resolveDecoding(cfg)
+	decodingMethod, hotwordsFile, hotwordsScore := resolveDecoding(cfg)
 
-	encoder := cfg.SherpaEncoder
-	if encoder == "" {
-		encoder = findFile(modelDir, "encoder.onnx", "encoder.int8.onnx", "encoder-*.onnx")
-	}
-	decoder := cfg.SherpaDecoder
-	if decoder == "" {
-		decoder = findFile(modelDir, "decoder.onnx", "decoder.int8.onnx", "decoder-*.onnx")
-	}
-	joiner := cfg.SherpaJoiner
-	if joiner == "" {
-		joiner = findFile(modelDir, "joiner.onnx", "joiner.int8.onnx", "joiner-*.onnx")
-	}
+	encoder := findFile(modelDir, "encoder.onnx", "encoder.int8.onnx", "encoder-*.onnx")
+	decoder := findFile(modelDir, "decoder.onnx", "decoder.int8.onnx", "decoder-*.onnx")
+	joiner := findFile(modelDir, "joiner.onnx", "joiner.int8.onnx", "joiner-*.onnx")
 	if encoder == "" || decoder == "" || joiner == "" {
 		return SherpaOnlineConfig{}, fmt.Errorf("speech: streaming transducer in %s requires encoder, decoder and joiner onnx files (found: encoder=%q, decoder=%q, joiner=%q)", modelDir, encoder, decoder, joiner)
 	}
@@ -942,7 +877,7 @@ func BuildSherpaOnlineConfig(cfg config.Config) (SherpaOnlineConfig, error) {
 		NumThreads:     threads,
 		Provider:       provider,
 		DecodingMethod: decodingMethod,
-		HotwordsFile:   cfg.SherpaHotwordsFile,
+		HotwordsFile:   hotwordsFile,
 		HotwordsScore:  hotwordsScore,
 		SampleRate:     16000,
 		FeatureDim:     80,

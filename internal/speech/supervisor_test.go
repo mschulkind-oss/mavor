@@ -385,3 +385,27 @@ func TestIsUnixSocket(t *testing.T) {
 		}
 	}
 }
+
+// The daemon configures no endpoint for a supervised child: the placement
+// says there is one, and the supervisor picks a free loopback port for it.
+// The client reads the address back rather than assuming one, so a fixed port
+// nobody chose would be the only alternative.
+func TestSupervisorWithNoConfiguredEndpointPicksALoopbackPort(t *testing.T) {
+	sup := NewSupervisor(SupervisorConfig{
+		CommandFunc:  whisperServerCommand,
+		PollInterval: 10 * time.Millisecond,
+		ReadyTimeout: 5 * time.Second,
+	})
+	if err := sup.Start(context.Background()); err != nil {
+		t.Fatalf("Start with no configured endpoint: %v", err)
+	}
+	defer sup.Stop()
+
+	endpoint := sup.Endpoint()
+	if !strings.HasPrefix(endpoint, "http://127.0.0.1:") {
+		t.Errorf("Endpoint() = %q, want a loopback HTTP address", endpoint)
+	}
+	if _, port := hostPort(endpoint); port == "" || port == "0" {
+		t.Errorf("Endpoint() = %q carries no real port", endpoint)
+	}
+}

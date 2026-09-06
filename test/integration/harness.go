@@ -423,8 +423,11 @@ func (h *Harness) RunDaemon(ctx context.Context, binary, modelName string, extra
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
 		h.t.Fatal(err)
 	}
-	cfg := fmt.Sprintf("model = %q\nmodel_dir = %q\nsocket = %q\ntop_margin = %d\n",
-		modelName, modelDir, socket, testTopMargin)
+	// placement = "subprocess" because the harness shims whisper-cli, not
+	// whisper-server: the default placement for a whisper model is a warm
+	// supervised server, and there is no fake one to supervise.
+	cfg := fmt.Sprintf("model = %q\n\n[overlay]\ntop_margin = %d\n\n[advanced]\nplacement = \"subprocess\"\n\n[paths]\nmodels = %q\nsocket = %q\n",
+		modelName, testTopMargin, modelDir, socket)
 	if err := os.WriteFile(filepath.Join(cfgDir, "config.toml"), []byte(cfg), 0o644); err != nil {
 		h.t.Fatal(err)
 	}

@@ -169,7 +169,7 @@ func TestResolveSherpaModelDir(t *testing.T) {
 
 	// 1. Resolve under XDG_DATA_HOME/mavor/models/sherpa/<model>
 	cfg := config.Config{
-		SherpaModel: "parakeet-tdt-0.6b",
+		Model: "parakeet-tdt-0.6b",
 	}
 	resolved, err := ResolveSherpaModelDir(cfg)
 	if err != nil {
@@ -187,8 +187,8 @@ func TestResolveSherpaModelDir(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(zipformerDir, "model.onnx"), []byte("model"), 0o644)
 
 	cfg = config.Config{
-		ModelDir:    customModelDir,
-		SherpaModel: "zipformer",
+		Paths: config.Paths{Models: customModelDir},
+		Model: "zipformer",
 	}
 	resolved, err = ResolveSherpaModelDir(cfg)
 	if err != nil {
@@ -202,7 +202,7 @@ func TestResolveSherpaModelDir(t *testing.T) {
 	explicitDir := filepath.Join(t.TempDir(), "explicit-model")
 	_ = os.MkdirAll(explicitDir, 0o755)
 	cfg = config.Config{
-		SherpaModel: explicitDir,
+		Model: explicitDir,
 	}
 	resolved, err = ResolveSherpaModelDir(cfg)
 	if err != nil {
@@ -214,7 +214,7 @@ func TestResolveSherpaModelDir(t *testing.T) {
 
 	// 4. Missing model directory
 	cfg = config.Config{
-		SherpaModel: "nonexistent-model",
+		Model: "nonexistent-model",
 	}
 	_, err = ResolveSherpaModelDir(cfg)
 	if err == nil || !strings.Contains(err.Error(), "nonexistent-model") {
@@ -290,12 +290,8 @@ func TestBuildSherpaOfflineConfig(t *testing.T) {
 	_ = os.WriteFile(tok, []byte("1"), 0o644)
 
 	cfg := config.Config{
-		SherpaModel:          modelDir,
-		Threads:              8,
-		SherpaProvider:       "cpu",
-		SherpaDecodingMethod: "modified_beam_search",
-		SherpaHotwordsFile:   tok,
-		SherpaHotwordsScore:  2.0,
+		Model:    modelDir,
+		Advanced: config.Advanced{Threads: 8},
 	}
 
 	sc, err := BuildSherpaOfflineConfig(cfg)
@@ -321,11 +317,8 @@ func TestBuildSherpaOfflineConfig(t *testing.T) {
 	if sc.NumThreads != 8 {
 		t.Errorf("NumThreads = %d, want 8", sc.NumThreads)
 	}
-	if sc.DecodingMethod != "modified_beam_search" {
-		t.Errorf("DecodingMethod = %q, want modified_beam_search", sc.DecodingMethod)
-	}
-	if sc.HotwordsScore != 2.0 {
-		t.Errorf("HotwordsScore = %f, want 2.0", sc.HotwordsScore)
+	if sc.Provider != "cpu" {
+		t.Errorf("Provider = %q, want cpu — the vendored ONNX Runtime has no other", sc.Provider)
 	}
 }
 
@@ -344,8 +337,8 @@ func TestBuildSherpaOnlineConfig(t *testing.T) {
 	_ = os.WriteFile(tok, []byte("1"), 0o644)
 
 	cfg := config.Config{
-		SherpaModel: modelDir,
-		Threads:     4,
+		Model:    modelDir,
+		Advanced: config.Advanced{Threads: 4},
 	}
 
 	sc, err := BuildSherpaOnlineConfig(cfg)
@@ -377,8 +370,7 @@ func TestSherpaTranscriberMockDispatch(t *testing.T) {
 	createTestWAV(t, wavPath, 16000, 1, 16, 1, 320)
 
 	cfg := config.Config{
-		Engine:      "sherpa",
-		SherpaModel: modelDir,
+		Model: modelDir,
 	}
 
 	st, err := NewSherpaTranscriber(cfg, slog.Default())
@@ -451,8 +443,7 @@ func TestSherpaTranscriberStreamingLifecycle(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(modelDir, "tokens.txt"), []byte("1"), 0o644)
 
 	cfg := config.Config{
-		Engine:      "sherpa",
-		SherpaModel: modelDir,
+		Model: modelDir,
 	}
 
 	st, err := NewSherpaTranscriber(cfg, slog.Default())
@@ -497,8 +488,7 @@ func TestSherpaTranscriberStreamingLifecycle(t *testing.T) {
 
 func TestSherpaTranscriberMissingModel(t *testing.T) {
 	cfg := config.Config{
-		Engine:      "sherpa",
-		SherpaModel: filepath.Join(t.TempDir(), "nonexistent"),
+		Model: filepath.Join(t.TempDir(), "nonexistent"),
 	}
 	_, err := NewSherpaTranscriber(cfg, slog.Default())
 	if err == nil {
@@ -519,8 +509,7 @@ func TestSherpaTranscriberMissingWav(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(modelDir, "tokens.txt"), []byte("1"), 0o644)
 
 	cfg := config.Config{
-		Engine:      "sherpa",
-		SherpaModel: modelDir,
+		Model: modelDir,
 	}
 
 	st, err := NewSherpaTranscriber(cfg, slog.Default())
@@ -546,8 +535,7 @@ func TestSherpaTranscriberStartIdempotent(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(modelDir, "tokens.txt"), []byte("1"), 0o644)
 
 	cfg := config.Config{
-		Engine:      "sherpa",
-		SherpaModel: modelDir,
+		Model: modelDir,
 	}
 
 	st, err := NewSherpaTranscriber(cfg, slog.Default())
@@ -586,7 +574,7 @@ func TestBuildSherpaOfflineConfigArchitectures(t *testing.T) {
 		_ = os.WriteFile(filepath.Join(tempDir, "cached_decode.onnx"), []byte("1"), 0o644)
 		_ = os.WriteFile(filepath.Join(tempDir, "tokens.txt"), []byte("1"), 0o644)
 
-		cfg := config.Config{SherpaModel: tempDir}
+		cfg := config.Config{Model: tempDir}
 		sc, err := BuildSherpaOfflineConfig(cfg)
 		if err != nil {
 			t.Fatalf("Moonshine v1 config failed: %v", err)
@@ -606,7 +594,7 @@ func TestBuildSherpaOfflineConfigArchitectures(t *testing.T) {
 		_ = os.WriteFile(filepath.Join(tempDir, "merged_decoder.onnx"), []byte("1"), 0o644)
 		_ = os.WriteFile(filepath.Join(tempDir, "tokens.txt"), []byte("1"), 0o644)
 
-		cfg := config.Config{SherpaModel: tempDir, SherpaModelType: "moonshine"}
+		cfg := config.Config{Model: tempDir}
 		sc, err := BuildSherpaOfflineConfig(cfg)
 		if err != nil {
 			t.Fatalf("Moonshine v2 config failed: %v", err)
@@ -616,13 +604,16 @@ func TestBuildSherpaOfflineConfigArchitectures(t *testing.T) {
 		}
 	})
 
-	// 3. SenseVoice
+	// 3. SenseVoice. A lone model.onnx beside a tokens.txt is also what a
+	// NeMo CTC looks like, so the directory name is the only evidence — which
+	// is the name `mavor models pull` gives it.
 	t.Run("SenseVoice", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := filepath.Join(t.TempDir(), "sensevoice-small")
+		_ = os.MkdirAll(tempDir, 0o755)
 		_ = os.WriteFile(filepath.Join(tempDir, "model.onnx"), []byte("1"), 0o644)
 		_ = os.WriteFile(filepath.Join(tempDir, "tokens.txt"), []byte("1"), 0o644)
 
-		cfg := config.Config{SherpaModel: tempDir, SherpaModelType: "sensevoice"}
+		cfg := config.Config{Model: tempDir}
 		sc, err := BuildSherpaOfflineConfig(cfg)
 		if err != nil {
 			t.Fatalf("SenseVoice config failed: %v", err)
@@ -650,7 +641,7 @@ func TestBuildSherpaOfflineConfigArchitectures(t *testing.T) {
 		_ = os.WriteFile(filepath.Join(tempDir, "tokens.json"), []byte("1"), 0o644)
 		_ = os.WriteFile(filepath.Join(tempDir, "tokens.txt"), []byte("1"), 0o644)
 
-		cfg := config.Config{SherpaModel: tempDir, SherpaModelType: "paraformer"}
+		cfg := config.Config{Model: tempDir}
 		sc, err := BuildSherpaOfflineConfig(cfg)
 		if err != nil {
 			t.Fatalf("Paraformer config failed: %v", err)
@@ -660,14 +651,16 @@ func TestBuildSherpaOfflineConfigArchitectures(t *testing.T) {
 		}
 	})
 
-	// 5. Whisper — encoder and decoder, and genuinely so.
+	// 5. Whisper — encoder and decoder, and genuinely so. Canary has the same
+	// two files, so the name is what separates them.
 	t.Run("Whisper", func(t *testing.T) {
-		tempDir := t.TempDir()
+		tempDir := filepath.Join(t.TempDir(), "whisper-onnx-base")
+		_ = os.MkdirAll(tempDir, 0o755)
 		_ = os.WriteFile(filepath.Join(tempDir, "encoder.onnx"), []byte("1"), 0o644)
 		_ = os.WriteFile(filepath.Join(tempDir, "decoder.onnx"), []byte("1"), 0o644)
 		_ = os.WriteFile(filepath.Join(tempDir, "tokens.txt"), []byte("1"), 0o644)
 
-		cfgWhisper := config.Config{SherpaModel: tempDir, SherpaModelType: "whisper"}
+		cfgWhisper := config.Config{Model: tempDir}
 		scWhisper, err := BuildSherpaOfflineConfig(cfgWhisper)
 		if err != nil {
 			t.Fatalf("Whisper config failed: %v", err)
@@ -687,25 +680,35 @@ func TestBuildSherpaOfflineConfigErrors(t *testing.T) {
 		_ = os.MkdirAll(dir, 0o755)
 		_ = os.WriteFile(filepath.Join(dir, "model.onnx"), []byte("1"), 0o644)
 
-		cfg := config.Config{SherpaModel: dir}
+		cfg := config.Config{Model: dir}
 		_, err := BuildSherpaOfflineConfig(cfg)
 		if err == nil || !strings.Contains(err.Error(), "tokens") {
 			t.Errorf("expected missing tokens error, got %v", err)
 		}
 	})
 
-	// 2. Transducer missing joiner
-	t.Run("Transducer missing joiner", func(t *testing.T) {
+	// 2. A transducer that is missing its joiner is not read as a broken
+	// transducer: the three files together are what identifies one, so two of
+	// them is an encoder-decoder model. There is no longer a key that can
+	// force the transducer reader onto a directory that cannot feed it, which
+	// matters because sherpa-onnx aborts the process rather than erroring
+	// when it is handed the wrong layout.
+	t.Run("Encoder and decoder with no joiner is not a transducer", func(t *testing.T) {
 		dir := filepath.Join(tempDir, "no-joiner")
 		_ = os.MkdirAll(dir, 0o755)
 		_ = os.WriteFile(filepath.Join(dir, "encoder.onnx"), []byte("1"), 0o644)
 		_ = os.WriteFile(filepath.Join(dir, "decoder.onnx"), []byte("1"), 0o644)
 		_ = os.WriteFile(filepath.Join(dir, "tokens.txt"), []byte("1"), 0o644)
 
-		cfg := config.Config{SherpaModel: dir, SherpaModelType: "transducer"}
-		_, err := BuildSherpaOfflineConfig(cfg)
-		if err == nil || !strings.Contains(err.Error(), "joiner") {
-			t.Errorf("expected missing joiner error, got %v", err)
+		sc, err := BuildSherpaOfflineConfig(config.Config{Model: dir})
+		if err != nil {
+			t.Fatalf("BuildSherpaOfflineConfig: %v", err)
+		}
+		if sc.ModelType == ModelTypeTransducer {
+			t.Error("ModelType = transducer for a directory with no joiner")
+		}
+		if sc.Transducer.Encoder != "" {
+			t.Errorf("the transducer fields were populated anyway: %+v", sc.Transducer)
 		}
 	})
 
@@ -716,7 +719,7 @@ func TestBuildSherpaOfflineConfigErrors(t *testing.T) {
 		_ = os.WriteFile(filepath.Join(dir, "merged_decoder.onnx"), []byte("1"), 0o644)
 		_ = os.WriteFile(filepath.Join(dir, "tokens.txt"), []byte("1"), 0o644)
 
-		cfg := config.Config{SherpaModel: dir, SherpaModelType: "moonshine"}
+		cfg := config.Config{Model: dir}
 		_, err := BuildSherpaOfflineConfig(cfg)
 		if err == nil || !strings.Contains(err.Error(), "encoder") {
 			t.Errorf("expected missing encoder error, got %v", err)
@@ -724,69 +727,22 @@ func TestBuildSherpaOfflineConfigErrors(t *testing.T) {
 	})
 }
 
-// sherpa-onnx applies a hotwords file only under modified_beam_search;
-// greedy_search ignores it silently. Configuring hotwords therefore has to
-// select a decoding method that can honour them, or sherpa_hotwords_file is
-// dead config that looks like it works.
-func TestHotwordsSelectModifiedBeamSearch(t *testing.T) {
+// The user never chooses a decoding method, and there is no key that sets
+// one. Greedy search is what runs, on every model and both recognizers: on
+// LibriSpeech the zipformer transducer scores 2.17% word error rate greedy
+// against 2.15% with modified beam search, and every non-transducer model
+// aborts on anything else. Beam search exists only to honour hotwords, and
+// configuring [vocabulary] is what will turn it on — see
+// docs/design/configuration-surface.md §7. That mapping is not built yet, so
+// nothing here asks for hotwords and nothing is passed.
+func TestDecodingIsGreedyWithNothingToBias(t *testing.T) {
 	dir := t.TempDir()
 	for _, f := range []string{"encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"} {
 		if err := os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	hot := filepath.Join(dir, "hotwords.txt")
-	if err := os.WriteFile(hot, []byte("kubernetes\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	t.Run("offline", func(t *testing.T) {
-		cfg := config.Config{
-			SherpaModel: dir, SherpaModelType: "transducer",
-			SherpaHotwordsFile: hot,
-		}
-		sc, err := BuildSherpaOfflineConfig(cfg)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if sc.DecodingMethod != "modified_beam_search" {
-			t.Errorf("DecodingMethod = %q, want modified_beam_search so the hotwords apply", sc.DecodingMethod)
-		}
-		if sc.HotwordsFile != hot {
-			t.Errorf("HotwordsFile = %q, want %q", sc.HotwordsFile, hot)
-		}
-	})
-
-	t.Run("online", func(t *testing.T) {
-		cfg := config.Config{
-			SherpaModel: dir, SherpaHotwordsFile: hot, SherpaHotwordsScore: 2.5,
-		}
-		sc, err := BuildSherpaOnlineConfig(cfg)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if sc.HotwordsFile != hot {
-			t.Errorf("streaming config dropped the hotwords file: HotwordsFile = %q, want %q", sc.HotwordsFile, hot)
-		}
-		if sc.HotwordsScore != 2.5 {
-			t.Errorf("HotwordsScore = %v, want 2.5", sc.HotwordsScore)
-		}
-		if sc.DecodingMethod != "modified_beam_search" {
-			t.Errorf("DecodingMethod = %q, want modified_beam_search so the hotwords apply", sc.DecodingMethod)
-		}
-	})
-}
-
-// Without hotwords, greedy_search stays the default: it is faster and the
-// beam search buys nothing.
-func TestNoHotwordsKeepsGreedySearch(t *testing.T) {
-	dir := t.TempDir()
-	for _, f := range []string{"encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"} {
-		if err := os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	cfg := config.Config{SherpaModel: dir}
+	cfg := config.Config{Model: dir}
 
 	online, err := BuildSherpaOnlineConfig(cfg)
 	if err != nil {
@@ -795,8 +751,10 @@ func TestNoHotwordsKeepsGreedySearch(t *testing.T) {
 	if online.DecodingMethod != "greedy_search" {
 		t.Errorf("online DecodingMethod = %q, want greedy_search", online.DecodingMethod)
 	}
+	if online.HotwordsFile != "" {
+		t.Errorf("online HotwordsFile = %q, want none", online.HotwordsFile)
+	}
 
-	cfg.SherpaModelType = "transducer"
 	offline, err := BuildSherpaOfflineConfig(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -804,29 +762,7 @@ func TestNoHotwordsKeepsGreedySearch(t *testing.T) {
 	if offline.DecodingMethod != "greedy_search" {
 		t.Errorf("offline DecodingMethod = %q, want greedy_search", offline.DecodingMethod)
 	}
-}
-
-// An explicit decoding method in config.toml is the user's call and must win.
-func TestExplicitDecodingMethodWins(t *testing.T) {
-	dir := t.TempDir()
-	for _, f := range []string{"encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"} {
-		if err := os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	hot := filepath.Join(dir, "hotwords.txt")
-	if err := os.WriteFile(hot, []byte("kubernetes\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg := config.Config{
-		SherpaModel: dir, SherpaModelType: "transducer",
-		SherpaHotwordsFile: hot, SherpaDecodingMethod: "greedy_search",
-	}
-	sc, err := BuildSherpaOfflineConfig(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sc.DecodingMethod != "greedy_search" {
-		t.Errorf("DecodingMethod = %q, want the configured greedy_search", sc.DecodingMethod)
+	if offline.HotwordsFile != "" {
+		t.Errorf("offline HotwordsFile = %q, want none", offline.HotwordsFile)
 	}
 }

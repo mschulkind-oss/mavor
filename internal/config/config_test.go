@@ -3,363 +3,417 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
+
+	toml "github.com/pelletier/go-toml/v2"
 )
 
-func TestDefaultsAreReasonable(t *testing.T) {
-	// The cache and runtime defaults are XDG-derived, so they have to be pinned
-	// or this asserts against whatever the developer's home happens to hold.
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
-
-	d := Default()
-	if d.TopMargin != 8 {
-		t.Errorf("TopMargin = %d, want 8", d.TopMargin)
+func writeConfig(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	// A catalog name, prefixed with its model family — not the GGML stem.
+	return path
+}
+
+func TestDefaultsAreTheDocumentedOnes(t *testing.T) {
+	d := Default()
+
 	if d.Model != "whisper-base.en" {
 		t.Errorf("Model = %q, want whisper-base.en", d.Model)
 	}
-	if !strings.HasSuffix(d.ModelDir, "/mavor/models") {
-		t.Errorf("ModelDir = %q, want suffix /mavor/models", d.ModelDir)
+	if !d.Preview.Enabled {
+		t.Error("Preview.Enabled = false, want true — the overlay shows text while you speak by default")
 	}
-	if !strings.HasSuffix(d.Socket, "/mavor.sock") {
-		t.Errorf("Socket = %q, want suffix /mavor.sock", d.Socket)
+	if d.Preview.Source != "auto" {
+		t.Errorf("Preview.Source = %q, want auto", d.Preview.Source)
 	}
-	// whisper.cpp uses whatever GPU backend its build loaded; "auto" is
-	// mavor staying out of the way, and "off" is the only other value.
-	if d.GPU != "auto" {
-		t.Errorf("GPU = %q, want auto", d.GPU)
+	if d.Preview.PauseMS != 450 || d.Preview.MinPhraseMS != 600 {
+		t.Errorf("Preview pause/min-phrase = %d/%d ms, want 450/600", d.Preview.PauseMS, d.Preview.MinPhraseMS)
 	}
-	if d.GPUOff() {
-		t.Error("GPUOff() = true for the default config, want false")
+	if d.Ducking.Enabled {
+		t.Error("Ducking.Enabled = true, want false — mavor does not touch host audio unless asked")
 	}
-	if d.Engine != "cli" {
-		t.Errorf("Engine = %q, want cli", d.Engine)
+	if d.Ducking.Volume != "0%" {
+		t.Errorf("Ducking.Volume = %q, want 0%%", d.Ducking.Volume)
 	}
-	if !strings.HasSuffix(d.ServerSocket, "/mavor-server.sock") {
-		t.Errorf("ServerSocket = %q, want suffix /mavor-server.sock", d.ServerSocket)
+	if d.Vocabulary.Boost != 1.5 {
+		t.Errorf("Vocabulary.Boost = %v, want 1.5", d.Vocabulary.Boost)
 	}
-	if d.DuckAudio != false {
-		t.Errorf("DuckAudio = %v, want false", d.DuckAudio)
+	if d.Overlay.TopMargin != 8 {
+		t.Errorf("Overlay.TopMargin = %d, want 8", d.Overlay.TopMargin)
 	}
-	// Recording should silence background media outright, not merely lower it;
-	// a partial reduction is opt-in via duck_volume.
-	if d.DuckVolume != "0%" {
-		t.Errorf("DuckVolume = %q, want 0%% (mute)", d.DuckVolume)
+	if d.Advanced.Placement != "auto" || d.Advanced.GPU != "auto" {
+		t.Errorf("Advanced placement/gpu = %q/%q, want auto/auto", d.Advanced.Placement, d.Advanced.GPU)
 	}
-	if d.DuckSink != "" {
-		t.Errorf("DuckSink = %q, want empty", d.DuckSink)
+	if d.Advanced.Server != "" {
+		t.Errorf("Advanced.Server = %q, want empty — nothing is remote unless a URL says so", d.Advanced.Server)
 	}
-	if len(d.DuckStreams) != 0 {
-		t.Errorf("DuckStreams = %v, want empty/nil", d.DuckStreams)
+	if d.Advanced.Threads != PhysicalCores() {
+		t.Errorf("Advanced.Threads = %d, want the physical core count %d", d.Advanced.Threads, PhysicalCores())
 	}
-}
-
-func TestLoadMissingFileReturnsDefaults(t *testing.T) {
-	missing := filepath.Join(t.TempDir(), "absent.toml")
-	got, err := Load(missing)
-	if err != nil {
-		t.Fatalf("Load missing: %v", err)
-	}
-	if got.DuckSink != "" || len(got.DuckStreams) != 0 {
-		t.Fatalf("unexpected duck config in defaults: %+v", got)
-	}
-	if got.TopMargin != Default().TopMargin || got.Model != Default().Model {
-		t.Fatalf("got %+v, want %+v", got, Default())
-	}
-}
-
-func TestLoadValidTOMLOverridesDefaults(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
-	body := `top_margin = 64
-model = "whisper-tiny.en"
-model_dir = "/var/lib/mavor/models"
-socket = "/run/user/1000/mavor.sock"
-gpu = "off"
-threads = 8
-engine = "server"
-server_socket = "/run/user/1000/custom-server.sock"
-duck_audio = true
-duck_volume = "15%"
-duck_sink = "alsa_output.pci-0000_00_1f.3.analog-stereo"
-duck_streams = ["spotify", "firefox", "vlc"]
-`
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	want := Config{
-		Mode:                 "batch",
-		Preset:               "balanced",
-		StreamingStrategy:    "auto",
-		SilenceThresholdMS:   450,
-		MinPhraseMS:          600,
-		TopMargin:            64,
-		Model:                "whisper-tiny.en",
-		ModelDir:             "/var/lib/mavor/models",
-		Socket:               "/run/user/1000/mavor.sock",
-		GPU:                  "off",
-		Threads:              8,
-		Engine:               "server",
-		ServerSocket:         "/run/user/1000/custom-server.sock",
-		DuckAudio:            true,
-		DuckVolume:           "15%",
-		DuckSink:             "alsa_output.pci-0000_00_1f.3.analog-stereo",
-		DuckStreams:          []string{"spotify", "firefox", "vlc"},
-		SherpaModel:          "",
-		SherpaModelType:      "auto",
-		SherpaTokens:         "",
-		SherpaEncoder:        "",
-		SherpaDecoder:        "",
-		SherpaJoiner:         "",
-		SherpaProvider:       "cpu",
-		SherpaHotwordsFile:   "",
-		SherpaHotwordsScore:  1.5,
-		SherpaDecodingMethod: "greedy_search",
-	}
-	if cfg.DuckSink != want.DuckSink {
-		t.Errorf("DuckSink = %q, want %q", cfg.DuckSink, want.DuckSink)
-	}
-	if len(cfg.DuckStreams) != len(want.DuckStreams) {
-		t.Fatalf("DuckStreams len = %d, want %d", len(cfg.DuckStreams), len(want.DuckStreams))
-	}
-	for i := range want.DuckStreams {
-		if cfg.DuckStreams[i] != want.DuckStreams[i] {
-			t.Errorf("DuckStreams[%d] = %q, want %q", i, cfg.DuckStreams[i], want.DuckStreams[i])
+	for name, got := range map[string]string{
+		"Paths.Models": d.Paths.Models,
+		"Paths.Log":    d.Paths.Log,
+		"Paths.Socket": d.Paths.Socket,
+	} {
+		if got == "" {
+			t.Errorf("%s is empty, want a default path", name)
 		}
 	}
 }
 
-func TestPresetsAndSimpleConfig(t *testing.T) {
-	t.Run("accurate preset selects whisper-large-v3-turbo", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "config.toml")
-		_ = os.WriteFile(path, []byte(`preset = "accurate"`), 0o644)
-		cfg, err := Load(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if cfg.Model != "whisper-large-v3-turbo" {
-			t.Errorf("Model = %q, want whisper-large-v3-turbo", cfg.Model)
-		}
-	})
-
-	t.Run("fast preset selects whisper-tiny.en", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "config.toml")
-		_ = os.WriteFile(path, []byte(`preset = "fast"`), 0o644)
-		cfg, err := Load(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if cfg.Model != "whisper-tiny.en" {
-			t.Errorf("Model = %q, want whisper-tiny.en", cfg.Model)
-		}
-	})
-
-	t.Run("streaming mode is parsed cleanly", func(t *testing.T) {
-		tempDir := t.TempDir()
-		path := filepath.Join(tempDir, "config.toml")
-		_ = os.WriteFile(path, []byte("mode = \"streaming\"\n"), 0o644)
-		cfg, err := Load(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if cfg.Mode != "streaming" {
-			t.Errorf("Mode = %q, want streaming", cfg.Mode)
-		}
-		if cfg.Model != "whisper-base.en" {
-			t.Errorf("Model = %q, want whisper-base.en", cfg.Model)
-		}
-	})
-}
-
-func TestLoadSherpaConfig(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
-	body := `engine = "sherpa"
-sherpa_model = "parakeet-tdt-0.6b"
-sherpa_model_type = "transducer"
-sherpa_tokens = "~/models/tokens.txt"
-sherpa_encoder = "~/models/encoder.onnx"
-sherpa_decoder = "~/models/decoder.onnx"
-sherpa_joiner = "~/models/joiner.onnx"
-sherpa_provider = "cuda"
-sherpa_hotwords_file = "~/models/hotwords.txt"
-sherpa_hotwords_score = 2.5
-sherpa_decoding_method = "modified_beam_search"
-`
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-
-	home, _ := os.UserHomeDir()
-	if cfg.Engine != "sherpa" {
-		t.Errorf("Engine = %q, want sherpa", cfg.Engine)
-	}
-	if cfg.SherpaModel != "parakeet-tdt-0.6b" {
-		t.Errorf("SherpaModel = %q, want parakeet-tdt-0.6b", cfg.SherpaModel)
-	}
-	if cfg.SherpaModelType != "transducer" {
-		t.Errorf("SherpaModelType = %q, want transducer", cfg.SherpaModelType)
-	}
-	if cfg.SherpaTokens != filepath.Join(home, "models/tokens.txt") {
-		t.Errorf("SherpaTokens = %q, want %q", cfg.SherpaTokens, filepath.Join(home, "models/tokens.txt"))
-	}
-	if cfg.SherpaEncoder != filepath.Join(home, "models/encoder.onnx") {
-		t.Errorf("SherpaEncoder = %q, want %q", cfg.SherpaEncoder, filepath.Join(home, "models/encoder.onnx"))
-	}
-	if cfg.SherpaDecoder != filepath.Join(home, "models/decoder.onnx") {
-		t.Errorf("SherpaDecoder = %q, want %q", cfg.SherpaDecoder, filepath.Join(home, "models/decoder.onnx"))
-	}
-	if cfg.SherpaJoiner != filepath.Join(home, "models/joiner.onnx") {
-		t.Errorf("SherpaJoiner = %q, want %q", cfg.SherpaJoiner, filepath.Join(home, "models/joiner.onnx"))
-	}
-	if cfg.SherpaProvider != "cuda" {
-		t.Errorf("SherpaProvider = %q, want cuda", cfg.SherpaProvider)
-	}
-	if cfg.SherpaHotwordsFile != filepath.Join(home, "models/hotwords.txt") {
-		t.Errorf("SherpaHotwordsFile = %q, want %q", cfg.SherpaHotwordsFile, filepath.Join(home, "models/hotwords.txt"))
-	}
-	if cfg.SherpaHotwordsScore != 2.5 {
-		t.Errorf("SherpaHotwordsScore = %f, want 2.5", cfg.SherpaHotwordsScore)
-	}
-	if cfg.SherpaDecodingMethod != "modified_beam_search" {
-		t.Errorf("SherpaDecodingMethod = %q, want modified_beam_search", cfg.SherpaDecodingMethod)
-	}
-}
-
-func TestLoadDuckConfig(t *testing.T) {
-	cases := []struct {
-		name        string
-		toml        string
-		wantAudio   bool
-		wantVolume  string
-		wantSink    string
-		wantStreams []string
-	}{
-		{
-			name: "custom sink only",
-			toml: `duck_audio = true
-duck_sink = "42"
-`,
-			wantAudio:   true,
-			wantVolume:  "0%",
-			wantSink:    "42",
-			wantStreams: nil,
-		},
-		{
-			name: "streams only",
-			toml: `duck_audio = true
-duck_streams = ["spotify", "zoom"]
-`,
-			wantAudio:   true,
-			wantVolume:  "0%",
-			wantSink:    "",
-			wantStreams: []string{"spotify", "zoom"},
-		},
-		{
-			name: "all duck options",
-			toml: `duck_audio = true
-duck_volume = "10%"
-duck_sink = "alsa_output.usb-dac"
-duck_streams = ["spotify", "firefox"]
-`,
-			wantAudio:   true,
-			wantVolume:  "10%",
-			wantSink:    "alsa_output.usb-dac",
-			wantStreams: []string{"spotify", "firefox"},
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "config.toml")
-			if err := os.WriteFile(path, []byte(tc.toml), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			cfg, err := Load(path)
-			if err != nil {
-				t.Fatalf("Load: %v", err)
-			}
-			if cfg.DuckAudio != tc.wantAudio {
-				t.Errorf("DuckAudio = %v, want %v", cfg.DuckAudio, tc.wantAudio)
-			}
-			if cfg.DuckVolume != tc.wantVolume {
-				t.Errorf("DuckVolume = %q, want %q", cfg.DuckVolume, tc.wantVolume)
-			}
-			if cfg.DuckSink != tc.wantSink {
-				t.Errorf("DuckSink = %q, want %q", cfg.DuckSink, tc.wantSink)
-			}
-			if len(cfg.DuckStreams) != len(tc.wantStreams) {
-				t.Fatalf("DuckStreams len = %d, want %d", len(cfg.DuckStreams), len(tc.wantStreams))
-			}
-			for i := range tc.wantStreams {
-				if cfg.DuckStreams[i] != tc.wantStreams[i] {
-					t.Errorf("DuckStreams[%d] = %q, want %q", i, cfg.DuckStreams[i], tc.wantStreams[i])
-				}
-			}
-		})
-	}
-}
-
-func TestLoadExpandsTildeAndEnv(t *testing.T) {
-	t.Setenv("TEST_MAVOR_RUNTIME", "/tmp/test-run")
-	path := filepath.Join(t.TempDir(), "config.toml")
-	body := `model_dir = "~/custom-models"
-socket = "$TEST_MAVOR_RUNTIME/custom.sock"
-server_socket = "$TEST_MAVOR_RUNTIME/custom-server.sock"
-`
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	home, _ := os.UserHomeDir()
-	if cfg.ModelDir != filepath.Join(home, "custom-models") {
-		t.Errorf("ModelDir = %q, want %q", cfg.ModelDir, filepath.Join(home, "custom-models"))
-	}
-	if cfg.Socket != "/tmp/test-run/custom.sock" {
-		t.Errorf("Socket = %q, want /tmp/test-run/custom.sock", cfg.Socket)
-	}
-	if cfg.ServerSocket != "/tmp/test-run/custom-server.sock" {
-		t.Errorf("ServerSocket = %q, want /tmp/test-run/custom-server.sock", cfg.ServerSocket)
-	}
-}
-
-func TestLoadPartialTOMLPreservesDefaults(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte(`top_margin = 16`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+// Resolve on a Config that already came from Default() must be a no-op, or
+// the round trip through the scaffolded file cannot be exact.
+func TestResolveIsIdempotentOnDefaults(t *testing.T) {
 	d := Default()
-	if cfg.TopMargin != 16 {
-		t.Errorf("TopMargin = %d, want 16", cfg.TopMargin)
+	got := d
+	got.Resolve()
+	if !reflect.DeepEqual(got, d) {
+		t.Errorf("Resolve() changed Default():\n got %+v\nwant %+v", got, d)
 	}
-	if cfg.Model != d.Model || cfg.ModelDir != d.ModelDir || cfg.Socket != d.Socket || cfg.Engine != d.Engine || cfg.ServerSocket != d.ServerSocket {
-		t.Errorf("non-overridden fields changed: %+v vs default %+v", cfg, d)
+}
+
+func TestLoadMissingFileUsesEveryDefault(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nope.toml"))
+	if err != nil {
+		t.Fatalf("Load on a missing file: %v, want no error", err)
+	}
+	if !reflect.DeepEqual(cfg, Default()) {
+		t.Errorf("Load on a missing file = %+v, want Default() %+v", cfg, Default())
+	}
+}
+
+func TestLoadFileReportsThatTheFileIsAbsent(t *testing.T) {
+	f, err := LoadFile(filepath.Join(t.TempDir(), "nope.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Exists {
+		t.Error("Exists = true for a file that is not there")
+	}
+	if f.SchemaLooksStale() {
+		t.Error("SchemaLooksStale() = true for a file that is not there")
+	}
+}
+
+func TestLoadReadsEveryTable(t *testing.T) {
+	path := writeConfig(t, `
+model = "parakeet-tdt-0.6b"
+
+[preview]
+enabled = false
+source = "phrases"
+pause_ms = 300
+min_phrase_ms = 900
+
+[ducking]
+enabled = true
+volume = "25%"
+apps = ["spotify", "firefox"]
+sink = "alsa_output.pci-0000_00_1f.3.analog-stereo"
+
+[vocabulary]
+words = ["mavor", "wlroots"]
+file = "/tmp/vocab.txt"
+boost = 2.5
+
+[overlay]
+top_margin = 32
+
+[advanced]
+placement = "subprocess"
+server = "http://127.0.0.1:8080"
+threads = 3
+gpu = "off"
+
+[paths]
+models = "/models"
+log = "/logs/mavor.log"
+socket = "/run/mavor.sock"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Model != "parakeet-tdt-0.6b" {
+		t.Errorf("Model = %q", cfg.Model)
+	}
+	if cfg.Preview.Enabled {
+		t.Error("Preview.Enabled = true, want the file's false")
+	}
+	if cfg.Preview.Source != "phrases" || cfg.Preview.PauseMS != 300 || cfg.Preview.MinPhraseMS != 900 {
+		t.Errorf("Preview = %+v", cfg.Preview)
+	}
+	if !cfg.Ducking.Enabled || cfg.Ducking.Volume != "25%" || cfg.Ducking.Sink == "" {
+		t.Errorf("Ducking = %+v", cfg.Ducking)
+	}
+	if !reflect.DeepEqual(cfg.Ducking.Apps, []string{"spotify", "firefox"}) {
+		t.Errorf("Ducking.Apps = %v", cfg.Ducking.Apps)
+	}
+	if !reflect.DeepEqual(cfg.Vocabulary.Words, []string{"mavor", "wlroots"}) {
+		t.Errorf("Vocabulary.Words = %v", cfg.Vocabulary.Words)
+	}
+	if cfg.Vocabulary.File != "/tmp/vocab.txt" || cfg.Vocabulary.Boost != 2.5 {
+		t.Errorf("Vocabulary = %+v", cfg.Vocabulary)
+	}
+	if cfg.Overlay.TopMargin != 32 {
+		t.Errorf("Overlay.TopMargin = %d, want 32", cfg.Overlay.TopMargin)
+	}
+	if cfg.Advanced.Placement != "subprocess" || cfg.Advanced.Server != "http://127.0.0.1:8080" ||
+		cfg.Advanced.Threads != 3 || cfg.Advanced.GPU != "off" {
+		t.Errorf("Advanced = %+v", cfg.Advanced)
+	}
+	if cfg.Paths.Models != "/models" || cfg.Paths.Log != "/logs/mavor.log" || cfg.Paths.Socket != "/run/mavor.sock" {
+		t.Errorf("Paths = %+v", cfg.Paths)
+	}
+}
+
+// The old schema resolved preset onto model and clobbered a model the user had
+// written by hand whenever it matched the default string. preset is gone, and
+// a model named in the file is the model that runs.
+func TestAnExplicitModelSurvivesResolve(t *testing.T) {
+	for _, name := range []string{"whisper-base.en", "whisper-tiny.en", "parakeet-tdt-0.6b"} {
+		path := writeConfig(t, "model = "+strconv.Quote(name)+"\n")
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Model != name {
+			t.Errorf("model = %q in the file loaded as %q", name, cfg.Model)
+		}
+	}
+}
+
+func TestPartialFileKeepsEveryOtherDefault(t *testing.T) {
+	path := writeConfig(t, "[overlay]\ntop_margin = 16\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Default()
+	want.Overlay.TopMargin = 16
+	if !reflect.DeepEqual(cfg, want) {
+		t.Errorf("one key in the file changed more than that key:\n got %+v\nwant %+v", cfg, want)
+	}
+}
+
+func TestUnknownKeyWarnsButDoesNotFail(t *testing.T) {
+	path := writeConfig(t, "model = \"whisper-tiny.en\"\nengine = \"cli\"\n\n[preview]\nenabled = true\nmode = \"batch\"\n")
+	f, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v, want an unknown key to be a warning and not an error", err)
+	}
+	if !reflect.DeepEqual(f.UnknownKeys, []string{"engine", "preview.mode"}) {
+		t.Errorf("UnknownKeys = %v, want [engine preview.mode]", f.UnknownKeys)
+	}
+	if f.Model != "whisper-tiny.en" {
+		t.Errorf("Model = %q — the known keys around an unknown one must still land", f.Model)
+	}
+	if f.SchemaLooksStale() {
+		t.Error("SchemaLooksStale() = true for a file whose other keys are fine")
+	}
+}
+
+// A file written against the pre-rewrite schema has no key mavor recognizes.
+// doctor says so plainly rather than reporting "3 unknown keys", because the
+// user's whole configuration is being ignored.
+func TestFileOfOnlyOldKeysReadsAsAStaleSchema(t *testing.T) {
+	path := writeConfig(t, "mode = \"streaming\"\npreset = \"fast\"\nengine = \"sherpa\"\nsherpa_model = \"zipformer-streaming\"\n")
+	f, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if !f.SchemaLooksStale() {
+		t.Fatalf("SchemaLooksStale() = false for a file of only old keys (unknown=%v known=%d)", f.UnknownKeys, f.KnownKeys)
+	}
+	if len(f.UnknownKeys) != 4 {
+		t.Errorf("UnknownKeys = %v, want all four named", f.UnknownKeys)
+	}
+	if !reflect.DeepEqual(f.Config, Default()) {
+		t.Error("a file of only old keys must leave every default in place")
+	}
+}
+
+func TestUnknownTableCountsAsUnknown(t *testing.T) {
+	path := writeConfig(t, "model = \"whisper-tiny.en\"\n\n[sherpa]\nprovider = \"cuda\"\ndecoding_method = \"greedy_search\"\n")
+	f, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if len(f.UnknownKeys) == 0 {
+		t.Fatal("an unknown table was not reported")
+	}
+	if f.KnownKeys != 1 {
+		t.Errorf("KnownKeys = %d, want 1 — model is the only key the schema has here", f.KnownKeys)
+	}
+}
+
+func TestThreadsAtOrBelowZeroAutodetects(t *testing.T) {
+	for _, v := range []string{"0", "-4"} {
+		path := writeConfig(t, "[advanced]\nthreads = "+v+"\n")
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Advanced.Threads != PhysicalCores() {
+			t.Errorf("threads = %s loaded as %d, want the autodetected %d", v, cfg.Advanced.Threads, PhysicalCores())
+		}
+	}
+}
+
+// PhysicalCores counts distinct core_id values, which is how Linux says how
+// many cores are behind the logical CPUs. The fake topology here is four
+// hyperthreads on two cores.
+func TestPhysicalCoresCountsDistinctCoreIDs(t *testing.T) {
+	root := t.TempDir()
+	for cpu, coreID := range map[string]string{"cpu0": "0", "cpu1": "1", "cpu2": "0", "cpu3": "1"} {
+		dir := filepath.Join(root, cpu, "topology")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "core_id"), []byte(coreID+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := cpuTopologyRoot
+	cpuTopologyRoot = root
+	defer func() { cpuTopologyRoot = old }()
+
+	if got := PhysicalCores(); got != 2 {
+		t.Errorf("PhysicalCores() = %d for four hyperthreads on two cores, want 2", got)
+	}
+}
+
+func TestPhysicalCoresFallsBackWhenTopologyIsUnreadable(t *testing.T) {
+	old := cpuTopologyRoot
+	cpuTopologyRoot = filepath.Join(t.TempDir(), "no-such-sysfs")
+	defer func() { cpuTopologyRoot = old }()
+
+	if got := PhysicalCores(); got < 1 {
+		t.Errorf("PhysicalCores() = %d with no topology to read, want at least 1", got)
+	}
+}
+
+func TestNegativeTopMarginClampsToZero(t *testing.T) {
+	path := writeConfig(t, "[overlay]\ntop_margin = -20\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Overlay.TopMargin != 0 {
+		t.Errorf("top_margin = -20 loaded as %d, want 0", cfg.Overlay.TopMargin)
+	}
+}
+
+func TestNonPositivePreviewTimingsUseTheDefaults(t *testing.T) {
+	path := writeConfig(t, "[preview]\npause_ms = 0\nmin_phrase_ms = -1\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Preview.PauseMS != 450 {
+		t.Errorf("pause_ms = 0 loaded as %d, want 450", cfg.Preview.PauseMS)
+	}
+	if cfg.Preview.MinPhraseMS != 600 {
+		t.Errorf("min_phrase_ms = -1 loaded as %d, want 600", cfg.Preview.MinPhraseMS)
+	}
+}
+
+func TestLoadExpandsTildeAndEnvInEveryPath(t *testing.T) {
+	t.Setenv("TEST_MAVOR_RUNTIME", "/tmp/test-run")
+	path := writeConfig(t, `
+[vocabulary]
+file = "~/words.txt"
+
+[paths]
+models = "~/custom-models"
+log = "$TEST_MAVOR_RUNTIME/mavor.log"
+socket = "$TEST_MAVOR_RUNTIME/custom.sock"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	home, _ := os.UserHomeDir()
+	if want := filepath.Join(home, "custom-models"); cfg.Paths.Models != want {
+		t.Errorf("Paths.Models = %q, want %q", cfg.Paths.Models, want)
+	}
+	if want := filepath.Join(home, "words.txt"); cfg.Vocabulary.File != want {
+		t.Errorf("Vocabulary.File = %q, want %q", cfg.Vocabulary.File, want)
+	}
+	if cfg.Paths.Log != "/tmp/test-run/mavor.log" {
+		t.Errorf("Paths.Log = %q, want /tmp/test-run/mavor.log", cfg.Paths.Log)
+	}
+	if cfg.Paths.Socket != "/tmp/test-run/custom.sock" {
+		t.Errorf("Paths.Socket = %q, want /tmp/test-run/custom.sock", cfg.Paths.Socket)
+	}
+}
+
+// `mavor config show` marshals the resolved config; saving that output as the
+// config file and loading it again must produce the same values. This is
+// §10.6 of the design, and it is what stops a marshalled default from being
+// unreadable on the way back in.
+func TestConfigShowOutputRoundTrips(t *testing.T) {
+	original, err := Load(writeConfig(t, "model = \"whisper-small.en\"\n\n[ducking]\nenabled = true\napps = [\"spotify\"]\n\n[vocabulary]\nwords = [\"mavor\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := toml.Marshal(original)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	reloaded, err := Load(writeConfig(t, string(body)))
+	if err != nil {
+		t.Fatalf("reload of `config show` output: %v\n%s", err, body)
+	}
+	if !reflect.DeepEqual(reloaded, original) {
+		t.Errorf("`config show` output does not reload to the same config:\n got %+v\nwant %+v\nfile:\n%s", reloaded, original, body)
+	}
+}
+
+func TestDefaultConfigRoundTrips(t *testing.T) {
+	body, err := toml.Marshal(Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := Load(writeConfig(t, string(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(reloaded, Default()) {
+		t.Errorf("marshalled defaults did not reload to Default():\n got %+v\nwant %+v\nfile:\n%s", reloaded, Default(), body)
+	}
+}
+
+// A marshalled config must not carry a key the loader then rejects: that is
+// the same drift class as the scaffolded template, one round trip later.
+func TestConfigShowOutputHasNoUnknownKeys(t *testing.T) {
+	body, err := toml.Marshal(Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := LoadFile(writeConfig(t, string(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.UnknownKeys) > 0 {
+		t.Errorf("marshalling Default() produced keys the loader does not know: %v", f.UnknownKeys)
 	}
 }
 
 func TestLoadInvalidTOMLReturnsError(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte(`top_margin = "not a number"`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	path := writeConfig(t, "[overlay]\ntop_margin = \"not a number\"\n")
 	if _, err := Load(path); err == nil {
-		t.Fatal("expected parse error on invalid TOML")
+		t.Fatal("expected a parse error on a value of the wrong type")
+	} else if !strings.Contains(err.Error(), "config: ") {
+		t.Errorf("error %q does not carry the package prefix", err)
 	}
 }
 
@@ -383,27 +437,23 @@ func TestDefaultModelDirHonorsXDGCacheHome(t *testing.T) {
 	}
 }
 
-func TestDefaultLogFileHonorsXDGStateHome(t *testing.T) {
+func TestDefaultLogPathHonorsXDGStateHome(t *testing.T) {
 	base := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", base)
 
 	want := filepath.Join(base, "mavor", "daemon.log")
-	if got := Default().LogFile; got != want {
-		t.Errorf("Default().LogFile = %q, want %q", got, want)
+	if got := Default().Paths.Log; got != want {
+		t.Errorf("Default().Paths.Log = %q, want %q", got, want)
 	}
 }
 
 func TestGPUDefaultsToAutoWhenUnset(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte(`model = "whisper-tiny.en"`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := Load(path)
+	cfg, err := Load(writeConfig(t, `model = "whisper-tiny.en"`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.GPU != "auto" {
-		t.Errorf("GPU = %q with no gpu key, want auto", cfg.GPU)
+	if cfg.Advanced.GPU != "auto" {
+		t.Errorf("GPU = %q with no gpu key, want auto", cfg.Advanced.GPU)
 	}
 	if cfg.GPUOff() {
 		t.Error("GPUOff() = true with no gpu key, want false")
@@ -411,16 +461,12 @@ func TestGPUDefaultsToAutoWhenUnset(t *testing.T) {
 }
 
 func TestGPUOffIsRead(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte(`gpu = "off"`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := Load(path)
+	cfg, err := Load(writeConfig(t, "[advanced]\ngpu = \"off\"\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !cfg.GPUOff() {
-		t.Errorf("GPUOff() = false for gpu = %q, want true", cfg.GPU)
+		t.Errorf("GPUOff() = false for gpu = %q, want true", cfg.Advanced.GPU)
 	}
 }
 
@@ -434,7 +480,7 @@ func TestZeroValueGPUMeansAuto(t *testing.T) {
 
 func TestGPUOffIgnoresCaseAndSpacing(t *testing.T) {
 	for _, v := range []string{"off", "OFF", " Off "} {
-		if !(Config{GPU: v}).GPUOff() {
+		if !(Config{Advanced: Advanced{GPU: v}}).GPUOff() {
 			t.Errorf("GPUOff() = false for gpu = %q, want true", v)
 		}
 	}

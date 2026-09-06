@@ -214,7 +214,7 @@ func run() error {
 	// The in-process sherpa engines are always linked in — mavor is a cgo
 	// program with no pure-Go variant — so the only way this column goes
 	// missing is someone asking for it to.
-	sherpa := sherpaRunner{modelDir: cat.ModelDir, threads: o.threads, provider: "cpu"}
+	sherpa := sherpaRunner{modelDir: cat.ModelDir, threads: o.threads}
 	sherpaOK := !o.skipSherpa
 	if o.skipSherpa {
 		report.Skipped = append(report.Skipped, skipNote{"sherpa", "disabled with -no-sherpa"})

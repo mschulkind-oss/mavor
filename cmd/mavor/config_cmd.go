@@ -5,53 +5,105 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/mschulkind-oss/mavor/internal/config"
 	toml "github.com/pelletier/go-toml/v2"
 )
 
-const defaultConfigTemplate = `# ~/.config/mavor/config.toml
-# mavor voice-to-text dictation daemon configuration
-# ==============================================================================
-# Simple Configuration (Smart Defaults)
-# ==============================================================================
+// defaultConfigTemplate renders the file `mavor config init` scaffolds.
+//
+// It is generated from config.Default() rather than written out a second
+// time. The two used to be separate literals and drifted — a user who ran
+// `config init` got a different mode, a different ducking setting and a
+// different top margin from a user who did not — which is the bug this
+// generator exists to make impossible. A test parses the output and asserts
+// it is exactly config.Default().
+//
+// Every value it prints therefore comes from d. The commented-out lines are
+// documentation, not settings: deleting one changes nothing, because the
+// value beside it is already the default.
+func defaultConfigTemplate() string {
+	d := config.Default()
+	return fmt.Sprintf(`# ~/.config/mavor/config.toml
+#
+# Every value has a working default; delete a line to get it back.
+# Run `+"`mavor doctor`"+` after editing — it checks each setting against this
+# machine and reports what the daemon will actually do with it.
 
-# Live preview while you speak. The text is typed once either way — when
-# transcription finishes — because partial results are provisional.
-# - "batch": no preview; the overlay shows only that it is recording (default).
-# - "streaming": show partial text in the overlay as the words are recognized.
-mode = "batch"
+# The model that produces your text. `+"`mavor models list`"+` shows every choice
+# with its size, speed and accuracy, and marks what is installed.
+model = %q
 
-# Quality & Speed Preset:
-# - "balanced": Whisper Base / Parakeet-TDT (100% accuracy, ~1.2s or 80ms live) — default.
-# - "accurate": Whisper Large-v3 Turbo (maximum vocabulary nuance).
-# - "fast":     Whisper Tiny / Moonshine (ultra-light, sub-0.7s).
-preset = "balanced"
+[preview]
+# Text in the overlay while you speak. The final text always comes from
+# `+"`model`"+`, typed once when you release the key. The preview types nothing.
+enabled = %t
 
-# Silence background music / media playback while recording. Set duck_volume to
-# lower it instead of muting, e.g. duck_volume = "25%".
-duck_audio = true
-# duck_volume = "0%"
+# Where the preview text comes from.
+#   "auto"       — read `+"`model`"+` directly if it decodes as you speak;
+#                  otherwise run a small streaming model alongside it;
+#                  otherwise fall back to "phrases"
+#   "phrases"    — no second model: re-transcribe with `+"`model`"+` at each
+#                  pause. Cheaper, slower, and prone to filling silence
+#                  with words you did not say
+#   <model name> — run that model alongside as the preview source
+source = %q
 
-# ==============================================================================
-# Advanced Overrides (Optional — smart defaults are resolved automatically above)
-# ==============================================================================
-# top_margin = 32             # Gap below your bar (Waybar, etc.) in pixels
-# engine = "server"           # "server", "cli", or "sherpa"
-# model = "whisper-base.en"   # Catalog name; run "mavor models list" for the rest
-# threads = 4                 # CPU inference threads
-# gpu = "auto"                # "auto" or "off". whisper only; whisper.cpp uses
-#                           # whatever GPU backend its build loaded. "off" passes -ng.
-# streaming_strategy = "auto" # "auto", "vad_batch" (Whisper pauses), or "transducer" (Parakeet)
-# silence_threshold_ms = 450  # Pause duration to trigger VAD batch slice
-# min_phrase_ms = 600         # Minimum speech duration before slicing
-# socket = "$XDG_RUNTIME_DIR/mavor.sock"
-# Where engine = "server" sends audio. A filesystem path means "run a local
-# whisper-server for me" — the daemon picks a loopback port and supervises the
-# child, so nothing is created at the path itself. Use an http:// URL to reach
-# a server you run.
-# server_socket = "$XDG_RUNTIME_DIR/mavor-server.sock"
-`
+# "phrases" only: how long a pause ends a phrase, and how much speech a
+# phrase needs before a pause can end it.
+# pause_ms = %d
+# min_phrase_ms = %d
+
+[ducking]
+# Lower other audio while recording.
+enabled = %t
+volume = %-25q# "0%%" mutes; "25%%" merely lowers
+# apps = ["spotify", "firefox"]   # only these; the default is every stream
+# sink = ""                       # a specific output, not the default one
+
+[vocabulary]
+# Words the model gets wrong: names, jargon, commands. whisper models take
+# these as a prompt; transducer models (parakeet, zipformer) boost them
+# while decoding. Other models cannot use them and `+"`mavor doctor`"+` says so.
+# words = ["mavor", "wlroots", "Schulkind"]
+# file  = "~/.config/mavor/vocabulary.txt"   # one phrase per line
+# boost = %s   # transducers only. 1.5 to 3.0 is the useful range; higher
+#               # makes these words appear where they were not said.
+
+[overlay]
+top_margin = %d   # px below the top of the usable area, under your bar
+
+# Chosen for you. Override only if `+"`mavor doctor`"+` gives you a reason to.
+[advanced]
+# placement = %q     # "auto", or "subprocess" for whisper models
+# server = "http://…"    # send audio to a whisper server you run instead
+# threads = %-12d # default: this machine's physical core count
+# gpu = %q           # "auto" or "off". whisper only — sherpa models
+#                        # run on the CPU whatever this says.
+
+[paths]
+# models = %q
+# log    = %q
+# socket = %q
+`,
+		d.Model,
+		d.Preview.Enabled,
+		d.Preview.Source,
+		d.Preview.PauseMS,
+		d.Preview.MinPhraseMS,
+		d.Ducking.Enabled,
+		d.Ducking.Volume,
+		strconv.FormatFloat(float64(d.Vocabulary.Boost), 'f', -1, 32),
+		d.Overlay.TopMargin,
+		d.Advanced.Placement,
+		d.Advanced.Threads,
+		d.Advanced.GPU,
+		d.Paths.Models,
+		d.Paths.Log,
+		d.Paths.Socket,
+	)
+}
 
 func runConfig(args []string) error {
 	if len(args) == 0 {
@@ -93,7 +145,7 @@ func runConfigInit(force bool) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create config directory %s: %w", dir, err)
 	}
-	if err := os.WriteFile(p, []byte(defaultConfigTemplate), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(defaultConfigTemplate()), 0o644); err != nil {
 		return fmt.Errorf("write config %s: %w", p, err)
 	}
 	fmt.Printf("✅ Initialized configuration at %s\n", p)

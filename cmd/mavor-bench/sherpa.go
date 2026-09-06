@@ -20,7 +20,6 @@ import (
 type sherpaRunner struct {
 	modelDir string
 	threads  int
-	provider string
 }
 
 // config builds the mavor configuration that selects one sherpa model, the
@@ -30,14 +29,10 @@ type sherpaRunner struct {
 // misclassifies shows up here as a wrong number or a failure rather than
 // being quietly bypassed.
 func (s sherpaRunner) config(model string) config.Config {
-	cfg := config.Config{
-		Engine:         "sherpa",
-		Model:          model,
-		SherpaModel:    model,
-		ModelDir:       s.modelDir,
-		Threads:        s.threads,
-		SherpaProvider: s.provider,
-	}
+	cfg := config.Default()
+	cfg.Model = model
+	cfg.Paths.Models = s.modelDir
+	cfg.Advanced.Threads = s.threads
 	return cfg
 }
 

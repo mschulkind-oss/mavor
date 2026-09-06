@@ -145,10 +145,13 @@ func runDaemon(args []string) error {
 		}
 	}
 
-	cfg, err := config.Load("")
+	// Config is read once, here, and never reloaded: a change needs `mavor
+	// stop` and a restart.
+	cfgFile, err := config.LoadFile("")
 	if err != nil {
 		return err
 	}
+	cfg := cfgFile.Config
 	logLevel := slog.LevelInfo
 	if verbose {
 		logLevel = slog.LevelDebug
@@ -156,7 +159,7 @@ func runDaemon(args []string) error {
 
 	targetLog := logFile
 	if targetLog == "" {
-		targetLog = cfg.LogFile
+		targetLog = cfg.Paths.Log
 	}
 
 	var logWriter io.Writer = os.Stderr
@@ -171,7 +174,19 @@ func runDaemon(args []string) error {
 	}
 	logger := slog.New(slog.NewTextHandler(logWriter, &slog.HandlerOptions{Level: logLevel}))
 
-	transcriber, err := speech.Factory(cfg, logger)
+	// Anything in the file the schema does not have is reported here, once,
+	// now that there is a logger to report it to. It is not fatal — but a
+	// setting that is silently ignored is worse than one that is refused.
+	cfgFile.LogWarnings(logger)
+
+	// The model decides the runtime, the runtime and [advanced] decide the
+	// placement, and both are resolved once here — config is read at daemon
+	// start and never reloaded.
+	resolved, err := speech.Resolve(cfg)
+	if err != nil {
+		return err
+	}
+	transcriber, err := speech.FactoryFor(cfg, resolved, logger)
 	if err != nil {
 		return err
 	}
@@ -180,7 +195,7 @@ func runDaemon(args []string) error {
 	}
 
 	recDir := filepath.Join(os.TempDir(), "mavor-recordings")
-	ov, err := overlay.NewDefault(cfg.TopMargin, logger)
+	ov, err := overlay.NewDefault(cfg.Overlay.TopMargin, logger)
 	if err != nil {
 		logger.Warn("overlay unavailable, falling back to noop", "err", err)
 		ov = &overlay.Noop{}
@@ -192,25 +207,24 @@ func runDaemon(args []string) error {
 	outDispatch.Logger = logger
 
 	var ducker audio.Ducker = &audio.NoopDucker{}
-	if cfg.DuckAudio {
-		d := audio.NewCommandDucker(audio.BackendAuto, cfg.DuckVolume, cfg.DuckSink, cfg.DuckStreams)
+	if cfg.Ducking.Enabled {
+		d := audio.NewCommandDucker(audio.BackendAuto, cfg.Ducking.Volume, cfg.Ducking.Sink, cfg.Ducking.Apps)
 		d.SetLogger(logger)
 		ducker = d
 	}
 
 	d := daemon.New(daemon.Config{
-		Socket:            cfg.Socket,
+		Socket:            cfg.Paths.Socket,
 		Recorder:          recorder,
 		Transcriber:       transcriber,
 		Output:            outDispatch,
 		Overlay:           ov,
 		Ducker:            ducker,
 		Logger:            logger,
-		StreamingStrategy: cfg.StreamingStrategy,
-		Mode:              cfg.Mode,
+		PreviewEnabled:    cfg.Preview.Enabled,
 		History:           transcriptStore(logger),
-		SilenceThreshold:  time.Duration(cfg.SilenceThresholdMS) * time.Millisecond,
-		MinPhraseDuration: time.Duration(cfg.MinPhraseMS) * time.Millisecond,
+		SilenceThreshold:  time.Duration(cfg.Preview.PauseMS) * time.Millisecond,
+		MinPhraseDuration: time.Duration(cfg.Preview.MinPhraseMS) * time.Millisecond,
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -222,26 +236,27 @@ func runDaemon(args []string) error {
 		}
 	}
 
-	modelPath := speech.WhisperModelPath(cfg.ModelDir, cfg.Model)
 	logger.Info("daemon starting",
-		"mode", cfg.Mode,
-		"preset", cfg.Preset,
-		"streaming_strategy", cfg.StreamingStrategy,
-		"socket", cfg.Socket,
-		"engine", cfg.Engine,
-		"server_socket", cfg.ServerSocket,
+		"socket", cfg.Paths.Socket,
 		"model", cfg.Model,
-		"model_path", modelPath,
-		"gpu", cfg.GPU,
-		"threads", cfg.Threads,
+		"runtime", string(resolved.Runtime),
+		"placement", string(resolved.Placement),
+		"placement_reason", resolved.Reason,
+		"model_path", resolved.ModelPath,
+		"model_dir", resolved.ModelDir,
+		"server", resolved.Server,
+		"preview_enabled", cfg.Preview.Enabled,
+		"preview_source", cfg.Preview.Source,
+		"gpu", cfg.Advanced.GPU,
+		"threads", cfg.Advanced.Threads,
 		"recording_dir", recDir,
-		"top_margin", cfg.TopMargin,
-		"duck_audio", cfg.DuckAudio,
-		"duck_volume", cfg.DuckVolume,
-		"duck_sink", cfg.DuckSink,
-		"duck_streams", cfg.DuckStreams,
-		"silence_threshold_ms", cfg.SilenceThresholdMS,
-		"min_phrase_ms", cfg.MinPhraseMS,
+		"top_margin", cfg.Overlay.TopMargin,
+		"duck_enabled", cfg.Ducking.Enabled,
+		"duck_volume", cfg.Ducking.Volume,
+		"duck_sink", cfg.Ducking.Sink,
+		"duck_apps", cfg.Ducking.Apps,
+		"pause_ms", cfg.Preview.PauseMS,
+		"min_phrase_ms", cfg.Preview.MinPhraseMS,
 		"pulse_source", os.Getenv("PULSE_SOURCE"),
 		"wayland_display", os.Getenv("WAYLAND_DISPLAY"),
 		"xdg_runtime_dir", os.Getenv("XDG_RUNTIME_DIR"),
@@ -255,7 +270,7 @@ func runToggle() error {
 	if err != nil {
 		return err
 	}
-	resp, err := ipc.Send(cfg.Socket, ipc.Request{Action: "toggle"}, 2*time.Second)
+	resp, err := ipc.Send(cfg.Paths.Socket, ipc.Request{Action: "toggle"}, 2*time.Second)
 	if err != nil {
 		return fmt.Errorf("toggle: %w (is the daemon running?)", err)
 	}
@@ -271,7 +286,7 @@ func runStart() error {
 	if err != nil {
 		return err
 	}
-	resp, err := ipc.Send(cfg.Socket, ipc.Request{Action: "start"}, 2*time.Second)
+	resp, err := ipc.Send(cfg.Paths.Socket, ipc.Request{Action: "start"}, 2*time.Second)
 	if err != nil {
 		return fmt.Errorf("start: %w (is the daemon running?)", err)
 	}
@@ -287,7 +302,7 @@ func runStop() error {
 	if err != nil {
 		return err
 	}
-	resp, err := ipc.Send(cfg.Socket, ipc.Request{Action: "stop"}, 2*time.Second)
+	resp, err := ipc.Send(cfg.Paths.Socket, ipc.Request{Action: "stop"}, 2*time.Second)
 	if err != nil {
 		return fmt.Errorf("stop: %w (is the daemon running?)", err)
 	}
@@ -303,7 +318,7 @@ func runStatus() error {
 	if err != nil {
 		return err
 	}
-	resp, err := ipc.Send(cfg.Socket, ipc.Request{Action: "status"}, 2*time.Second)
+	resp, err := ipc.Send(cfg.Paths.Socket, ipc.Request{Action: "status"}, 2*time.Second)
 	if err != nil {
 		return fmt.Errorf("status: %w (is the daemon running?)", err)
 	}

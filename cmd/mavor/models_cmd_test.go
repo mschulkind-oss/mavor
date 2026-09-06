@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/mschulkind-oss/mavor/internal/config"
+	"github.com/mschulkind-oss/mavor/internal/models"
 	"github.com/mschulkind-oss/mavor/internal/speech"
 )
 
@@ -39,11 +40,11 @@ func TestKnownModelsCatalog(t *testing.T) {
 		},
 	}
 
-	for family, models := range requiredFamilies {
-		for _, m := range models {
-			spec, ok := knownModels[m]
+	for family, names := range requiredFamilies {
+		for _, m := range names {
+			spec, ok := models.Lookup(m)
 			if !ok {
-				t.Errorf("missing model %q in knownModels catalog (family: %s)", m, family)
+				t.Errorf("missing model %q in the catalog (family: %s)", m, family)
 				continue
 			}
 			if spec.URL == "" {
@@ -85,7 +86,7 @@ func TestWhisperCatalogNameResolvesToTheUpstreamFilename(t *testing.T) {
 
 func TestEveryWhisperEntryResolvesToItsOwnFilename(t *testing.T) {
 	dir := t.TempDir()
-	for _, m := range modelCatalog {
+	for _, m := range models.Catalog {
 		if m.Engine != "whisper" {
 			continue
 		}
@@ -102,7 +103,7 @@ func TestEveryWhisperEntryResolvesToItsOwnFilename(t *testing.T) {
 
 // A sherpa entry has no Filename: it unpacks into a directory, not a file.
 func TestSherpaEntriesCarryNoFilename(t *testing.T) {
-	for _, m := range modelCatalog {
+	for _, m := range models.Catalog {
 		if m.Engine == "sherpa" && m.Filename != "" {
 			t.Errorf("sherpa model %q carries Filename %q; it unpacks into a directory", m.Name, m.Filename)
 		}
@@ -127,7 +128,7 @@ func TestEveryCatalogNameBeginsWithItsFamily(t *testing.T) {
 		"Zipformer":  {"zipformer-"},
 	}
 
-	for _, m := range modelCatalog {
+	for _, m := range models.Catalog {
 		allowed, known := prefixes[m.Family]
 		if !known {
 			t.Errorf("model %q is in family %q, which has no agreed name prefix", m.Name, m.Family)
@@ -276,7 +277,7 @@ func TestRunModelsCommands(t *testing.T) {
 // every entry must be a distinct artifact.
 func TestCatalogEntriesAreDistinctDownloads(t *testing.T) {
 	seenURL := map[string]string{}
-	for _, m := range modelCatalog {
+	for _, m := range models.Catalog {
 		if prev, dup := seenURL[m.URL]; dup {
 			t.Errorf("models %q and %q share a URL — they are one model, not two:\n  %s",
 				prev, m.Name, m.URL)
@@ -289,18 +290,18 @@ func TestCatalogEntriesAreDistinctDownloads(t *testing.T) {
 // back on, so a collision would silently hide an entry from `models pull`.
 func TestNoTwoCatalogEntriesShareAName(t *testing.T) {
 	seen := map[string]bool{}
-	for _, m := range modelCatalog {
+	for _, m := range models.Catalog {
 		if seen[m.Name] {
 			t.Errorf("duplicate catalog name %q", m.Name)
 		}
 		seen[m.Name] = true
 	}
-	if len(seen) != len(modelCatalog) {
-		t.Errorf("knownModels indexes %d names for %d catalog entries", len(seen), len(modelCatalog))
+	if len(seen) != len(models.Catalog) {
+		t.Errorf("the catalog index has %d names for %d catalog entries", len(seen), len(models.Catalog))
 	}
-	if len(knownModels) != len(modelCatalog) {
-		t.Errorf("knownModels has %d entries, want one per catalog entry (%d)",
-			len(knownModels), len(modelCatalog))
+	if models.Count() != len(models.Catalog) {
+		t.Errorf("the catalog index has %d entries, want one per catalog entry (%d)",
+			models.Count(), len(models.Catalog))
 	}
 }
 
@@ -308,7 +309,7 @@ func TestNoTwoCatalogEntriesShareAName(t *testing.T) {
 // has to name real entries or it is no better than "not found".
 func TestUnknownModelNameNamesTheClosestEntries(t *testing.T) {
 	// The exact mistake the rename creates: the name that used to work.
-	err := unknownModelError("base.en")
+	err := models.UnknownModelError("base.en")
 	if err == nil {
 		t.Fatal("an uncatalogued name was accepted")
 	}
@@ -316,7 +317,7 @@ func TestUnknownModelNameNamesTheClosestEntries(t *testing.T) {
 		t.Errorf("error for %q does not point at whisper-base.en:\n%s", "base.en", err)
 	}
 
-	err = unknownModelError("zipformer")
+	err = models.UnknownModelError("zipformer")
 	if err == nil {
 		t.Fatal("an uncatalogued name was accepted")
 	}
@@ -326,8 +327,8 @@ func TestUnknownModelNameNamesTheClosestEntries(t *testing.T) {
 
 	// Every candidate offered has to be pullable, or the suggestion is a
 	// second dead end.
-	for _, n := range nearestModelNames("moonshin", 3) {
-		if _, ok := knownModels[n]; !ok {
+	for _, n := range models.Nearest("moonshin", 3) {
+		if _, ok := models.Lookup(n); !ok {
 			t.Errorf("suggested %q, which `mavor models pull` would reject", n)
 		}
 	}
@@ -341,7 +342,7 @@ func TestRetiredNamesDoNotResolve(t *testing.T) {
 		"distil-whisper-large-v3", "parakeet", "parakeet-tdt",
 		"parakeet-tdt-1.1b", "zipformer", "moonshine", "sensevoice", "canary",
 	} {
-		if _, ok := knownModels[gone]; ok {
+		if _, ok := models.Lookup(gone); ok {
 			t.Errorf("retired name %q still resolves; aliases were deleted, not flipped", gone)
 		}
 	}
@@ -350,7 +351,7 @@ func TestRetiredNamesDoNotResolve(t *testing.T) {
 // Every property the listing prints has to exist for every model, or the
 // table renders holes.
 func TestCatalogEntriesCarryTheirProperties(t *testing.T) {
-	for _, m := range modelCatalog {
+	for _, m := range models.Catalog {
 		if m.Name == "" {
 			t.Error("catalog entry with empty Name")
 			continue
@@ -373,18 +374,18 @@ func TestCatalogEntriesCarryTheirProperties(t *testing.T) {
 	}
 }
 
-// knownModels is generated from the catalog: every name resolves, and a
+// The index is generated from the catalog: every name resolves, and a
 // sherpa model lands in a directory named after its entry — that is what
 // ResolveSherpaModelDir looks for.
-func TestKnownModelsIsGeneratedFromTheCatalog(t *testing.T) {
-	for _, m := range modelCatalog {
-		spec, ok := knownModels[m.Name]
+func TestCatalogIndexIsGeneratedFromTheCatalog(t *testing.T) {
+	for _, m := range models.Catalog {
+		spec, ok := models.Lookup(m.Name)
 		if !ok {
-			t.Errorf("catalog name %q missing from knownModels", m.Name)
+			t.Errorf("catalog name %q missing from the catalog index", m.Name)
 			continue
 		}
 		if spec.URL != m.URL {
-			t.Errorf("knownModels[%q].URL = %q, want %q", m.Name, spec.URL, m.URL)
+			t.Errorf("the catalog index for %q has URL %q, want %q", m.Name, spec.URL, m.URL)
 		}
 		if spec.Engine != "sherpa" {
 			continue
@@ -394,7 +395,7 @@ func TestKnownModelsIsGeneratedFromTheCatalog(t *testing.T) {
 			want = m.Name
 		}
 		if spec.TargetDir != want {
-			t.Errorf("knownModels[%q].TargetDir = %q, want %q", m.Name, spec.TargetDir, want)
+			t.Errorf("the catalog index for %q has TargetDir %q, want %q", m.Name, spec.TargetDir, want)
 		}
 	}
 }
@@ -403,7 +404,7 @@ func TestKnownModelsIsGeneratedFromTheCatalog(t *testing.T) {
 // TargetDir defaults to the catalog name. Without the pin the rename would
 // move the directory the model is expected at and orphan a 450 MB download.
 func TestRenamedSherpaEntryKeepsItsExistingDirectory(t *testing.T) {
-	spec, ok := knownModels["fastconformer-streaming"]
+	spec, ok := models.Lookup("fastconformer-streaming")
 	if !ok {
 		t.Fatal("fastconformer-streaming is not in the catalog")
 	}
@@ -418,11 +419,11 @@ func TestRenamedSherpaEntryKeepsItsExistingDirectory(t *testing.T) {
 // (an ONNX runtime) cannot load.
 func TestCatalogListsOnlyLoadableASRModels(t *testing.T) {
 	for _, banned := range []string{"mms", "mms-1b", "seamless", "seamless-streaming"} {
-		if _, ok := knownModels[banned]; ok {
+		if _, ok := models.Lookup(banned); ok {
 			t.Errorf("model %q is back in the catalog; it cannot be loaded for transcription", banned)
 		}
 	}
-	for _, m := range modelCatalog {
+	for _, m := range models.Catalog {
 		if strings.Contains(m.URL, "/tts-models/") {
 			t.Errorf("model %q points at a text-to-speech artifact: %s", m.Name, m.URL)
 		}
@@ -557,8 +558,7 @@ func TestActiveMarkerFindsTheEntryThatOwnsTheDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.Engine = "sherpa"
-	cfg.SherpaModel = "fastconformer-streaming"
+	cfg.Model = "fastconformer-streaming"
 
 	buf := new(bytes.Buffer)
 	if err := listCatalog(buf, cfg, true); err != nil {
@@ -614,8 +614,8 @@ func TestListingSurfacesModelsOutsideTheCatalog(t *testing.T) {
 // The help text used to be a hand-maintained prose list and had drifted from
 // the catalog. It is generated now, so every advertised name must be pullable.
 func TestCatalogSummaryNamesAreAllPullable(t *testing.T) {
-	summary := catalogSummary()
-	for _, m := range modelCatalog {
+	summary := models.Summary()
+	for _, m := range models.Catalog {
 		if !strings.Contains(summary, m.Name) {
 			t.Errorf("catalog summary omits %q", m.Name)
 		}
@@ -630,7 +630,7 @@ func TestCatalogSummaryNamesAreAllPullable(t *testing.T) {
 			if n == "" {
 				continue
 			}
-			if _, ok := knownModels[n]; !ok {
+			if _, ok := models.Lookup(n); !ok {
 				t.Errorf("summary advertises %q but `mavor models pull %s` would not find it", n, n)
 			}
 		}
@@ -657,7 +657,7 @@ func TestVerboseListingShowsTheExtraProperties(t *testing.T) {
 		}
 	}
 	// Every model must appear, with its download URL so the source is checkable.
-	for _, m := range modelCatalog {
+	for _, m := range models.Catalog {
 		if !strings.Contains(out, m.Name) {
 			t.Errorf("verbose listing omits %q", m.Name)
 		}
@@ -691,7 +691,7 @@ func TestVerboseDistinguishesMeasuredFromEstimatedSpeed(t *testing.T) {
 	}
 
 	var measured int
-	for _, m := range modelCatalog {
+	for _, m := range models.Catalog {
 		if m.MeasuredRTF > 0 {
 			measured++
 		}
@@ -699,7 +699,7 @@ func TestVerboseDistinguishesMeasuredFromEstimatedSpeed(t *testing.T) {
 	if measured == 0 {
 		t.Fatal("no model carries a measured RTF; the distinction is untestable")
 	}
-	if measured == len(modelCatalog) {
+	if measured == len(models.Catalog) {
 		t.Error("every model claims a measured RTF, but only a few were benchmarked")
 	}
 }
@@ -708,7 +708,7 @@ func TestEveryModelDeclaresItsProperties(t *testing.T) {
 	valid := map[string]bool{
 		"very fast": true, "fast": true, "moderate": true, "slow": true, "very slow": true,
 	}
-	for _, m := range modelCatalog {
+	for _, m := range models.Catalog {
 		if !valid[m.Speed] {
 			t.Errorf("model %q has speed %q, not one of the defined tiers", m.Name, m.Speed)
 		}
@@ -721,7 +721,7 @@ func TestEveryModelDeclaresItsProperties(t *testing.T) {
 // Vocabulary biasing in sherpa-onnx is a transducer feature; the CTC and
 // encoder-decoder models cannot take hotwords however they are configured.
 func TestOnlyTransducersClaimHotwordSupport(t *testing.T) {
-	for _, m := range modelCatalog {
+	for _, m := range models.Catalog {
 		claims := strings.Contains(m.Vocabulary, "hotwords")
 		if claims && m.Engine != "sherpa" {
 			t.Errorf("model %q claims hotwords, which only the sherpa engine supports", m.Name)
@@ -775,8 +775,8 @@ func TestModelsListJSONCarriesEveryCatalogProperty(t *testing.T) {
 	if got.ModelDir == "" {
 		t.Error("JSON output omits the model directory")
 	}
-	if len(got.Models) != len(modelCatalog) {
-		t.Errorf("JSON lists %d models, want the whole catalog (%d)", len(got.Models), len(modelCatalog))
+	if len(got.Models) != len(models.Catalog) {
+		t.Errorf("JSON lists %d models, want the whole catalog (%d)", len(got.Models), len(models.Catalog))
 	}
 
 	byName := map[string]catalogModelJSON{}

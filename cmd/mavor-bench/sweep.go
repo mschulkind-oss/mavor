@@ -15,9 +15,9 @@ import (
 
 // The two sweeps in this file answer questions the model tables cannot: how
 // much a machine's cores buy, and what holding the model warm is worth. Both
-// are `config.toml` decisions a user actually makes — `threads` and
-// `engine = "server"` — and both were previously answered only by a hand-run
-// script whose numbers nothing could reproduce.
+// are decisions mavor makes for the user — the default thread count, and the
+// default placement for a whisper model — and both were previously answered
+// only by a hand-run script whose numbers nothing could reproduce.
 
 // threadCell is one model at one thread count on the stock CPU build.
 type threadCell struct {
@@ -145,10 +145,10 @@ func benchThreadSweep(ctx context.Context, w whisperRunner, models []catalogMode
 	return cells
 }
 
-// benchWarmServer measures the engine the daemon uses when `engine =
-// "server"`: a `whisper-server` child holding the model in memory across
-// utterances. It drives `internal/speech` rather than reimplementing the
-// client, so what the report measures is the code path a user gets.
+// benchWarmServer measures the placement a whisper model gets by default: a
+// `whisper-server` child holding the model in memory across utterances. It
+// drives `internal/speech` rather than reimplementing the client, so what the
+// report measures is the code path a user gets.
 //
 // Startup is timed separately and excluded from the per-utterance figure,
 // because a daemon pays it once at login and never again.

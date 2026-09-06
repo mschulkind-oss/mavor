@@ -6,11 +6,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/mschulkind-oss/mavor/internal/config"
 	"github.com/mschulkind-oss/mavor/internal/ipc"
+	"github.com/mschulkind-oss/mavor/internal/models"
 	"github.com/mschulkind-oss/mavor/internal/speech"
 )
 
@@ -34,7 +36,8 @@ func runDoctor(args []string) error {
 		{"Audio capture (parec/Pulse)", checkAudio},
 		{"Virtual typing (wtype)", checkWtype},
 		{"Clipboard (wl-clipboard)", checkClipboard},
-		{"Speech engine", checkEngine},
+		{"Runtime and placement", checkRuntime},
+		{"Inference threads", checkThreads},
 		{"GPU acceleration", checkGPU},
 		{"Configuration file", checkConfig},
 		{"Voice model availability", checkModel},
@@ -104,26 +107,19 @@ func runSetup(args []string) error {
 	}
 
 	// Step 3: Model cache directory
-	if err := os.MkdirAll(cfg.ModelDir, 0o755); err != nil {
-		return fmt.Errorf("create model directory %s: %w", cfg.ModelDir, err)
+	if err := os.MkdirAll(cfg.Paths.Models, 0o755); err != nil {
+		return fmt.Errorf("create model directory %s: %w", cfg.Paths.Models, err)
 	}
 
-	// Step 4: Default voice model
-	modelPath := speech.WhisperModelPath(cfg.ModelDir, cfg.Model)
-	if cfg.Engine == "sherpa" && cfg.SherpaModel != "" {
-		modelPath = filepath.Join(cfg.ModelDir, "sherpa", cfg.SherpaModel)
-	}
-
+	// Step 4: the model the config names. Which path to look at follows from
+	// the model, not from a key: the catalog says which runtime owns it.
+	modelPath := installedModelPath(cfg, cfg.Model)
 	if _, err := os.Stat(modelPath); os.IsNotExist(err) || force {
-		targetModel := cfg.Model
-		if cfg.Engine == "sherpa" && cfg.SherpaModel != "" {
-			targetModel = cfg.SherpaModel
-		}
-		fmt.Printf("📥 Downloading default voice model %q into %s...\n", targetModel, cfg.ModelDir)
-		if err := pullModel(targetModel); err != nil {
+		fmt.Printf("📥 Downloading voice model %q into %s...\n", cfg.Model, cfg.Paths.Models)
+		if err := pullModel(cfg.Model); err != nil {
 			return fmt.Errorf("setup model download: %w", err)
 		}
-		fmt.Printf("✅ Downloaded and verified voice model %q\n", targetModel)
+		fmt.Printf("✅ Downloaded and verified voice model %q\n", cfg.Model)
 	} else {
 		fmt.Printf("✅ Voice model %q is already installed\n", cfg.Model)
 	}
@@ -149,6 +145,19 @@ func runSetup(args []string) error {
 	return nil
 }
 
+// installedModelPath is where the model named by a catalog name lands in the
+// cache: a file for a whisper model, a directory for everything else.
+func installedModelPath(cfg config.Config, name string) string {
+	if models.RuntimeFor(name) == models.RuntimeWhisper {
+		return speech.WhisperModelPath(cfg.Paths.Models, name)
+	}
+	dir := name
+	if spec, ok := models.Lookup(name); ok && spec.TargetDir != "" {
+		dir = spec.TargetDir
+	}
+	return filepath.Join(cfg.Paths.Models, "sherpa", dir)
+}
+
 func getMissingTools(cfg config.Config) []string {
 	var missing []string
 	if _, err := exec.LookPath("parec"); err != nil {
@@ -160,7 +169,7 @@ func getMissingTools(cfg config.Config) []string {
 	if _, err := exec.LookPath("wl-copy"); err != nil {
 		missing = append(missing, "wl-copy")
 	}
-	if cfg.Engine == "cli" || cfg.Engine == "server" {
+	if models.RuntimeFor(cfg.Model) == models.RuntimeWhisper {
 		if _, err := exec.LookPath("whisper-cli"); err != nil {
 			missing = append(missing, "whisper-cli")
 		}
@@ -397,58 +406,108 @@ func checkClipboard() (bool, string) {
 	return false, "wl-clipboard tools missing (fix: install wl-clipboard)"
 }
 
-func checkEngine() (bool, string) {
+// checkRuntime reports the two derived facts a user cannot read off the
+// config file: which inference runtime the model belongs to, and where that
+// runtime will run. Both follow from the model name, so this is the line that
+// says what `model = "..."` actually got you.
+func checkRuntime() (bool, string) {
 	cfg, _ := config.Load("")
-	switch cfg.Engine {
-	case "sherpa":
-		return true, "in-process sherpa-onnx engine (CGO native)"
-	case "server":
-		return true, fmt.Sprintf("HTTP/socket server engine (%s)", cfg.ServerSocket)
-	default:
-		if p, err := exec.LookPath("whisper-cli"); err == nil {
-			return true, fmt.Sprintf("whisper-cli installed at %s", p)
-		}
-		return false, "whisper-cli not found in $PATH (fix: run 'mavor doctor --fix')"
+	sel, err := models.Select(cfg.Model, cfg.Advanced.Placement, cfg.Advanced.Server)
+	if err != nil {
+		return false, err.Error()
 	}
+
+	msg := fmt.Sprintf("%s, %s — %s", sel.Runtime, sel.Placement, sel.Reason)
+	for _, w := range sel.Warnings {
+		msg += "; " + w
+	}
+
+	switch sel.Placement {
+	case models.PlacementRemote:
+		return true, msg + fmt.Sprintf(" (%s)", sel.Server)
+	case models.PlacementLocalServer:
+		if _, err := exec.LookPath("whisper-server"); err != nil {
+			return false, msg + " — whisper-server is not in $PATH (fix: install whisper.cpp, or set advanced.placement = \"subprocess\")"
+		}
+	case models.PlacementSubprocess:
+		if _, err := exec.LookPath("whisper-cli"); err != nil {
+			return false, msg + " — whisper-cli is not in $PATH (fix: run 'mavor doctor --fix')"
+		}
+	}
+	return true, msg
+}
+
+// checkThreads reports the inference thread count and where it came from,
+// because the default is computed from this machine and a user who never set
+// the key has no other way to see what it decided.
+func checkThreads() (bool, string) {
+	f, _ := config.LoadFile("")
+	detected := config.PhysicalCores()
+	logical := runtime.NumCPU()
+
+	if f.Advanced.Threads == detected {
+		return true, fmt.Sprintf("%d (this machine's physical core count; %d logical)", detected, logical)
+	}
+	if f.Advanced.Threads > logical {
+		return true, fmt.Sprintf("%d, set by advanced.threads — above this machine's %d logical CPUs, which usually costs speed rather than buying it",
+			f.Advanced.Threads, logical)
+	}
+	return true, fmt.Sprintf("%d, set by advanced.threads (this machine has %d physical cores, %d logical)",
+		f.Advanced.Threads, detected, logical)
 }
 
 func checkConfig() (bool, string) {
-	p := config.Path()
-	if _, err := os.Stat(p); os.IsNotExist(err) {
-		return true, fmt.Sprintf("no config file at %s (using defaults; run 'mavor doctor --fix' to create)", p)
-	}
-	cfg, err := config.Load(p)
+	f, err := config.LoadFile("")
 	if err != nil {
-		return false, fmt.Sprintf("error parsing %s: %v", p, err)
+		return false, fmt.Sprintf("error parsing %s: %v", config.Path(), err)
 	}
-	return true, fmt.Sprintf("valid config (mode=%s, preset=%s, model=%s)", cfg.Mode, cfg.Preset, cfg.Model)
+	if !f.Exists {
+		return true, fmt.Sprintf("no config file at %s (using defaults; run 'mavor doctor --fix' to create)", f.Path)
+	}
+
+	// A file in which nothing at all is recognized is a file written against
+	// the old schema. Saying "3 unknown keys" about it would bury the fact
+	// that it is contributing nothing.
+	if f.SchemaLooksStale() {
+		return false, fmt.Sprintf(
+			"%s uses the old configuration schema — none of its %d keys exist any more, so every setting in it is being ignored and mavor is running on defaults. `mavor config init --force` scaffolds the current file (%s)",
+			f.Path, len(f.UnknownKeys), strings.Join(f.UnknownKeys, ", "))
+	}
+	if len(f.UnknownKeys) > 0 {
+		return false, fmt.Sprintf("%s has %d key(s) mavor does not know, which are ignored: %s (`mavor config init --force` scaffolds the current file)",
+			f.Path, len(f.UnknownKeys), strings.Join(f.UnknownKeys, ", "))
+	}
+	return true, fmt.Sprintf("valid config (model=%s, preview=%s)", f.Model, previewDescription(f.Config))
+}
+
+// previewDescription says in a phrase what the overlay will show.
+func previewDescription(cfg config.Config) string {
+	if !cfg.Preview.Enabled {
+		return "off"
+	}
+	return cfg.Preview.Source
 }
 
 func checkModel() (bool, string) {
 	cfg, _ := config.Load("")
-	if cfg.Engine == "sherpa" {
-		if cfg.SherpaModel == "" {
-			return false, "sherpa_model is not set in config.toml"
-		}
-		modelDir := filepath.Join(cfg.ModelDir, "sherpa", cfg.SherpaModel)
-		if _, err := os.Stat(modelDir); err == nil {
-			return true, fmt.Sprintf("sherpa model found at %s", modelDir)
-		}
-		return false, fmt.Sprintf("sherpa model not found at %s (fix: run 'mavor doctor --fix')", modelDir)
+	res, err := speech.Resolve(cfg)
+	if err != nil {
+		return false, err.Error()
 	}
-
-	modelPath := speech.WhisperModelPath(cfg.ModelDir, cfg.Model)
-	if _, err := os.Stat(modelPath); err == nil {
-		return true, fmt.Sprintf("whisper model found at %s", modelPath)
+	if res.ModelDir != "" {
+		return true, fmt.Sprintf("%s found at %s", cfg.Model, res.ModelDir)
 	}
-	return false, fmt.Sprintf("model %q not found at %s (fix: run 'mavor doctor --fix' or 'mavor models pull %s')", cfg.Model, modelPath, cfg.Model)
+	if res.Placement == models.PlacementRemote {
+		return true, fmt.Sprintf("%s runs on the server at %s, so there is nothing to install here", cfg.Model, res.Server)
+	}
+	return true, fmt.Sprintf("%s found at %s", cfg.Model, res.ModelPath)
 }
 
 func checkDaemon() (bool, string) {
 	cfg, _ := config.Load("")
-	resp, err := ipc.Send(cfg.Socket, ipc.Request{Action: "status"}, 500*time.Millisecond)
+	resp, err := ipc.Send(cfg.Paths.Socket, ipc.Request{Action: "status"}, 500*time.Millisecond)
 	if err != nil {
-		return false, fmt.Sprintf("daemon is not running at %s (run 'mavor daemon' or 'mavor service start')", cfg.Socket)
+		return false, fmt.Sprintf("daemon is not running at %s (run 'mavor daemon' or 'mavor service start')", cfg.Paths.Socket)
 	}
 	return true, fmt.Sprintf("daemon is active (state: %s)", resp.State)
 }
