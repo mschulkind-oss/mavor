@@ -473,6 +473,9 @@ func checkRuntime() (bool, string) {
 	if err != nil {
 		return false, err.Error()
 	}
+	// The same downgrade the daemon applies, so this line reports the
+	// placement that will actually be used rather than the derived one.
+	sel = speech.AdjustForEnvironment(sel)
 
 	msg := fmt.Sprintf("%s, %s — %s", sel.Runtime, sel.Placement, sel.Reason)
 	for _, w := range sel.Warnings {

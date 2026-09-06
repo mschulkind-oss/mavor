@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/mschulkind-oss/mavor/internal/config"
@@ -38,7 +39,7 @@ func Resolve(cfg config.Config) (Resolution, error) {
 	if err != nil {
 		return Resolution{}, fmt.Errorf("speech: %w", err)
 	}
-	res := Resolution{Selection: sel}
+	res := Resolution{Selection: AdjustForEnvironment(sel)}
 
 	switch sel.Runtime {
 	case models.RuntimeWhisper:
@@ -61,6 +62,41 @@ func Resolve(cfg config.Config) (Resolution, error) {
 		res.ModelDir = dir
 	}
 	return res, nil
+}
+
+// serverBinaryNames are the names a whisper.cpp server ships under. The
+// supervisor looks for them in this order, and so does the check below, so a
+// placement is never chosen on the basis of a binary the supervisor would not
+// find.
+var serverBinaryNames = []string{"whisper-server", "whisper-cpp-server"}
+
+// AdjustForEnvironment downgrades a placement this machine cannot actually
+// provide.
+//
+// The only case is a whisper model resolved to local-server on a machine with
+// no whisper-server binary: some distributions package the CLI without it.
+// Placement is derived rather than requested there — a user can only write
+// "auto" or "subprocess" — so falling back to the subprocess costs a warm
+// model and nothing else, which beats refusing to start over a choice the user
+// never made. A placement the user *did* name is left alone to fail loudly.
+//
+// It is exported because `mavor doctor` reports the same adjusted placement the
+// daemon will use; reporting the underived one would tell the user something
+// untrue.
+func AdjustForEnvironment(sel models.Selection) models.Selection {
+	if sel.Runtime != models.RuntimeWhisper || sel.Placement != models.PlacementLocalServer {
+		return sel
+	}
+	for _, name := range serverBinaryNames {
+		if _, err := exec.LookPath(name); err == nil {
+			return sel
+		}
+	}
+	sel.Placement = models.PlacementSubprocess
+	sel.Warnings = append(sel.Warnings, fmt.Sprintf(
+		"no %s on PATH, so the model reloads for every utterance instead of staying warm — install whisper.cpp's server, or set advanced.placement = \"subprocess\" to make this explicit",
+		strings.Join(serverBinaryNames, " or ")))
+	return sel
 }
 
 // missingSherpaModel builds the error for a model that resolved to no
