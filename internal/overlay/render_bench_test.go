@@ -2,6 +2,7 @@ package overlay
 
 import (
 	"image"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -45,7 +46,7 @@ func TestFrameRendersWellInsideItsBudget(t *testing.T) {
 	const (
 		batches   = 5
 		perBatch  = 20
-		threshold = budget / 2 // half, so a slower machine still keeps up
+		threshold = budget / 4 // a quarter, so a much slower machine still keeps up
 	)
 	best := time.Hour
 	for b := 0; b < batches; b++ {
@@ -100,5 +101,104 @@ func TestStripCacheRedrawsWhenTheTextChanges(t *testing.T) {
 	}
 	if same {
 		t.Error("two different preview texts rendered identical pixels — the cache is serving stale text")
+	}
+}
+
+// The invariant the timing test above can only measure indirectly: a frame
+// costs what the pill and the waveform cost, and NOT what the screen costs.
+//
+// This is the shape of the bug that made frames take 20ms. Every waveform bar
+// was filled through a rasterizer and an alpha mask sized to the whole
+// surface, and composited across all of it, to paint four pixels by forty.
+// Nothing about that is visible in the output — the frames were correct, just
+// fifty times more expensive than they needed to be, and the cost grew with
+// the user's monitor, so it was worst exactly where it was least testable.
+//
+// Allocation is the sharpest probe: a full-surface rasterizer and mask are
+// O(width), a bar-sized one is O(1). A wall-clock assertion would catch this
+// too, but only on a machine fast enough for the threshold to mean anything.
+func TestFrameCostDoesNotScaleWithTheScreen(t *testing.T) {
+	perFrameBytes := func(width int) uint64 {
+		scene := Scene{
+			Visual:          Recording,
+			Preview:         "the quick brown fox",
+			MaxPreviewWidth: 400, // fixed, so the strip is the same work either way
+			SurfaceW:        width,
+			SurfaceH:        91,
+			Levels:          make([]float64, waveCols),
+		}
+		for i := range scene.Levels {
+			scene.Levels[i] = float64(i%10) / 10
+		}
+		img := image.NewRGBA(image.Rect(0, 0, scene.SurfaceW, scene.SurfaceH))
+		if err := RenderInto(img, scene); err != nil { // warm both caches
+			t.Fatal(err)
+		}
+
+		const frames = 30
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		for i := 0; i < frames; i++ {
+			scene.Phase = float64(i%24) / 24
+			copy(scene.Levels, scene.Levels[1:])
+			if err := RenderInto(img, scene); err != nil {
+				t.Fatal(err)
+			}
+		}
+		runtime.ReadMemStats(&after)
+		return (after.TotalAlloc - before.TotalAlloc) / frames
+	}
+
+	const (
+		narrow = 1280
+		wide   = 5120 // a 4x wider screen, showing the same pill
+	)
+	small, large := perFrameBytes(narrow), perFrameBytes(wide)
+	t.Logf("per frame: %d B at %dpx, %d B at %dpx", small, narrow, large, wide)
+
+	// Some growth is legitimate — the scene is centred, so a few coordinates
+	// differ — but nothing should grow with the area being drawn on.
+	if large > small*3/2 {
+		t.Errorf("a %dpx-wide screen costs %d B a frame against %d B at %dpx: "+
+			"something is sized to the surface rather than to the shape it draws",
+			wide, large, small, narrow)
+	}
+}
+
+func benchScene() (Scene, *image.RGBA) {
+	s := Scene{
+		Visual: Recording, Preview: strings.Repeat("the quick brown fox ", 12),
+		MaxPreviewWidth: 1280, SurfaceW: 1280, SurfaceH: 91,
+		Levels: make([]float64, waveCols),
+	}
+	for i := range s.Levels {
+		s.Levels[i] = float64(i%10) / 10
+	}
+	return s, image.NewRGBA(image.Rect(0, 0, s.SurfaceW, s.SurfaceH))
+}
+
+func BenchmarkFrame(b *testing.B) {
+	s, img := benchScene()
+	_ = RenderInto(img, s) // warm the strip cache
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		s.Phase = float64(i%24) / 24
+		if err := RenderInto(img, s); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// The pill alone, with no preview strip and no waveform to speak of.
+func BenchmarkPillOnly(b *testing.B) {
+	s := Scene{Visual: Transcribing, SurfaceW: 1280, SurfaceH: 91}
+	img := image.NewRGBA(image.Rect(0, 0, s.SurfaceW, s.SurfaceH))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		s.Phase = float64(i%24) / 24
+		if err := RenderInto(img, s); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

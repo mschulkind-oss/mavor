@@ -195,7 +195,7 @@ func drawText(dst *image.RGBA, f font.Face, s string, x, y float64, c color.Colo
 }
 
 // roundRectPath appends a rounded rectangle to a rasterizer.
-func roundRectPath(r *vector.Rasterizer, x, y, w, h, rad float32) {
+func roundRectPath(r *path, x, y, w, h, rad float32) {
 	if rad > w/2 {
 		rad = w / 2
 	}
@@ -217,7 +217,7 @@ func roundRectPath(r *vector.Rasterizer, x, y, w, h, rad float32) {
 }
 
 // circlePath appends a circle, built from four quadratic arcs.
-func circlePath(r *vector.Rasterizer, cx, cy, rad float32) {
+func circlePath(r *path, cx, cy, rad float32) {
 	const k = 0.5523 // circle-to-bezier constant, scaled for quadratics below
 	c := rad * k * 1.5
 	r.MoveTo(cx, cy-rad)
@@ -228,33 +228,21 @@ func circlePath(r *vector.Rasterizer, cx, cy, rad float32) {
 	r.ClosePath()
 }
 
-// fillPath rasterizes a path into dst with a solid colour, compositing over
-// what is already there.
-func fillPath(dst *image.RGBA, bounds image.Rectangle, c color.Color, build func(*vector.Rasterizer)) {
-	w, h := bounds.Dx(), bounds.Dy()
-	if w <= 0 || h <= 0 {
-		return
-	}
-	r := vector.NewRasterizer(w, h)
-	build(r)
-	mask := image.NewAlpha(image.Rect(0, 0, w, h))
-	r.Draw(mask, mask.Bounds(), image.Opaque, image.Point{})
-	draw.DrawMask(dst, bounds, image.NewUniform(c), image.Point{}, mask, image.Point{}, draw.Over)
+// gradientCache holds the pill's vertical ramp. The ramp is a pure function
+// of its size and its two colours — nothing in it moves — but it was being
+// rebuilt pixel by pixel on every frame, which made it a third of the cost of
+// a frame that had nothing else left to do.
+type gradientCache struct {
+	img         *image.RGBA
+	w, h        int
+	top, bottom color.NRGBA
 }
 
-// fillGradient rasterizes a path and fills it with a vertical gradient, which
-// is what gives the pill the same shaded look the CSS produced.
-func fillGradient(dst *image.RGBA, bounds image.Rectangle, top, bottom color.NRGBA, build func(*vector.Rasterizer)) {
-	w, h := bounds.Dx(), bounds.Dy()
-	if w <= 0 || h <= 0 {
-		return
+func (c *gradientCache) ramp(w, h int, top, bottom color.NRGBA) *image.RGBA {
+	if c.img != nil && c.w == w && c.h == h && c.top == top && c.bottom == bottom {
+		return c.img
 	}
-	r := vector.NewRasterizer(w, h)
-	build(r)
-	mask := image.NewAlpha(image.Rect(0, 0, w, h))
-	r.Draw(mask, mask.Bounds(), image.Opaque, image.Point{})
-
-	grad := image.NewRGBA(image.Rect(0, 0, w, h))
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	for y := 0; y < h; y++ {
 		t := 0.0
 		if h > 1 {
@@ -266,10 +254,91 @@ func fillGradient(dst *image.RGBA, bounds image.Rectangle, top, bottom color.NRG
 			B: uint8(lerp(float64(top.B), float64(bottom.B), t)),
 			A: 0xff,
 		}
-		for x := 0; x < w; x++ {
-			grad.SetRGBA(x, y, row)
+		// One row is built, then copied down: the ramp varies only in y.
+		off := img.PixOffset(0, y)
+		line := img.Pix[off : off+4*w]
+		for x := 0; x < 4*w; x += 4 {
+			line[x], line[x+1], line[x+2], line[x+3] = row.R, row.G, row.B, row.A
 		}
 	}
+	c.img, c.w, c.h, c.top, c.bottom = img, w, h, top, bottom
+	return img
+}
+
+// gradients, like cache below, is process-wide: one overlay is on screen at a
+// time, and a second would cost the two of them a rebuild each.
+var gradients gradientCache
+
+// path builds an outline in SURFACE coordinates while the rasterizer beneath
+// it is only as large as the region being filled.
+//
+// The distinction is the whole reason this type exists. vector.Rasterizer
+// works in its own 0..w,0..h space, so a caller that wants absolute
+// coordinates has to make the rasterizer as big as the screen — and every
+// waveform bar was doing exactly that, allocating a full-surface rasterizer
+// and mask and compositing over all 116,480 pixels to paint a bar four pixels
+// wide, fifty-odd times a frame. Subtracting the origin here lets a caller
+// keep absolute coordinates AND a rasterizer sized to the shape.
+type path struct {
+	r   *vector.Rasterizer
+	off image.Point
+}
+
+func (p *path) MoveTo(x, y float32) {
+	p.r.MoveTo(x-float32(p.off.X), y-float32(p.off.Y))
+}
+
+func (p *path) LineTo(x, y float32) {
+	p.r.LineTo(x-float32(p.off.X), y-float32(p.off.Y))
+}
+
+func (p *path) QuadTo(cx, cy, x, y float32) {
+	p.r.QuadTo(cx-float32(p.off.X), cy-float32(p.off.Y), x-float32(p.off.X), y-float32(p.off.Y))
+}
+
+func (p *path) ClosePath() { p.r.ClosePath() }
+
+// shapeRect is the pixel rectangle a shape at (x, y) sized w by h touches,
+// with a pixel of slop on every side for the anti-aliased edge. It is what a
+// caller passes to fillPath as the bounds, and getting it too small clips the
+// shape while getting it too large only costs time.
+func shapeRect(x, y, w, h float64) image.Rectangle {
+	return image.Rect(
+		int(math.Floor(x))-1, int(math.Floor(y))-1,
+		int(math.Ceil(x+w))+1, int(math.Ceil(y+h))+1,
+	)
+}
+
+// fillPath rasterizes a path into dst with a solid colour, compositing over
+// what is already there. bounds is the region the path may touch, in dst's
+// coordinates: it clips the result and, more importantly, sizes the work.
+func fillPath(dst *image.RGBA, bounds image.Rectangle, c color.Color, build func(*path)) {
+	bounds = bounds.Intersect(dst.Bounds())
+	w, h := bounds.Dx(), bounds.Dy()
+	if w <= 0 || h <= 0 {
+		return
+	}
+	r := vector.NewRasterizer(w, h)
+	build(&path{r: r, off: bounds.Min})
+	mask := image.NewAlpha(image.Rect(0, 0, w, h))
+	r.Draw(mask, mask.Bounds(), image.Opaque, image.Point{})
+	draw.DrawMask(dst, bounds, image.NewUniform(c), image.Point{}, mask, image.Point{}, draw.Over)
+}
+
+// fillGradient rasterizes a path and fills it with a vertical gradient, which
+// is what gives the pill the same shaded look the CSS produced.
+func fillGradient(dst *image.RGBA, bounds image.Rectangle, top, bottom color.NRGBA, build func(*path)) {
+	bounds = bounds.Intersect(dst.Bounds())
+	w, h := bounds.Dx(), bounds.Dy()
+	if w <= 0 || h <= 0 {
+		return
+	}
+	r := vector.NewRasterizer(w, h)
+	build(&path{r: r, off: bounds.Min})
+	mask := image.NewAlpha(image.Rect(0, 0, w, h))
+	r.Draw(mask, mask.Bounds(), image.Opaque, image.Point{})
+
+	grad := gradients.ramp(w, h, top, bottom)
 	draw.DrawMask(dst, bounds, grad, image.Point{}, mask, image.Point{}, draw.Over)
 }
 
@@ -465,13 +534,13 @@ func RenderInto(img *image.RGBA, s Scene) error {
 	case Error:
 		top, bottom = errTop, errBottom
 	}
-	fillGradient(img, pillRect, top, bottom, func(r *vector.Rasterizer) {
-		roundRectPath(r, 0, 0, float32(pillW), float32(pillH), pillRadius)
+	fillGradient(img, pillRect, top, bottom, func(r *path) {
+		roundRectPath(r, float32(pillX), 0, float32(pillW), float32(pillH), pillRadius)
 	})
 
 	// A one-pixel light line inside the top edge, the CSS inset highlight.
-	fillPath(img, pillRect, color.NRGBA{0xff, 0xff, 0xff, 0x40}, func(r *vector.Rasterizer) {
-		roundRectPath(r, pillRadius/2, 0, float32(pillW)-pillRadius, 1, 0.5)
+	fillPath(img, pillRect, color.NRGBA{0xff, 0xff, 0xff, 0x40}, func(r *path) {
+		roundRectPath(r, float32(pillX)+pillRadius/2, 0, float32(pillW)-pillRadius, 1, 0.5)
 	})
 
 	// Baseline that centres the caps vertically in the pill.
@@ -487,8 +556,9 @@ func RenderInto(img *image.RGBA, s Scene) error {
 		alpha := uint8(0.35*255 + (1.0-0.35)*255*s.Phase)
 		dc := dotWarm
 		dc.A = alpha
-		fillPath(img, img.Bounds(), dc, func(r *vector.Rasterizer) {
-			circlePath(r, float32(x+recDotBoxW/2), float32(cy), float32(recDotDiameter/2*scale))
+		rad := recDotDiameter / 2 * scale
+		fillPath(img, shapeRect(x+recDotBoxW/2-rad, cy-rad, 2*rad, 2*rad), dc, func(r *path) {
+			circlePath(r, float32(x+recDotBoxW/2), float32(cy), float32(rad))
 		})
 		x += recDotBoxW + 10
 
@@ -507,8 +577,9 @@ func RenderInto(img *image.RGBA, s Scene) error {
 			a := 0.25 + 0.75*math.Max(0, 1-math.Abs(p-0.3)/0.3)
 			c := typingInk
 			c.A = uint8(a * 255)
-			fillPath(img, img.Bounds(), c, func(r *vector.Rasterizer) {
-				circlePath(r, float32(x+float64(i*typingDotPitch)), float32(cy), typingDotRadius)
+			dx := x + float64(i*typingDotPitch)
+			fillPath(img, shapeRect(dx-typingDotRadius, cy-typingDotRadius, 2*typingDotRadius, 2*typingDotRadius), c, func(r *path) {
+				circlePath(r, float32(dx), float32(cy), typingDotRadius)
 			})
 		}
 
@@ -546,7 +617,7 @@ func drawWave(img *image.RGBA, levels []float64, x, y float64, height int) {
 		alpha := uint8(90 + 165*float64(i)/float64(waveCols-1))
 		c := inkWhite
 		c.A = alpha
-		fillPath(img, img.Bounds(), c, func(r *vector.Rasterizer) {
+		fillPath(img, shapeRect(bx, by, waveBarWidth, float64(bh)), c, func(r *path) {
 			roundRectPath(r, float32(bx), float32(by), waveBarWidth, float32(bh), waveBarWidth/2)
 		})
 	}
@@ -558,7 +629,7 @@ func drawWave(img *image.RGBA, levels []float64, x, y float64, height int) {
 func drawWarning(img *image.RGBA, x, cy float64, size int, c color.NRGBA) {
 	s := float64(size)
 	top := cy - s/2
-	fillPath(img, img.Bounds(), c, func(r *vector.Rasterizer) {
+	fillPath(img, shapeRect(x, top, s, s), c, func(r *path) {
 		r.MoveTo(float32(x+s/2), float32(top))
 		r.LineTo(float32(x+s), float32(top+s))
 		r.LineTo(float32(x), float32(top+s))
@@ -566,7 +637,7 @@ func drawWarning(img *image.RGBA, x, cy float64, size int, c color.NRGBA) {
 	})
 	// The bang, punched back out in the pill's own colour would need the
 	// gradient; a darker translucent stroke reads the same at this size.
-	fillPath(img, img.Bounds(), color.NRGBA{0x5c, 0x00, 0x00, 0xdd}, func(r *vector.Rasterizer) {
+	fillPath(img, shapeRect(x+s/2-2, top+s*0.35, 4, s*0.5), color.NRGBA{0x5c, 0x00, 0x00, 0xdd}, func(r *path) {
 		r.MoveTo(float32(x+s/2-0.9), float32(top+s*0.35))
 		r.LineTo(float32(x+s/2+0.9), float32(top+s*0.35))
 		r.LineTo(float32(x+s/2+0.9), float32(top+s*0.68))
@@ -604,10 +675,10 @@ func (c *stripCache) strip(f *faces, s Scene, pw, ph int) *image.RGBA {
 
 	img := image.NewRGBA(image.Rect(0, 0, pw, ph))
 	rect := img.Bounds()
-	fillPath(img, rect, previewBG, func(r *vector.Rasterizer) {
+	fillPath(img, rect, previewBG, func(r *path) {
 		roundRectPath(r, 0, 0, float32(pw), float32(ph), previewRadius)
 	})
-	fillPath(img, rect, previewEdge, func(r *vector.Rasterizer) {
+	fillPath(img, rect, previewEdge, func(r *path) {
 		roundRectPath(r, 0, 0, float32(pw), float32(ph), previewRadius)
 		roundRectPath(r, 1, 1, float32(pw)-2, float32(ph)-2, previewRadius-1)
 	})
