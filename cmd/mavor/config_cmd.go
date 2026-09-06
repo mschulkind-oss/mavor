@@ -87,8 +87,22 @@ verbose = %t
 # a transcript on demand without it.
 clipboard = %t
 
+# Pause wtype leaves between keystrokes, in milliseconds. Unset leaves
+# wtype's own default. Typing is per-character and is usually the slowest
+# part of a long dictation — the `+"`emit_chars_per_sec`"+` figure logged at the
+# end of each cycle says whether changing this helped. Lower is not always
+# better: an app that drops synthetic keystrokes drops more of them the
+# faster they arrive.
+# typing_delay_ms = 0
+
 [overlay]
 top_margin = %d   # px below the top of the usable area, under your bar
+
+# The live preview is one line showing the tail of what you have said, capped
+# to this fraction of the screen width. Without a cap a long dictation grows
+# the overlay past the screen edge, and every resize re-centres it, so it
+# walks sideways while you speak.
+preview_width = %v
 
 # Chosen for you. Override only if `+"`mavor doctor`"+` gives you a reason to.
 [advanced]
@@ -114,6 +128,7 @@ top_margin = %d   # px below the top of the usable area, under your bar
 		d.Logging.Verbose,
 		d.Output.Clipboard,
 		d.Overlay.TopMargin,
+		d.Overlay.PreviewWidth,
 		d.Advanced.Placement,
 		d.Advanced.Threads,
 		d.Advanced.GPU,

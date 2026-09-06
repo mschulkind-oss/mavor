@@ -210,7 +210,7 @@ func runDaemon(args []string) error {
 	defer preview.Close()
 
 	recDir := filepath.Join(os.TempDir(), "mavor-recordings")
-	ov, err := overlay.NewDefault(cfg.Overlay.TopMargin, logger)
+	ov, err := overlay.NewDefault(cfg.Overlay.TopMargin, cfg.Overlay.PreviewWidth, logger)
 	if err != nil {
 		logger.Warn("overlay unavailable, falling back to noop", "err", err)
 		ov = &overlay.Noop{}
@@ -221,6 +221,7 @@ func runDaemon(args []string) error {
 	outDispatch := output.NewWayland()
 	outDispatch.Logger = logger
 	outDispatch.Clipboard = cfg.Output.Clipboard
+	outDispatch.TypingDelayMS = cfg.Output.TypingDelayMS
 
 	var ducker audio.Ducker = &audio.NoopDucker{}
 	if cfg.Ducking.Enabled {

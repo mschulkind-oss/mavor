@@ -42,6 +42,18 @@ type Display struct {
 	compositor ObjectID
 	shm        ObjectID
 	layerShell ObjectID
+
+	// OutputWidth and OutputHeight are the current mode of the first output
+	// the compositor advertises, in pixels. Zero when the compositor offers
+	// no wl_output, or advertises none as current — callers must treat zero
+	// as "unknown" rather than as a screen of no width.
+	//
+	// Only the first output is tracked. A layer surface with a null output
+	// is placed by the compositor on whichever it likes, so this is a
+	// reasonable guess and not a promise; it exists to size a preview
+	// sensibly, which is a decision that degrades gracefully when wrong.
+	OutputWidth  int
+	OutputHeight int
 }
 
 // Connect dials the compositor and binds the three globals the overlay needs.
@@ -113,6 +125,37 @@ func Connect() (*Display, error) {
 		conn.Close()
 		return nil, fmt.Errorf("%w — mavor's overlay needs a compositor with wlr-layer-shell, such as sway, hyprland or river", err)
 	}
+	// wl_output is optional. The overlay works without it; it only loses the
+	// ability to size the preview against the screen, and the caller falls
+	// back to a fixed budget.
+	if g, ok := found["wl_output"]; ok {
+		id := conn.newID(func(opcode uint16, r *reader) error {
+			if opcode != 1 { // mode(flags, width, height, refresh)
+				return nil
+			}
+			flags := r.uint()
+			w := int(int32(r.uint()))
+			h := int(int32(r.uint()))
+			_ = r.uint() // refresh
+			// Bit 0 is WL_OUTPUT_MODE_CURRENT. An output lists every mode it
+			// supports, and only one of them is the one in use.
+			if flags&0x1 != 0 && d.OutputWidth == 0 {
+				d.OutputWidth, d.OutputHeight = w, h
+			}
+			return nil
+		})
+		version := min(uint32(2), g.version)
+		b := newBuilder(registry, 0)
+		b.putUint(g.name)
+		b.putString("wl_output")
+		b.putUint(version)
+		b.putObject(id)
+		if err := conn.send(b); err != nil {
+			conn.Close()
+			return nil, err
+		}
+	}
+
 	if err := conn.Roundtrip(); err != nil {
 		conn.Close()
 		return nil, err

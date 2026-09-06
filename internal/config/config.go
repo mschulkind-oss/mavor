@@ -31,8 +31,10 @@ const (
 	DefaultPauseMS     = 450
 	DefaultMinPhraseMS = 600
 	DefaultTopMargin   = 8
-	DefaultDuckVolume  = "0%"
-	DefaultBoost       = 1.5
+	// DefaultPreviewWidth caps the preview at half the screen.
+	DefaultPreviewWidth = 0.5
+	DefaultDuckVolume   = "0%"
+	DefaultBoost        = 1.5
 )
 
 // Config is the whole configuration. Field order follows the scaffolded file.
@@ -76,6 +78,20 @@ type Logging struct {
 // the focused window is not optional — it is the product — so the only choice
 // here is what else happens.
 type Output struct {
+	// TypingDelayMS is the pause wtype leaves between keystrokes, in
+	// milliseconds. Unset leaves wtype's own default alone, which is the
+	// behaviour mavor has always had.
+	//
+	// It is a pointer so that "unset" and "zero" are different requests:
+	// zero is a deliberate ask for no delay, and there would be no way to
+	// express it otherwise. Typing is per-character and is usually the long
+	// pole on a long dictation — the `emit_chars_per_sec` figure at the end
+	// of each cycle is what says whether changing this helped.
+	//
+	// Lower is not always better: an application that drops synthetic
+	// keystrokes will drop more of them the faster they arrive.
+	TypingDelayMS *int `toml:"typing_delay_ms"`
+
 	// Clipboard also copies each transcript, replacing whatever was on the
 	// clipboard before.
 	//
@@ -143,6 +159,17 @@ type Vocabulary struct {
 
 // Overlay configures the on-screen HUD.
 type Overlay struct {
+	// PreviewWidth caps the live preview strip as a fraction of the screen
+	// width, in (0,1]. The preview shows the tail of what you have said so
+	// far on one line; without a cap a long dictation grows the overlay
+	// past the edge of the screen, and every resize re-centres it, so it
+	// walks sideways while you speak.
+	//
+	// 0.5 by default. Values outside (0,1] are clamped to it. On a
+	// compositor that advertises no wl_output the screen width is unknown
+	// and the cap falls back to a fixed budget.
+	PreviewWidth float64 `toml:"preview_width"`
+
 	// TopMargin is the gap (px) between the overlay and the top of the
 	// usable area — which is below Waybar, not the screen edge.
 	//
@@ -225,7 +252,8 @@ func Default() Config {
 			Clipboard: false,
 		},
 		Overlay: Overlay{
-			TopMargin: DefaultTopMargin,
+			TopMargin:    DefaultTopMargin,
+			PreviewWidth: DefaultPreviewWidth,
 		},
 		Advanced: Advanced{
 			Placement: "auto",
@@ -276,6 +304,12 @@ func (c *Config) Resolve() {
 		c.Vocabulary.Boost = DefaultBoost
 	}
 
+	// A fraction outside (0,1] is meaningless rather than merely extreme —
+	// zero would hide the preview and 2.0 would ask for twice the screen —
+	// so both fall back to the default rather than being honoured.
+	if c.Overlay.PreviewWidth <= 0 || c.Overlay.PreviewWidth > 1 {
+		c.Overlay.PreviewWidth = DefaultPreviewWidth
+	}
 	if c.Overlay.TopMargin < 0 {
 		c.Overlay.TopMargin = 0
 	}

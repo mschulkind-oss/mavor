@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/mschulkind-oss/mavor/internal/audio"
 	"github.com/mschulkind-oss/mavor/internal/history"
@@ -409,6 +410,7 @@ func (d *Daemon) runStreamPreview(ctx context.Context, gen uint64, src speech.St
 				d.logger.Debug("streaming: chunk fed",
 					"bytes", len(chunk), "chars", len(partial),
 					"feed_ms", time.Since(feedStart).Milliseconds(), "chunk_n", fed)
+				partial = soften(partial)
 				if partial != "" {
 					if gotText == 0 {
 						d.logger.Info("streaming: preview is producing text", "after_chunks", fed)
@@ -675,3 +677,30 @@ type TranscriptRecorder interface {
 // ErrNotRunning is returned by `mavor toggle` when the daemon socket isn't
 // reachable. cmd/mavor translates this to an actionable user message.
 var ErrNotRunning = errors.New("daemon: not running (socket unreachable)")
+
+// soften lowercases a preview that is entirely upper case.
+//
+// The streaming recognisers that drive the preview emit their tokens in caps —
+// the 20M zipformer says "THE GRASS IS TALL AND WIDE" — and a HUD that shouts
+// at you while you speak reads as an alarm rather than as feedback. Only the
+// preview is touched: the transcript that gets typed comes from the main
+// model, which cases its own output, and this never sees it.
+//
+// The test is "has letters and none of them are lower case", so a model that
+// already cases its output is left exactly as it is, and so is a genuine
+// acronym sitting inside otherwise normal text.
+func soften(s string) string {
+	hasUpper := false
+	for _, r := range s {
+		if unicode.IsLower(r) {
+			return s
+		}
+		if unicode.IsUpper(r) {
+			hasUpper = true
+		}
+	}
+	if !hasUpper {
+		return s
+	}
+	return strings.ToLower(s)
+}

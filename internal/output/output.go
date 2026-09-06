@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -49,6 +50,10 @@ type Wayland struct {
 	Run    Runner
 	Logger *slog.Logger
 
+	// TypingDelayMS, when non-nil, is passed to wtype as -d. Nil leaves
+	// wtype's default alone.
+	TypingDelayMS *int
+
 	// Clipboard also copies each transcript via wl-copy. Off unless the
 	// config turns it on; the zero value is the default behaviour, so a
 	// Wayland built by hand in a test does not silently clobber anything.
@@ -84,7 +89,12 @@ func (w *Wayland) Emit(ctx context.Context, text string) error {
 	}
 	start := time.Now()
 	log.Info("output: dispatching", "text_len", len(text), "text_preview", truncate(text, 200))
-	typeErr := w.Run(ctx, "wtype", []string{"--", text}, nil)
+	args := []string{"--", text}
+	if w.TypingDelayMS != nil {
+		// Before the "--": everything after it is literal text to type.
+		args = append([]string{"-d", strconv.Itoa(*w.TypingDelayMS)}, args...)
+	}
+	typeErr := w.Run(ctx, "wtype", args, nil)
 	log.Info("output: wtype done", "err", fmt.Sprint(typeErr), "elapsed_ms", time.Since(start).Milliseconds())
 	if !w.Clipboard {
 		return typeErr

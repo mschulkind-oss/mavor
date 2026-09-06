@@ -54,7 +54,15 @@ type Scene struct {
 	// Levels is the waveform history, oldest first, each in [0,1].
 	Levels []float64
 	// Preview is the partial transcription strip below the pill; empty hides it.
+	//
+	// It is drawn on ONE line. The preview exists to show that recognition is
+	// keeping up, not to be read back, so a long dictation shows its tail
+	// rather than growing a surface nobody can fit on screen.
 	Preview string
+	// MaxPreviewWidth caps the preview strip in pixels, including its
+	// padding. Zero means uncapped, which is what a scene built by hand in a
+	// test gets. See FitPreviewTail for what happens to text that exceeds it.
+	MaxPreviewWidth int
 	// Phase drives the pulsing dot and the typing dots, in [0,1).
 	Phase float64
 }
@@ -229,6 +237,62 @@ func lerp(a, b, t float64) float64 { return a + (b-a)*t }
 
 // SceneSize reports the pixel size the scene needs, so the surface can be
 // allocated before anything is drawn.
+// previewEllipsis marks a preview that has been trimmed to its tail. A leading
+// mark rather than a trailing one, because the tail is the part still arriving
+// and the cut is behind it.
+const previewEllipsis = "…"
+
+// FitPreviewTail returns the longest suffix of s whose rendered width fits
+// maxTextPx, prefixed with an ellipsis when anything was dropped.
+//
+// The tail, not the head: the useful half of a live preview is the words just
+// spoken. Returns s unchanged when maxTextPx is zero or the text already fits,
+// so an uncapped scene behaves exactly as it did before this existed.
+func FitPreviewTail(f font.Face, s string, maxTextPx float64, tracking float64) string {
+	if s == "" || maxTextPx <= 0 {
+		return s
+	}
+	if textWidth(f, s, tracking) <= maxTextPx {
+		return s
+	}
+
+	r := []rune(s)
+	markPx := textWidth(f, previewEllipsis, tracking)
+	budget := maxTextPx - markPx
+	if budget <= 0 {
+		return previewEllipsis
+	}
+
+	// Walk back from the end while the suffix still fits. Linear in the
+	// length of what is kept rather than of the whole transcript, which
+	// matters when this runs on every frame of a 95-second dictation.
+	keep := 0
+	for i := len(r) - 1; i >= 0; i-- {
+		if textWidth(f, string(r[i:]), tracking) > budget {
+			break
+		}
+		keep = len(r) - i
+	}
+	if keep == 0 {
+		return previewEllipsis
+	}
+	return previewEllipsis + string(r[len(r)-keep:])
+}
+
+// previewText is the string actually drawn, and the single place the cap is
+// applied — SceneSize and Render must agree on it or the surface will not
+// match its contents.
+func previewText(f *faces, s Scene) string {
+	if s.Preview == "" {
+		return ""
+	}
+	maxText := float64(s.MaxPreviewWidth - 2*previewPadX)
+	if s.MaxPreviewWidth == 0 {
+		maxText = 0
+	}
+	return FitPreviewTail(f.preview, s.Preview, maxText, 0.03*previewSize)
+}
+
 func SceneSize(s Scene) (int, int, error) {
 	f, err := textFaces()
 	if err != nil {
@@ -237,7 +301,7 @@ func SceneSize(s Scene) (int, int, error) {
 	pillW, pillH := pillSize(f, s)
 	w, h := pillW, pillH
 	if s.Visual == Recording && s.Preview != "" {
-		pw := int(math.Ceil(textWidth(f.preview, s.Preview, 0.03*previewSize))) + 2*previewPadX
+		pw := int(math.Ceil(textWidth(f.preview, previewText(f, s), 0.03*previewSize))) + 2*previewPadX
 		ph := previewSize + 2*previewPadY + 4
 		if pw > w {
 			w = pw
@@ -359,7 +423,7 @@ func Render(s Scene) (*image.RGBA, error) {
 	}
 
 	if s.Visual == Recording && s.Preview != "" {
-		pw := int(math.Ceil(textWidth(f.preview, s.Preview, 0.03*previewSize))) + 2*previewPadX
+		pw := int(math.Ceil(textWidth(f.preview, previewText(f, s), 0.03*previewSize))) + 2*previewPadX
 		ph := previewSize + 2*previewPadY + 4
 		px := (w - pw) / 2
 		py := pillH + previewGap
@@ -373,7 +437,7 @@ func Render(s Scene) (*image.RGBA, error) {
 		})
 		pm := f.preview.Metrics()
 		pb := float64(py) + float64(ph)/2 + float64(pm.Ascent-pm.Descent)/128.0
-		drawText(img, f.preview, s.Preview, float64(px+previewPadX), pb, previewInk, 0.03*previewSize)
+		drawText(img, f.preview, previewText(f, s), float64(px+previewPadX), pb, previewInk, 0.03*previewSize)
 	}
 
 	return img, nil

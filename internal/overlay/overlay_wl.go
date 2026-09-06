@@ -32,9 +32,13 @@ type wlState struct {
 	surface *wayland.Surface
 	buf     *wayland.Buffer
 
-	scene  Scene
-	levels []float64
-	mapped bool
+	scene Scene
+	// maxPreview is the pixel cap applied to every scene before painting,
+	// resolved once at connect from the screen width and the configured
+	// fraction.
+	maxPreview int
+	levels     []float64
+	mapped     bool
 	// reqW/reqH is the size the surface has been asked for. Re-requesting the
 	// same size is not a no-op but a hang: the compositor has no reason to
 	// send another configure, and the resize would wait for one that never
@@ -48,9 +52,17 @@ type wlState struct {
 const pulsePeriod = 900 * time.Millisecond
 
 // NewWL connects to the compositor and starts the render loop.
-func NewWL(topMargin int, log *slog.Logger) (*WL, error) {
+// fallbackPreviewWidth caps the preview when the compositor advertises no
+// wl_output and the screen width is unknown. Wide enough to be useful, narrow
+// enough not to run off a small laptop panel.
+const fallbackPreviewWidth = 640
+
+func NewWL(topMargin int, previewFraction float64, log *slog.Logger) (*WL, error) {
 	if topMargin < 0 {
 		topMargin = 0
+	}
+	if previewFraction <= 0 || previewFraction > 1 {
+		previewFraction = 0.5
 	}
 	if log == nil {
 		log = slog.Default()
@@ -59,6 +71,13 @@ func NewWL(topMargin int, log *slog.Logger) (*WL, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	maxPreview := fallbackPreviewWidth
+	if d.OutputWidth > 0 {
+		maxPreview = int(float64(d.OutputWidth) * previewFraction)
+	}
+	log.Info("overlay: preview width cap",
+		"px", maxPreview, "output_width", d.OutputWidth, "fraction", previewFraction)
 
 	// Size is provisional: the surface is resized to fit whatever is being
 	// drawn, and the first real frame corrects it.
@@ -92,11 +111,12 @@ func NewWL(topMargin int, log *slog.Logger) (*WL, error) {
 		err:  make(chan error, 1),
 	}
 	go o.run(&wlState{
-		display: d,
-		surface: s,
-		levels:  make([]float64, waveCols),
-		reqW:    w,
-		reqH:    h,
+		display:    d,
+		surface:    s,
+		levels:     make([]float64, waveCols),
+		reqW:       w,
+		reqH:       h,
+		maxPreview: maxPreview,
 	})
 	return o, nil
 }
@@ -170,6 +190,7 @@ func (o *WL) paint(st *wlState, start time.Time) error {
 		phase = 1 - phase
 	}
 	st.scene.Phase = phase
+	st.scene.MaxPreviewWidth = st.maxPreview
 
 	w, h, err := SceneSize(st.scene)
 	if err != nil {

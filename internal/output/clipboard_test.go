@@ -72,3 +72,65 @@ func TestEmptyTextRunsNothing(t *testing.T) {
 		t.Errorf("commands = %v, want none", seen)
 	}
 }
+
+// Unset must leave wtype's default alone, and zero must be expressible as a
+// deliberate request — which is why the config field is a pointer.
+func TestTypingDelayIsOmittedWhenUnset(t *testing.T) {
+	var args []string
+	w := &Wayland{Run: func(ctx context.Context, name string, a []string, stdin []byte) error {
+		if name == "wtype" {
+			args = a
+		}
+		return nil
+	}}
+	if err := w.Emit(context.Background(), "hi"); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range args {
+		if a == "-d" {
+			t.Fatalf("wtype got -d with no delay configured: %v", args)
+		}
+	}
+}
+
+func TestTypingDelayIsPassedBeforeTheSeparator(t *testing.T) {
+	for _, ms := range []int{0, 12} {
+		var args []string
+		delay := ms
+		w := &Wayland{
+			TypingDelayMS: &delay,
+			Run: func(ctx context.Context, name string, a []string, stdin []byte) error {
+				if name == "wtype" {
+					args = a
+				}
+				return nil
+			},
+		}
+		if err := w.Emit(context.Background(), "hi"); err != nil {
+			t.Fatal(err)
+		}
+		// Everything after "--" is literal text to type, so the flag has to
+		// precede it or wtype would type "-d 12".
+		want := []string{"-d", itoa(ms), "--", "hi"}
+		if len(args) != len(want) {
+			t.Fatalf("args = %v, want %v", args, want)
+		}
+		for i := range want {
+			if args[i] != want[i] {
+				t.Fatalf("args = %v, want %v", args, want)
+			}
+		}
+	}
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b []byte
+	for n > 0 {
+		b = append([]byte{byte('0' + n%10)}, b...)
+		n /= 10
+	}
+	return string(b)
+}

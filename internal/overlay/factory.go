@@ -13,8 +13,8 @@ import "log/slog"
 // A compositor without layer-shell, or no compositor at all, is not fatal:
 // dictation works fine without a visual indicator, so the caller may fall back
 // to Noop rather than refusing to start.
-func NewDefault(topMargin int, log *slog.Logger) (Overlay, error) {
-	return NewWL(topMargin, log)
+func NewDefault(topMargin int, previewFraction float64, log *slog.Logger) (Overlay, error) {
+	return NewWL(topMargin, previewFraction, log)
 }
 
 // Shutdown exists for symmetry with the daemon's teardown path. The overlay
