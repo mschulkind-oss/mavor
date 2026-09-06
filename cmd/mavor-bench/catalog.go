@@ -16,16 +16,15 @@ import (
 // moment it is added, with no second list to update — which is the whole
 // point, given that the previous harness hardcoded three models and drifted.
 type catalogModel struct {
-	Name        string   `json:"name"`
-	Aliases     []string `json:"aliases"`
-	Engine      string   `json:"engine"`
-	Family      string   `json:"family"`
-	Description string   `json:"description"`
-	Languages   string   `json:"languages"`
-	Streaming   bool     `json:"streaming"`
-	Transducer  bool     `json:"transducer"`
-	Speed       string   `json:"speed"`
-	MeasuredRTF float64  `json:"measured_rtf"`
+	Name        string  `json:"name"`
+	Engine      string  `json:"engine"`
+	Family      string  `json:"family"`
+	Description string  `json:"description"`
+	Languages   string  `json:"languages"`
+	Streaming   bool    `json:"streaming"`
+	Transducer  bool    `json:"transducer"`
+	Speed       string  `json:"speed"`
+	MeasuredRTF float64 `json:"measured_rtf"`
 
 	Installed     bool  `json:"installed"`
 	InstalledSize int64 `json:"installed_size"`
@@ -73,14 +72,8 @@ func selectModels(c *catalog, only []string) (selected, missing []catalogModel) 
 		want[strings.TrimSpace(n)] = true
 	}
 	for _, m := range c.Models {
-		if len(want) > 0 {
-			matched := want[m.Name]
-			for _, a := range m.Aliases {
-				matched = matched || want[a]
-			}
-			if !matched {
-				continue
-			}
+		if len(want) > 0 && !want[m.Name] {
+			continue
 		}
 		if m.Installed {
 			selected = append(selected, m)

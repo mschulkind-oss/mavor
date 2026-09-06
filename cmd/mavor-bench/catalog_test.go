@@ -34,21 +34,22 @@ func TestSelectModelsNeverDownloadsWhatIsAbsent(t *testing.T) {
 	}
 }
 
-func TestSelectModelsFiltersByNameAndAlias(t *testing.T) {
+// Catalog names are the only names there are — there are no aliases — so the
+// filter matches on the name and nothing else.
+func TestSelectModelsFiltersByName(t *testing.T) {
 	c := &catalog{Models: []catalogModel{
-		{Name: "tiny.en", Installed: true},
-		{Name: "base.en", Installed: true},
-		{Name: "parakeet", Aliases: []string{"parakeet-tdt"}, Installed: true},
+		{Name: "whisper-tiny.en", Installed: true},
+		{Name: "whisper-base.en", Installed: true},
+		{Name: "fastconformer-streaming", Installed: true},
 	}}
-	selected, _ := selectModels(c, []string{"base.en"})
-	if len(selected) != 1 || selected[0].Name != "base.en" {
-		t.Errorf("filtering by name gave %v, want just base.en", selected)
+	selected, _ := selectModels(c, []string{"whisper-base.en"})
+	if len(selected) != 1 || selected[0].Name != "whisper-base.en" {
+		t.Errorf("filtering by name gave %v, want just whisper-base.en", selected)
 	}
-	// An alias selects the model it belongs to, so a name that works for
-	// `mavor models pull` works here too.
-	selected, _ = selectModels(c, []string{"parakeet-tdt"})
-	if len(selected) != 1 || selected[0].Name != "parakeet" {
-		t.Errorf("filtering by alias gave %v, want parakeet", selected)
+	// The pre-rename name is not a name any more, so it selects nothing.
+	selected, _ = selectModels(c, []string{"parakeet"})
+	if len(selected) != 0 {
+		t.Errorf("filtering by a retired name gave %v, want nothing", selected)
 	}
 }
 

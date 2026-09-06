@@ -103,7 +103,7 @@ func run() error {
 	flag.BoolVar(&o.skipGPU, "no-gpu", false, "skip the GPU column even if a GPU build was given")
 	flag.BoolVar(&o.skipSherpa, "no-sherpa", false, "skip the sherpa engines even if built in")
 	flag.StringVar(&o.threadSweep, "thread-sweep", "2,4,6,8", "thread counts for the thread-scaling table; empty skips it")
-	flag.StringVar(&o.sweepModels, "sweep-models", "tiny.en,base.en,small.en", "models the thread and warm-server sweeps run over")
+	flag.StringVar(&o.sweepModels, "sweep-models", "whisper-tiny.en,whisper-base.en,whisper-small.en", "models the thread and warm-server sweeps run over")
 	flag.BoolVar(&o.skipWarmSrv, "no-warm-server", false, "skip the warm whisper-server comparison")
 	flag.BoolVar(&o.render, "render", false, "re-render the Markdown from an existing results JSON without running anything")
 	flag.Parse()

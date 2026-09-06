@@ -53,8 +53,9 @@ type Config struct {
 	// height, or no bar at all, is handled without changing this value.
 	TopMargin int `toml:"top_margin"`
 
-	// Model is the whisper model name without the "ggml-" prefix or ".bin"
-	// suffix, e.g. "base.en" or "tiny.en".
+	// Model is a catalog name, e.g. "whisper-base.en" or "whisper-tiny.en".
+	// It is not the filename: the file on disk keeps the name upstream
+	// serves it under, and speech.WhisperModelPath maps between the two.
 	Model string `toml:"model"`
 
 	// ModelDir is where downloaded model files live.
@@ -110,7 +111,9 @@ type Config struct {
 	DuckStreams []string `toml:"duck_streams"`
 
 	// SherpaModel is the model identifier or subfolder name under ModelDir/sherpa.
-	// Examples: "parakeet-tdt-0.6b", "canary-1b", "moonshine-tiny", "moonshine-base", "sensevoice", "zipformer", "mms".
+	// Examples: "parakeet-tdt-0.6b", "canary-1b", "moonshine-tiny",
+	// "sensevoice-small", "zipformer-streaming" — catalog names, as
+	// `mavor models list` prints them.
 	SherpaModel string `toml:"sherpa_model"`
 
 	// SherpaModelType specifies the model architecture:
@@ -163,7 +166,7 @@ func Default() Config {
 		SilenceThresholdMS:   450,
 		MinPhraseMS:          600,
 		TopMargin:            8,
-		Model:                "base.en",
+		Model:                "whisper-base.en",
 		ModelDir:             defaultModelDir(),
 		Socket:               defaultSocket(),
 		GPU:                  "auto",
@@ -210,14 +213,14 @@ func (c *Config) Resolve() {
 	}
 
 	// Apply Preset to Model if model was not explicitly overridden
-	if c.Model == "" || c.Model == "base.en" {
+	if c.Model == "" || c.Model == "whisper-base.en" {
 		switch c.Preset {
 		case "accurate":
-			c.Model = "large-v3-turbo"
+			c.Model = "whisper-large-v3-turbo"
 		case "fast":
-			c.Model = "tiny.en"
+			c.Model = "whisper-tiny.en"
 		case "balanced":
-			c.Model = "base.en"
+			c.Model = "whisper-base.en"
 		}
 	}
 }

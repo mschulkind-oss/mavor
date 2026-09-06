@@ -17,9 +17,9 @@ func TestEndToEndRealWhisper(t *testing.T) {
 		Width:     testWidth,
 		Height:    testHeight,
 		AudioSink: sinkName,
-		// No FakeTranscript: drives real whisper-cli with tiny.en model
+		// No FakeTranscript: drives real whisper-cli with whisper-tiny.en model
 	})
-	socket, _ := h.RunDaemon(t.Context(), MavorBinary, "tiny.en")
+	socket, _ := h.RunDaemon(t.Context(), MavorBinary, "whisper-tiny.en")
 
 	if r, err := ipc.Send(socket, ipc.Request{Action: "toggle"}, 2*time.Second); err != nil {
 		t.Fatalf("toggle to record: %v", err)

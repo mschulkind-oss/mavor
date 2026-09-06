@@ -8,31 +8,34 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/mschulkind-oss/mavor/internal/config"
+	"github.com/mschulkind-oss/mavor/internal/speech"
 )
 
 func TestKnownModelsCatalog(t *testing.T) {
 	requiredFamilies := map[string][]string{
 		"Whisper": {
-			"tiny", "tiny.en", "base", "base.en", "small", "small.en",
-			"medium", "medium.en", "large-v3", "large-v3-turbo", "distil-large-v3",
+			"whisper-tiny", "whisper-tiny.en", "whisper-base", "whisper-base.en",
+			"whisper-small", "whisper-small.en", "whisper-medium", "whisper-medium.en",
+			"whisper-large-v3", "whisper-large-v3-turbo", "whisper-distil-large-v3",
 		},
 		"NeMo": {
-			"parakeet", "parakeet-tdt", "parakeet-tdt-0.6b", "parakeet-unified-en",
-			"parakeet-tdt-1.1b", "parakeet-ctc", "canary", "canary-1b",
+			"fastconformer-streaming", "parakeet-tdt-0.6b", "parakeet-unified-en",
+			"parakeet-ctc", "canary-1b", "canary-180m",
 		},
 		"Moonshine": {
-			"moonshine", "moonshine-tiny", "moonshine-base",
+			"moonshine-tiny", "moonshine-base",
 		},
 		"SenseVoice": {
-			"sensevoice", "sensevoice-small",
+			"sensevoice-small",
 		},
 		"Zipformer": {
-			"zipformer", "zipformer-streaming", "zipformer-offline", "zipformer-ctc",
+			"zipformer-streaming", "zipformer-streaming-20m", "zipformer-offline", "zipformer-ctc",
 		},
 	}
 
@@ -61,28 +64,82 @@ func TestKnownModelsCatalog(t *testing.T) {
 			if spec.Format == "" {
 				t.Errorf("model %q has empty Format", m)
 			}
+			if spec.Engine == "whisper" && spec.Filename == "" {
+				t.Errorf("whisper model %q has empty Filename; nothing knows what it is called on disk", m)
+			}
 		}
 	}
 }
 
-func TestCleanWhisperName(t *testing.T) {
-	cases := []struct {
-		input string
-		want  string
-	}{
-		{"base.en", "base.en"},
-		{"whisper-base.en", "base.en"},
-		{"whisper_tiny", "tiny"},
-		{"ggml-small.bin", "small"},
-		{"distil-large-v3", "distil-large-v3"},
-		{"distil-whisper-large-v3", "distil-large-v3"},
-		{"whisper-large-v3-turbo", "large-v3-turbo"},
+// The catalog name and the on-disk name deliberately differ, and every code
+// path that needs a whisper model's path goes through speech.WhisperModelPath.
+// This is the regression guard for that: change the catalog without changing
+// the resolver and mavor still compiles, still passes its other tests, and
+// reports "model not found" from some code paths only.
+func TestWhisperCatalogNameResolvesToTheUpstreamFilename(t *testing.T) {
+	got := speech.WhisperModelPath("/models", "whisper-base.en")
+	if want := filepath.Join("/models", "ggml-base.en.bin"); got != want {
+		t.Errorf("speech.WhisperModelPath for whisper-base.en = %q, want %q", got, want)
+	}
+}
+
+func TestEveryWhisperEntryResolvesToItsOwnFilename(t *testing.T) {
+	dir := t.TempDir()
+	for _, m := range modelCatalog {
+		if m.Engine != "whisper" {
+			continue
+		}
+		// The filename is what upstream serves, so the URL is the authority.
+		if want := path.Base(m.URL); m.Filename != want {
+			t.Errorf("model %q has Filename %q but its URL serves %q", m.Name, m.Filename, want)
+		}
+		if got, want := speech.WhisperModelPath(dir, m.Name), filepath.Join(dir, m.Filename); got != want {
+			t.Errorf("speech.WhisperModelPath(%q) = %q, want %q — the resolver and the catalog disagree",
+				m.Name, got, want)
+		}
+	}
+}
+
+// A sherpa entry has no Filename: it unpacks into a directory, not a file.
+func TestSherpaEntriesCarryNoFilename(t *testing.T) {
+	for _, m := range modelCatalog {
+		if m.Engine == "sherpa" && m.Filename != "" {
+			t.Errorf("sherpa model %q carries Filename %q; it unpacks into a directory", m.Name, m.Filename)
+		}
+	}
+}
+
+// The rule §5 of the config-surface design settled: a catalog name says which
+// family of model it is before it says anything else. Encoded as a test so it
+// cannot regress the next time an entry is added.
+func TestEveryCatalogNameBeginsWithItsFamily(t *testing.T) {
+	// The Family column is the vendor for the sherpa entries, and NVIDIA
+	// ships three unrelated model families under the NeMo name, so a family
+	// gets a set of prefixes rather than one. Every entry must match one of
+	// its family's, and a family with no prefixes listed is a new family
+	// nobody decided a name shape for.
+	prefixes := map[string][]string{
+		"Whisper":    {"whisper-"},
+		"NeMo":       {"parakeet-", "canary-", "fastconformer-"},
+		"Moonshine":  {"moonshine-"},
+		"SenseVoice": {"sensevoice-"},
+		"Paraformer": {"paraformer"},
+		"Zipformer":  {"zipformer-"},
 	}
 
-	for _, tc := range cases {
-		got := cleanWhisperName(tc.input)
-		if got != tc.want {
-			t.Errorf("cleanWhisperName(%q) = %q, want %q", tc.input, got, tc.want)
+	for _, m := range modelCatalog {
+		allowed, known := prefixes[m.Family]
+		if !known {
+			t.Errorf("model %q is in family %q, which has no agreed name prefix", m.Name, m.Family)
+			continue
+		}
+		matched := false
+		for _, p := range allowed {
+			matched = matched || strings.HasPrefix(m.Name, p)
+		}
+		if !matched {
+			t.Errorf("model %q is in family %q but its name begins with none of %v",
+				m.Name, m.Family, allowed)
 		}
 	}
 }
@@ -215,29 +272,77 @@ func TestRunModelsCommands(t *testing.T) {
 	}
 }
 
-// The catalog is the list users see when they ask what they can download,
-// so every canonical entry must be a distinct artifact. Aliases are alternate
-// names for the same download, not separate models.
+// The catalog is the list users see when they ask what they can download, so
+// every entry must be a distinct artifact.
 func TestCatalogEntriesAreDistinctDownloads(t *testing.T) {
 	seenURL := map[string]string{}
-	seenName := map[string]bool{}
 	for _, m := range modelCatalog {
 		if prev, dup := seenURL[m.URL]; dup {
-			t.Errorf("models %q and %q share a URL — one should be an alias of the other:\n  %s",
+			t.Errorf("models %q and %q share a URL — they are one model, not two:\n  %s",
 				prev, m.Name, m.URL)
 		}
 		seenURL[m.URL] = m.Name
+	}
+}
 
-		if seenName[m.Name] {
+// One name per model, and one model per name. There are no aliases to fall
+// back on, so a collision would silently hide an entry from `models pull`.
+func TestNoTwoCatalogEntriesShareAName(t *testing.T) {
+	seen := map[string]bool{}
+	for _, m := range modelCatalog {
+		if seen[m.Name] {
 			t.Errorf("duplicate catalog name %q", m.Name)
 		}
-		seenName[m.Name] = true
+		seen[m.Name] = true
+	}
+	if len(seen) != len(modelCatalog) {
+		t.Errorf("knownModels indexes %d names for %d catalog entries", len(seen), len(modelCatalog))
+	}
+	if len(knownModels) != len(modelCatalog) {
+		t.Errorf("knownModels has %d entries, want one per catalog entry (%d)",
+			len(knownModels), len(modelCatalog))
+	}
+}
 
-		for _, a := range m.Aliases {
-			if seenName[a] {
-				t.Errorf("alias %q of %q collides with another catalog name", a, m.Name)
-			}
-			seenName[a] = true
+// A name the catalog does not carry is an error, not a guess, and the error
+// has to name real entries or it is no better than "not found".
+func TestUnknownModelNameNamesTheClosestEntries(t *testing.T) {
+	// The exact mistake the rename creates: the name that used to work.
+	err := unknownModelError("base.en")
+	if err == nil {
+		t.Fatal("an uncatalogued name was accepted")
+	}
+	if !strings.Contains(err.Error(), "whisper-base.en") {
+		t.Errorf("error for %q does not point at whisper-base.en:\n%s", "base.en", err)
+	}
+
+	err = unknownModelError("zipformer")
+	if err == nil {
+		t.Fatal("an uncatalogued name was accepted")
+	}
+	if !strings.Contains(err.Error(), "zipformer-streaming") {
+		t.Errorf("error for %q does not point at a real zipformer entry:\n%s", "zipformer", err)
+	}
+
+	// Every candidate offered has to be pullable, or the suggestion is a
+	// second dead end.
+	for _, n := range nearestModelNames("moonshin", 3) {
+		if _, ok := knownModels[n]; !ok {
+			t.Errorf("suggested %q, which `mavor models pull` would reject", n)
+		}
+	}
+}
+
+// The old names are gone, not deprecated: resolving one would be the
+// compatibility fallback the design rejected.
+func TestRetiredNamesDoNotResolve(t *testing.T) {
+	for _, gone := range []string{
+		"tiny", "tiny.en", "base", "base.en", "small.en", "large-v3",
+		"distil-whisper-large-v3", "parakeet", "parakeet-tdt",
+		"parakeet-tdt-1.1b", "zipformer", "moonshine", "sensevoice", "canary",
+	} {
+		if _, ok := knownModels[gone]; ok {
+			t.Errorf("retired name %q still resolves; aliases were deleted, not flipped", gone)
 		}
 	}
 }
@@ -268,26 +373,42 @@ func TestCatalogEntriesCarryTheirProperties(t *testing.T) {
 	}
 }
 
-// knownModels is generated from the catalog. Every canonical name and every
-// alias must resolve, and sherpa models must keep landing in a directory
-// named after the name the user typed — that is what ResolveSherpaModelDir
-// looks for.
+// knownModels is generated from the catalog: every name resolves, and a
+// sherpa model lands in a directory named after its entry — that is what
+// ResolveSherpaModelDir looks for.
 func TestKnownModelsIsGeneratedFromTheCatalog(t *testing.T) {
 	for _, m := range modelCatalog {
-		for _, key := range append([]string{m.Name}, m.Aliases...) {
-			spec, ok := knownModels[key]
-			if !ok {
-				t.Errorf("catalog name %q missing from knownModels", key)
-				continue
-			}
-			if spec.URL != m.URL {
-				t.Errorf("knownModels[%q].URL = %q, want %q", key, spec.URL, m.URL)
-			}
-			if spec.Engine == "sherpa" && spec.TargetDir != key {
-				t.Errorf("knownModels[%q].TargetDir = %q, want %q so the model resolves by the name the user typed",
-					key, spec.TargetDir, key)
-			}
+		spec, ok := knownModels[m.Name]
+		if !ok {
+			t.Errorf("catalog name %q missing from knownModels", m.Name)
+			continue
 		}
+		if spec.URL != m.URL {
+			t.Errorf("knownModels[%q].URL = %q, want %q", m.Name, spec.URL, m.URL)
+		}
+		if spec.Engine != "sherpa" {
+			continue
+		}
+		want := m.TargetDir
+		if want == "" {
+			want = m.Name
+		}
+		if spec.TargetDir != want {
+			t.Errorf("knownModels[%q].TargetDir = %q, want %q", m.Name, spec.TargetDir, want)
+		}
+	}
+}
+
+// fastconformer-streaming was called "parakeet" when it was downloaded, and
+// TargetDir defaults to the catalog name. Without the pin the rename would
+// move the directory the model is expected at and orphan a 450 MB download.
+func TestRenamedSherpaEntryKeepsItsExistingDirectory(t *testing.T) {
+	spec, ok := knownModels["fastconformer-streaming"]
+	if !ok {
+		t.Fatal("fastconformer-streaming is not in the catalog")
+	}
+	if spec.TargetDir != "parakeet" {
+		t.Errorf("TargetDir = %q, want %q so an existing download still resolves", spec.TargetDir, "parakeet")
 	}
 }
 
@@ -318,7 +439,8 @@ func TestModelsListShowsTheCatalogWithStatus(t *testing.T) {
 	if err := os.MkdirAll(modelDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// base.en is downloaded and is the configured model; tiny.en is not.
+	// whisper-base.en is downloaded and is the configured model; the file on
+	// disk keeps upstream's name. whisper-tiny.en is not downloaded.
 	if err := os.WriteFile(filepath.Join(modelDir, "ggml-base.en.bin"), make([]byte, 1024*1024), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -335,11 +457,11 @@ func TestModelsListShowsTheCatalogWithStatus(t *testing.T) {
 
 	// A model that is not downloaded still appears — that is the point of
 	// the catalog view.
-	if !strings.Contains(out, "tiny.en") {
-		t.Error("catalog listing omits tiny.en, which is supported but not downloaded")
+	if !strings.Contains(out, "whisper-tiny.en") {
+		t.Error("catalog listing omits whisper-tiny.en, which is supported but not downloaded")
 	}
-	if !strings.Contains(out, "large-v3-turbo") {
-		t.Error("catalog listing omits large-v3-turbo")
+	if !strings.Contains(out, "whisper-large-v3-turbo") {
+		t.Error("catalog listing omits whisper-large-v3-turbo")
 	}
 	// Properties are columns, not prose.
 	for _, header := range []string{"NAME", "ENGINE", "SIZE", "LANGUAGES", "STREAM", "STATUS"} {
@@ -347,13 +469,14 @@ func TestModelsListShowsTheCatalogWithStatus(t *testing.T) {
 			t.Errorf("listing missing %q column header", header)
 		}
 	}
-	// Aliases are discoverable.
-	if !strings.Contains(out, "ALIASES") {
-		t.Error("listing missing ALIASES column")
+	// There is one name per model now, so there is nothing for an alias
+	// column to hold.
+	if strings.Contains(out, "ALIASES") {
+		t.Error("listing still has an ALIASES column; aliases were deleted")
 	}
 	// Downloaded and active markers.
 	if !strings.Contains(out, markerDownloaded) {
-		t.Errorf("listing never shows the downloaded marker %q for base.en", markerDownloaded)
+		t.Errorf("listing never shows the downloaded marker %q for whisper-base.en", markerDownloaded)
 	}
 	if !strings.Contains(out, markerActive) {
 		t.Errorf("listing never shows the active marker %q for the configured model", markerActive)
@@ -381,11 +504,11 @@ func TestModelsListInstalledShowsOnlyDownloaded(t *testing.T) {
 	}
 	out := buf.String()
 
-	if !strings.Contains(out, "base.en") {
+	if !strings.Contains(out, "whisper-base.en") {
 		t.Error("--installed listing omits the downloaded model")
 	}
-	if strings.Contains(out, "large-v3-turbo") {
-		t.Error("--installed listing includes large-v3-turbo, which is not downloaded")
+	if strings.Contains(out, "whisper-large-v3-turbo") {
+		t.Error("--installed listing includes whisper-large-v3-turbo, which is not downloaded")
 	}
 }
 
@@ -414,19 +537,19 @@ func TestModelsListAcceptsTheInstalledFlag(t *testing.T) {
 	}
 }
 
-// The active marker has to follow the config through an alias: a user whose
-// config says sherpa_model = "parakeet-tdt" is running the model the catalog
-// calls "parakeet", and that is the row that should be starred.
-func TestActiveMarkerFollowsAnAlias(t *testing.T) {
+// The active marker follows the config to the entry that owns the directory
+// on disk. fastconformer-streaming is the case that would break a naive
+// implementation: its catalog name and its directory differ.
+func TestActiveMarkerFindsTheEntryThatOwnsTheDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", tmpDir)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "cfg"))
 
-	parakeetDir := filepath.Join(tmpDir, "mavor", "models", "sherpa", "parakeet-tdt")
-	if err := os.MkdirAll(parakeetDir, 0o755); err != nil {
+	dir := filepath.Join(tmpDir, "mavor", "models", "sherpa", "parakeet")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(parakeetDir, "encoder.onnx"), make([]byte, 512), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "encoder.onnx"), make([]byte, 512), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -435,7 +558,7 @@ func TestActiveMarkerFollowsAnAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.Engine = "sherpa"
-	cfg.SherpaModel = "parakeet-tdt"
+	cfg.SherpaModel = "fastconformer-streaming"
 
 	buf := new(bytes.Buffer)
 	if err := listCatalog(buf, cfg, true); err != nil {
@@ -444,15 +567,20 @@ func TestActiveMarkerFollowsAnAlias(t *testing.T) {
 
 	var starred string
 	for _, l := range strings.Split(buf.String(), "\n") {
-		if strings.Contains(l, markerActive) && strings.HasPrefix(l, "parakeet") {
+		// The legend at the foot of the table carries every marker; only
+		// table rows start with a model name.
+		if strings.Contains(l, markerActive) && !strings.HasPrefix(l, markerActive) {
 			starred = l
 		}
 	}
 	if starred == "" {
-		t.Fatalf("no parakeet row carries the active marker:\n%s", buf.String())
+		t.Fatalf("no row carries the active marker:\n%s", buf.String())
 	}
-	if !strings.HasPrefix(starred, "parakeet ") {
-		t.Errorf("expected the canonical %q row to be starred, got: %s", "parakeet", starred)
+	if !strings.HasPrefix(starred, "fastconformer-streaming ") {
+		t.Errorf("expected the fastconformer-streaming row to be starred, got: %s", starred)
+	}
+	if !strings.Contains(starred, markerDownloaded) {
+		t.Errorf("the row is not marked downloaded, so the pinned TargetDir was not consulted: %s", starred)
 	}
 }
 
@@ -656,25 +784,30 @@ func TestModelsListJSONCarriesEveryCatalogProperty(t *testing.T) {
 		byName[m.Name] = m
 	}
 
-	base, ok := byName["base.en"]
+	base, ok := byName["whisper-base.en"]
 	if !ok {
-		t.Fatal("JSON output omits base.en")
+		t.Fatal("JSON output omits whisper-base.en")
 	}
 	if !base.Installed {
-		t.Error("base.en is on disk but the JSON reports it as not installed")
+		t.Error("whisper-base.en is on disk but the JSON reports it as not installed")
 	}
 	if base.InstalledSize != 4096 {
-		t.Errorf("base.en installed_size = %d, want 4096", base.InstalledSize)
+		t.Errorf("whisper-base.en installed_size = %d, want 4096", base.InstalledSize)
 	}
 	if base.Engine != "whisper" || base.DownloadS == 0 || base.Languages == "" {
-		t.Errorf("base.en is missing catalog properties: %+v", base)
+		t.Errorf("whisper-base.en is missing catalog properties: %+v", base)
+	}
+	// A consumer building a path needs the on-disk name, which is not the
+	// catalog name.
+	if base.Filename != "ggml-base.en.bin" {
+		t.Errorf("whisper-base.en filename = %q, want ggml-base.en.bin", base.Filename)
 	}
 
 	// A model that is not downloaded is present in the catalog listing, with
 	// installed false — the benchmark harness needs the difference.
-	turbo := byName["large-v3-turbo"]
+	turbo := byName["whisper-large-v3-turbo"]
 	if turbo.Installed {
-		t.Error("large-v3-turbo is not on disk but the JSON reports it as installed")
+		t.Error("whisper-large-v3-turbo is not on disk but the JSON reports it as installed")
 	}
 	if turbo.InstalledSize != 0 {
 		t.Errorf("an uninstalled model reports installed_size %d, want 0", turbo.InstalledSize)
@@ -743,8 +876,8 @@ func TestModelsListJSONInstalledOnlyNarrowsTheListing(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Models) != 1 || got.Models[0].Name != "tiny.en" {
-		t.Errorf("--installed --json listed %d models, want only tiny.en", len(got.Models))
+	if len(got.Models) != 1 || got.Models[0].Name != "whisper-tiny.en" {
+		t.Errorf("--installed --json listed %d models, want only whisper-tiny.en", len(got.Models))
 	}
 }
 

@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mschulkind-oss/mavor/internal/speech"
 )
 
 // Geometry shared by every harness-backed test: the virtual output size,
@@ -398,15 +400,16 @@ func (h *Harness) WlPaste() string {
 }
 
 // RunDaemon spawns the mavor binary as a child of the harness and returns the
-// daemon's socket path plus a teardown closure. modelName is a whisper model
-// name without "ggml-" prefix or ".bin" suffix (e.g. "tiny.en"). If a real
+// daemon's socket path plus a teardown closure. modelName is a whisper
+// catalog name (e.g. "whisper-tiny.en"); the stub file is written to the path
+// speech.WhisperModelPath gives for it, which is upstream's. If a real
 // model file isn't already at the expected path, a stub is dropped so the
 // daemon's pre-flight check passes — tests that need real transcription
 // must arrange for a real model.
 func (h *Harness) RunDaemon(ctx context.Context, binary, modelName string, extraEnv ...string) (socket string, stop func()) {
 	socket = filepath.Join(h.XDGRuntime, "mavor.sock")
 	modelDir := filepath.Join(h.XDGRuntime, "cache", "mavor", "models")
-	modelPath := filepath.Join(modelDir, "ggml-"+modelName+".bin")
+	modelPath := speech.WhisperModelPath(modelDir, modelName)
 	if err := os.MkdirAll(modelDir, 0o755); err != nil {
 		h.t.Fatal(err)
 	}

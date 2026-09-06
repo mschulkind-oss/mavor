@@ -41,7 +41,7 @@ func TestServerEngineAgainstTheRealWhisperServer(t *testing.T) {
 	// configuration that has to work.
 	cfg := config.Default()
 	cfg.Engine = "server"
-	cfg.Model = "tiny.en"
+	cfg.Model = "whisper-tiny.en"
 	cfg.ModelDir = modelDir
 	cfg.ServerSocket = filepath.Join(t.TempDir(), "mavor-server.sock")
 	cfg.Threads = 4

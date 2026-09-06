@@ -38,7 +38,7 @@ duck_audio = true
 # ==============================================================================
 # top_margin = 32             # Gap below your bar (Waybar, etc.) in pixels
 # engine = "server"           # "server", "cli", or "sherpa"
-# model = "base.en"           # Whisper GGML model name
+# model = "whisper-base.en"   # Catalog name; run "mavor models list" for the rest
 # threads = 4                 # CPU inference threads
 # gpu = "auto"                # "auto" or "off". whisper only; whisper.cpp uses
 #                           # whatever GPU backend its build loaded. "off" passes -ng.

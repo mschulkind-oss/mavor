@@ -27,7 +27,7 @@ func TestCannedWAVReachesClipboard(t *testing.T) {
 		AudioSink:      sinkName,
 		FakeTranscript: transcript,
 	})
-	socket, _ := h.RunDaemon(t.Context(), MavorBinary, "tiny.en")
+	socket, _ := h.RunDaemon(t.Context(), MavorBinary, "whisper-tiny.en")
 
 	if r, err := ipc.Send(socket, ipc.Request{Action: "toggle"}, 2*time.Second); err != nil {
 		t.Fatalf("toggle to record: %v", err)

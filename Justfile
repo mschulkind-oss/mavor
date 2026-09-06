@@ -1,9 +1,9 @@
 # mavor — voice-to-text utility for Wayland
 
 # Default model used by the daemon when none is configured.
-default_model := "base.en"
+default_model := "whisper-base.en"
 # Model used by integration tests (small, downloads quickly, deterministic enough).
-test_model := "tiny.en"
+test_model := "whisper-tiny.en"
 # Cache dir for whisper models (matches the `models` subcommand).
 model_dir := env_var_or_default("XDG_CACHE_HOME", env_var("HOME") + "/.cache") + "/mavor/models"
 # Where the GPU benchmark's whisper.cpp build lives. It is out of tree because
@@ -227,11 +227,15 @@ release version:
     git push origin "v{{version}}"
     echo "pushed v{{version}} — release.yml takes it from here"
 
-# Download a whisper model into the cache (no-op if already present).
+# Download a whisper model into the cache (no-op if already present). `name` is
+# a catalog name such as whisper-base.en. The file keeps the name upstream
+# serves it under, which is the catalog name without its family prefix — the
+# same mapping internal/speech's WhisperModelPath makes for the binary.
 _ensure-model name:
-    @if [ ! -f "{{model_dir}}/ggml-{{name}}.bin" ]; then \
-        echo "downloading ggml-{{name}}.bin into {{model_dir}}"; \
+    @file="ggml-$(echo '{{name}}' | sed 's/^whisper-//').bin"; \
+    if [ ! -f "{{model_dir}}/$file" ]; then \
+        echo "downloading $file into {{model_dir}}"; \
         mkdir -p "{{model_dir}}"; \
-        curl -fSL --output "{{model_dir}}/ggml-{{name}}.bin" \
-            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{{name}}.bin"; \
+        curl -fSL --output "{{model_dir}}/$file" \
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$file"; \
     fi

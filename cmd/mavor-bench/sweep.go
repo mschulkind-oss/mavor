@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -88,9 +87,6 @@ func selectSweepModels(installed []catalogModel, want []string) (selected []cata
 			continue
 		}
 		byName[m.Name] = m
-		for _, a := range m.Aliases {
-			byName[a] = m
-		}
 	}
 	seen := map[string]bool{}
 	for _, n := range want {
@@ -117,7 +113,7 @@ func selectSweepModels(installed []catalogModel, want []string) (selected []cata
 func benchThreadSweep(ctx context.Context, w whisperRunner, models []catalogModel, counts []int, modelDir string, o options, audioSec float64) []threadCell {
 	var cells []threadCell
 	for _, m := range models {
-		modelPath := filepath.Join(modelDir, "ggml-"+m.Name+".bin")
+		modelPath := speech.WhisperModelPath(modelDir, m.Name)
 		for _, n := range counts {
 			fmt.Fprintf(os.Stderr, "  thread sweep: %s @ %d threads\n", m.Name, n)
 			cell := threadCell{Model: m.Name, Threads: n}
@@ -169,7 +165,7 @@ func benchWarmServer(ctx context.Context, models []catalogModel, counts []int, m
 	for _, m := range models {
 		fmt.Fprintf(os.Stderr, "  warm server: %s @ %d threads\n", m.Name, threads)
 		cell := serverCell{Model: m.Name, Threads: threads, ColdMS: cold[threadKey{m.Name, threads}]}
-		modelPath := filepath.Join(modelDir, "ggml-"+m.Name+".bin")
+		modelPath := speech.WhisperModelPath(modelDir, m.Name)
 
 		port, err := freePort()
 		if err != nil {

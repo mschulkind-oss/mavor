@@ -17,8 +17,9 @@ func TestDefaultsAreReasonable(t *testing.T) {
 	if d.TopMargin != 8 {
 		t.Errorf("TopMargin = %d, want 8", d.TopMargin)
 	}
-	if d.Model != "base.en" {
-		t.Errorf("Model = %q, want base.en", d.Model)
+	// A catalog name, prefixed with its model family — not the GGML stem.
+	if d.Model != "whisper-base.en" {
+		t.Errorf("Model = %q, want whisper-base.en", d.Model)
 	}
 	if !strings.HasSuffix(d.ModelDir, "/mavor/models") {
 		t.Errorf("ModelDir = %q, want suffix /mavor/models", d.ModelDir)
@@ -73,7 +74,7 @@ func TestLoadMissingFileReturnsDefaults(t *testing.T) {
 func TestLoadValidTOMLOverridesDefaults(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	body := `top_margin = 64
-model = "tiny.en"
+model = "whisper-tiny.en"
 model_dir = "/var/lib/mavor/models"
 socket = "/run/user/1000/mavor.sock"
 gpu = "off"
@@ -99,7 +100,7 @@ duck_streams = ["spotify", "firefox", "vlc"]
 		SilenceThresholdMS:   450,
 		MinPhraseMS:          600,
 		TopMargin:            64,
-		Model:                "tiny.en",
+		Model:                "whisper-tiny.en",
 		ModelDir:             "/var/lib/mavor/models",
 		Socket:               "/run/user/1000/mavor.sock",
 		GPU:                  "off",
@@ -135,27 +136,27 @@ duck_streams = ["spotify", "firefox", "vlc"]
 }
 
 func TestPresetsAndSimpleConfig(t *testing.T) {
-	t.Run("accurate preset selects large-v3-turbo", func(t *testing.T) {
+	t.Run("accurate preset selects whisper-large-v3-turbo", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "config.toml")
 		_ = os.WriteFile(path, []byte(`preset = "accurate"`), 0o644)
 		cfg, err := Load(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if cfg.Model != "large-v3-turbo" {
-			t.Errorf("Model = %q, want large-v3-turbo", cfg.Model)
+		if cfg.Model != "whisper-large-v3-turbo" {
+			t.Errorf("Model = %q, want whisper-large-v3-turbo", cfg.Model)
 		}
 	})
 
-	t.Run("fast preset selects tiny.en", func(t *testing.T) {
+	t.Run("fast preset selects whisper-tiny.en", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "config.toml")
 		_ = os.WriteFile(path, []byte(`preset = "fast"`), 0o644)
 		cfg, err := Load(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if cfg.Model != "tiny.en" {
-			t.Errorf("Model = %q, want tiny.en", cfg.Model)
+		if cfg.Model != "whisper-tiny.en" {
+			t.Errorf("Model = %q, want whisper-tiny.en", cfg.Model)
 		}
 	})
 
@@ -170,8 +171,8 @@ func TestPresetsAndSimpleConfig(t *testing.T) {
 		if cfg.Mode != "streaming" {
 			t.Errorf("Mode = %q, want streaming", cfg.Mode)
 		}
-		if cfg.Model != "base.en" {
-			t.Errorf("Model = %q, want base.en", cfg.Model)
+		if cfg.Model != "whisper-base.en" {
+			t.Errorf("Model = %q, want whisper-base.en", cfg.Model)
 		}
 	})
 }
@@ -394,7 +395,7 @@ func TestDefaultLogFileHonorsXDGStateHome(t *testing.T) {
 
 func TestGPUDefaultsToAutoWhenUnset(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte(`model = "tiny.en"`), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(`model = "whisper-tiny.en"`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := Load(path)

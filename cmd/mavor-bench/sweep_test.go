@@ -43,20 +43,21 @@ func TestParseThreadSweepRejectsNonsense(t *testing.T) {
 
 func TestSelectSweepModelsKeepsOrderAndSkipsWhatIsNotThere(t *testing.T) {
 	installed := []catalogModel{
-		{Name: "base.en", Engine: "whisper", Installed: true},
-		{Name: "tiny.en", Engine: "whisper", Installed: true, Aliases: []string{"tiny-en"}},
-		{Name: "parakeet", Engine: "sherpa", Installed: true},
+		{Name: "whisper-base.en", Engine: "whisper", Installed: true},
+		{Name: "whisper-tiny.en", Engine: "whisper", Installed: true},
+		{Name: "fastconformer-streaming", Engine: "sherpa", Installed: true},
 	}
-	got, absent := selectSweepModels(installed, []string{"tiny-en", "base.en", "small.en", "parakeet"})
+	got, absent := selectSweepModels(installed,
+		[]string{"whisper-tiny.en", "whisper-base.en", "whisper-small.en", "fastconformer-streaming"})
 
-	if len(got) != 2 || got[0].Name != "tiny.en" || got[1].Name != "base.en" {
-		t.Fatalf("got %v, want tiny.en then base.en (the order asked for, aliases resolved)", got)
+	if len(got) != 2 || got[0].Name != "whisper-tiny.en" || got[1].Name != "whisper-base.en" {
+		t.Fatalf("got %v, want whisper-tiny.en then whisper-base.en, in the order asked for", got)
 	}
 	// Both a model that is not downloaded and one that is not whisper come
 	// back as absent: the sweeps vary whisper.cpp settings sherpa does not
 	// have, and a user who asked for either needs to be told it was skipped.
-	if len(absent) != 2 || absent[0] != "small.en" || absent[1] != "parakeet" {
-		t.Fatalf("got absent %v, want small.en and parakeet", absent)
+	if len(absent) != 2 || absent[0] != "whisper-small.en" || absent[1] != "fastconformer-streaming" {
+		t.Fatalf("got absent %v, want whisper-small.en and fastconformer-streaming", absent)
 	}
 }
 

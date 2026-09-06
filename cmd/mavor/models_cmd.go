@@ -11,24 +11,31 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 
 	"github.com/mschulkind-oss/mavor/internal/config"
+	"github.com/mschulkind-oss/mavor/internal/speech"
 )
 
 // KnownModel describes one downloadable speech model: where it comes from,
 // how to unpack it, and the properties a user picks between when choosing one.
 type KnownModel struct {
-	Name        string   // canonical name, as typed to `mavor models pull`
-	Aliases     []string // alternate names accepted for the same download
-	Engine      string   // "whisper" or "sherpa"
-	Family      string   // "Whisper", "NeMo", "Moonshine", "SenseVoice", "Zipformer"
+	Name        string // canonical name, as typed to `mavor models pull`
+	Engine      string // "whisper" or "sherpa"
+	Family      string // "Whisper", "NeMo", "Moonshine", "SenseVoice", "Zipformer"
 	Description string
 	URL         string
 	Format      string // "raw", "tar.bz2", "tar.gz", "tgz", "tar"
 	TargetDir   string // subfolder under model_dir/sherpa/
+
+	// Filename is the name a whisper model has in the model cache: the
+	// basename the URL serves, which is upstream's and not mavor's. It is
+	// stated rather than derived from Name because the two deliberately
+	// differ — the catalog calls the model whisper-base.en and the file on
+	// disk is ggml-base.en.bin. Empty for sherpa models, which unpack into a
+	// directory rather than landing as one file.
+	Filename string
 
 	// DownloadSize is the artifact size in bytes as served by the URL above,
 	// measured rather than estimated. It is the download cost, not the size
@@ -66,9 +73,14 @@ type KnownModel struct {
 	Vocabulary string
 }
 
-// modelCatalog is the set of distinct models mavor can download — one entry per
-// artifact. Alternate names for the same download are Aliases, not entries, so
-// the listing shows what a user is actually choosing between.
+// modelCatalog is the set of distinct models mavor can download — one entry
+// per artifact, and exactly one name per entry. Every name begins with its
+// model family, so a listing sorts into families and a config value says which
+// family of model the daemon will load without anyone having to look it up.
+//
+// The prefix names the model family, not the runtime: sherpa-onnx can also run
+// Whisper in ONNX form, and such an entry would need a name of its own because
+// whisper-base.en is taken by the GGML file that runs on whisper.cpp.
 //
 // Sizes were measured against the live URLs. Whisper artifacts come from the
 // whisper.cpp GGML repository; sherpa artifacts from the sherpa-onnx release
@@ -78,10 +90,11 @@ var modelCatalog = []KnownModel{
 	// Whisper is encoder-decoder and transcribes in 30-second windows, so
 	// none of these decode incrementally.
 	{
-		Name: "tiny", Aliases: []string{"whisper-tiny"},
+		Name:   "whisper-tiny",
 		Engine: "whisper", Family: "Whisper",
 		Description:  "Whisper Tiny, 39M parameters — fastest, least accurate",
 		URL:          "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
+		Filename:     "ggml-tiny.bin",
 		Format:       "raw",
 		DownloadSize: 77691713,
 		Languages:    "multi (99)",
@@ -89,10 +102,11 @@ var modelCatalog = []KnownModel{
 		Vocabulary:   "none — mavor does not pass an initial prompt to whisper-cli",
 	},
 	{
-		Name: "tiny.en", Aliases: []string{"whisper-tiny.en"},
+		Name:   "whisper-tiny.en",
 		Engine: "whisper", Family: "Whisper",
 		Description:  "Whisper Tiny, 39M parameters, English-only — what the test suite uses",
 		URL:          "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin",
+		Filename:     "ggml-tiny.en.bin",
 		Format:       "raw",
 		DownloadSize: 77704715,
 		Languages:    "en",
@@ -101,10 +115,11 @@ var modelCatalog = []KnownModel{
 		Vocabulary:   "none — mavor does not pass an initial prompt to whisper-cli",
 	},
 	{
-		Name: "base", Aliases: []string{"whisper-base"},
+		Name:   "whisper-base",
 		Engine: "whisper", Family: "Whisper",
 		Description:  "Whisper Base, 74M parameters",
 		URL:          "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
+		Filename:     "ggml-base.bin",
 		Format:       "raw",
 		DownloadSize: 147951465,
 		Languages:    "multi (99)",
@@ -112,10 +127,11 @@ var modelCatalog = []KnownModel{
 		Vocabulary:   "none — mavor does not pass an initial prompt to whisper-cli",
 	},
 	{
-		Name: "base.en", Aliases: []string{"whisper-base.en"},
+		Name:   "whisper-base.en",
 		Engine: "whisper", Family: "Whisper",
 		Description:  "Whisper Base, 74M parameters, English-only — the default",
 		URL:          "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin",
+		Filename:     "ggml-base.en.bin",
 		Format:       "raw",
 		DownloadSize: 147964211,
 		Languages:    "en",
@@ -124,10 +140,11 @@ var modelCatalog = []KnownModel{
 		Vocabulary:   "none — mavor does not pass an initial prompt to whisper-cli",
 	},
 	{
-		Name: "small", Aliases: []string{"whisper-small"},
+		Name:   "whisper-small",
 		Engine: "whisper", Family: "Whisper",
 		Description:  "Whisper Small, 244M parameters",
 		URL:          "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
+		Filename:     "ggml-small.bin",
 		Format:       "raw",
 		DownloadSize: 487601967,
 		Languages:    "multi (99)",
@@ -135,10 +152,11 @@ var modelCatalog = []KnownModel{
 		Vocabulary:   "none — mavor does not pass an initial prompt to whisper-cli",
 	},
 	{
-		Name: "small.en", Aliases: []string{"whisper-small.en"},
+		Name:   "whisper-small.en",
 		Engine: "whisper", Family: "Whisper",
 		Description:  "Whisper Small, 244M parameters, English-only",
 		URL:          "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin",
+		Filename:     "ggml-small.en.bin",
 		Format:       "raw",
 		DownloadSize: 487614201,
 		Languages:    "en",
@@ -146,10 +164,11 @@ var modelCatalog = []KnownModel{
 		Vocabulary:   "none — mavor does not pass an initial prompt to whisper-cli",
 	},
 	{
-		Name: "medium", Aliases: []string{"whisper-medium"},
+		Name:   "whisper-medium",
 		Engine: "whisper", Family: "Whisper",
 		Description:  "Whisper Medium, 769M parameters",
 		URL:          "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin",
+		Filename:     "ggml-medium.bin",
 		Format:       "raw",
 		DownloadSize: 1533763059,
 		Languages:    "multi (99)",
@@ -157,10 +176,11 @@ var modelCatalog = []KnownModel{
 		Vocabulary:   "none — mavor does not pass an initial prompt to whisper-cli",
 	},
 	{
-		Name: "medium.en", Aliases: []string{"whisper-medium.en"},
+		Name:   "whisper-medium.en",
 		Engine: "whisper", Family: "Whisper",
 		Description:  "Whisper Medium, 769M parameters, English-only",
 		URL:          "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en.bin",
+		Filename:     "ggml-medium.en.bin",
 		Format:       "raw",
 		DownloadSize: 1533774781,
 		Languages:    "en",
@@ -168,10 +188,11 @@ var modelCatalog = []KnownModel{
 		Vocabulary:   "none — mavor does not pass an initial prompt to whisper-cli",
 	},
 	{
-		Name: "large-v3", Aliases: []string{"whisper-large-v3"},
+		Name:   "whisper-large-v3",
 		Engine: "whisper", Family: "Whisper",
 		Description:  "Whisper Large v3, 1.55B parameters — most accurate, slowest",
 		URL:          "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin",
+		Filename:     "ggml-large-v3.bin",
 		Format:       "raw",
 		DownloadSize: 3095033483,
 		Languages:    "multi (99)",
@@ -179,10 +200,11 @@ var modelCatalog = []KnownModel{
 		Vocabulary:   "none — mavor does not pass an initial prompt to whisper-cli",
 	},
 	{
-		Name: "large-v3-turbo", Aliases: []string{"whisper-large-v3-turbo"},
+		Name:   "whisper-large-v3-turbo",
 		Engine: "whisper", Family: "Whisper",
 		Description:  "Whisper Large v3 Turbo, 809M parameters — large-v3 accuracy at a fraction of the decode cost",
 		URL:          "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
+		Filename:     "ggml-large-v3-turbo.bin",
 		Format:       "raw",
 		DownloadSize: 1624555275,
 		Languages:    "multi (99)",
@@ -191,10 +213,11 @@ var modelCatalog = []KnownModel{
 		Vocabulary:   "none — mavor does not pass an initial prompt to whisper-cli",
 	},
 	{
-		Name: "distil-large-v3", Aliases: []string{"distil-whisper-large-v3"},
+		Name:   "whisper-distil-large-v3",
 		Engine: "whisper", Family: "Whisper",
 		Description:  "Distil-Whisper Large v3, 756M parameters, English-only",
 		URL:          "https://huggingface.co/distil-whisper/distil-large-v3-ggml/resolve/main/ggml-distil-large-v3.bin",
+		Filename:     "ggml-distil-large-v3.bin",
 		Format:       "raw",
 		DownloadSize: 1519521155,
 		Languages:    "en",
@@ -204,8 +227,14 @@ var modelCatalog = []KnownModel{
 
 	// ---- NVIDIA NeMo (sherpa-onnx) -----------------------------------------
 	{
-		Name: "parakeet", Aliases: []string{"parakeet-tdt"},
+		// Named for the architecture it is, after sitting in the catalog as
+		// "parakeet" beside the unrelated parakeet-tdt-0.6b. TargetDir is
+		// pinned to the old name because it defaults to the catalog name:
+		// without the pin the rename would move the directory this model is
+		// expected at and orphan a 450 MB download that is already on disk.
+		Name:   "fastconformer-streaming",
 		Engine: "sherpa", Family: "NeMo",
+		TargetDir:    "parakeet",
 		Description:  "NeMo FastConformer transducer, 80ms chunk — decodes while you speak",
 		URL:          "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-80ms.tar.bz2",
 		Format:       "tar.bz2",
@@ -213,7 +242,7 @@ var modelCatalog = []KnownModel{
 		Languages:    "en",
 		Transducer:   true,
 		Speed:        "fast",
-		Vocabulary:   "hotwords via sherpa_hotwords_file",
+		Vocabulary:   "hotwords supported (transducer)",
 		Streaming:    true,
 	},
 	{
@@ -226,13 +255,12 @@ var modelCatalog = []KnownModel{
 		Languages:    "multi (25)",
 		Transducer:   true,
 		Speed:        "moderate",
-		Vocabulary:   "hotwords via sherpa_hotwords_file",
+		Vocabulary:   "hotwords supported (transducer)",
 	},
 	{
 		// Named for the artifact it actually downloads. The former name,
-		// parakeet-tdt-1.1b, described a 1.1B model but fetched this 0.6B
-		// one; it is kept as an alias so existing configs keep resolving.
-		Name: "parakeet-unified-en", Aliases: []string{"parakeet-tdt-1.1b"},
+		// parakeet-tdt-1.1b, described a 1.1B model but fetched this 0.6B one.
+		Name:   "parakeet-unified-en",
 		Engine: "sherpa", Family: "NeMo",
 		Description:  "NeMo Parakeet Unified 0.6B English, INT8, non-streaming",
 		URL:          "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-non-streaming.tar.bz2",
@@ -241,7 +269,7 @@ var modelCatalog = []KnownModel{
 		Languages:    "en",
 		Transducer:   true,
 		Speed:        "moderate",
-		Vocabulary:   "hotwords via sherpa_hotwords_file",
+		Vocabulary:   "hotwords supported (transducer)",
 	},
 	{
 		Name:   "parakeet-ctc",
@@ -255,7 +283,7 @@ var modelCatalog = []KnownModel{
 		Vocabulary:   "none — sherpa-onnx biasing needs a transducer",
 	},
 	{
-		Name: "canary-1b", Aliases: []string{"canary"},
+		Name:   "canary-1b",
 		Engine: "sherpa", Family: "NeMo",
 		Description:  "NeMo Canary 1B v2, INT8 — transcribes and translates",
 		URL:          "https://huggingface.co/Sarphix/canary-1b-v2-sherpa-onnx-int8/resolve/main/sherpa-onnx-nemo-canary-1b-v2-int8.tar.bz2",
@@ -279,7 +307,7 @@ var modelCatalog = []KnownModel{
 
 	// ---- Useful Sensors Moonshine (sherpa-onnx) ----------------------------
 	{
-		Name: "moonshine-tiny", Aliases: []string{"moonshine"},
+		Name:   "moonshine-tiny",
 		Engine: "sherpa", Family: "Moonshine",
 		Description:  "Moonshine Tiny, 27M parameters, INT8 — built for short utterances",
 		URL:          "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-tiny-en-int8.tar.bz2",
@@ -303,7 +331,7 @@ var modelCatalog = []KnownModel{
 
 	// ---- FunASR (sherpa-onnx) ----------------------------------------------
 	{
-		Name: "sensevoice-small", Aliases: []string{"sensevoice"},
+		Name:   "sensevoice-small",
 		Engine: "sherpa", Family: "SenseVoice",
 		Description:  "SenseVoice Small — five languages in one model",
 		URL:          "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2",
@@ -327,7 +355,7 @@ var modelCatalog = []KnownModel{
 
 	// ---- Zipformer (sherpa-onnx) -------------------------------------------
 	{
-		Name: "zipformer-streaming", Aliases: []string{"zipformer"},
+		Name:   "zipformer-streaming",
 		Engine: "sherpa", Family: "Zipformer",
 		Description:  "Streaming Zipformer transducer — decodes while you speak",
 		URL:          "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2",
@@ -336,7 +364,20 @@ var modelCatalog = []KnownModel{
 		Languages:    "en",
 		Transducer:   true,
 		Speed:        "fast",
-		Vocabulary:   "hotwords via sherpa_hotwords_file",
+		Vocabulary:   "hotwords supported (transducer)",
+		Streaming:    true,
+	},
+	{
+		Name:   "zipformer-streaming-20m",
+		Engine: "sherpa", Family: "Zipformer",
+		Description:  "Streaming Zipformer transducer, 20M parameters — small enough to run alongside another model as the live-preview source",
+		URL:          "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2",
+		Format:       "tar.bz2",
+		DownloadSize: 127887156,
+		Languages:    "en",
+		Transducer:   true,
+		Speed:        "fast",
+		Vocabulary:   "hotwords supported (transducer)",
 		Streaming:    true,
 	},
 	{
@@ -349,7 +390,7 @@ var modelCatalog = []KnownModel{
 		Languages:    "en",
 		Transducer:   true,
 		Speed:        "fast",
-		Vocabulary:   "hotwords via sherpa_hotwords_file",
+		Vocabulary:   "hotwords supported (transducer)",
 	},
 	{
 		Name:   "zipformer-ctc",
@@ -364,22 +405,23 @@ var modelCatalog = []KnownModel{
 	},
 }
 
-// knownModels resolves every accepted name — canonical or alias — to its
-// download. A sherpa model unpacks into a directory named after the name the
-// user typed, because that is the name their config.toml will carry and what
-// speech.ResolveSherpaModelDir looks for.
+// knownModels indexes the catalog by name. There is exactly one name per
+// model: a name that does not appear here does not resolve, and the caller
+// says which real entries came closest rather than guessing a download.
 var knownModels = buildKnownModels()
 
 func buildKnownModels() map[string]KnownModel {
-	m := make(map[string]KnownModel, len(modelCatalog)*2)
+	m := make(map[string]KnownModel, len(modelCatalog))
 	for _, entry := range modelCatalog {
-		for _, key := range append([]string{entry.Name}, entry.Aliases...) {
-			spec := entry
-			if spec.Engine == "sherpa" {
-				spec.TargetDir = key
-			}
-			m[key] = spec
+		spec := entry
+		// A sherpa model unpacks into a directory named after the entry,
+		// because that is what speech.ResolveSherpaModelDir looks for. An
+		// entry that was renamed after the download already existed pins
+		// TargetDir itself, and keeps the directory it had.
+		if spec.Engine == "sherpa" && spec.TargetDir == "" {
+			spec.TargetDir = spec.Name
 		}
+		m[spec.Name] = spec
 	}
 	return m
 }
@@ -427,8 +469,8 @@ commands:
 Examples:
   mavor models list
   mavor models list --installed
-  mavor models pull base.en
-  mavor models pull parakeet
+  mavor models pull whisper-base.en
+  mavor models pull fastconformer-streaming
 `, catalogSummary())
 		return nil
 	default:
@@ -472,67 +514,134 @@ func pullModel(name string) error {
 
 	cleanName := strings.TrimPrefix(name, "sherpa/")
 
-	if spec, ok := knownModels[cleanName]; ok {
-		if spec.Engine == "sherpa" {
-			targetDir := filepath.Join(cfg.ModelDir, "sherpa", spec.TargetDir)
-			if spec.Format == "raw" {
-				if err := os.MkdirAll(targetDir, 0o755); err != nil {
-					return fmt.Errorf("create dir %s: %w", targetDir, err)
-				}
-				fileName := filepath.Base(spec.URL)
-				dest := filepath.Join(targetDir, fileName)
-				if _, err := os.Stat(dest); err == nil {
-					fmt.Printf("already present: %s\n", dest)
-					return nil
-				}
-				fmt.Printf("downloading %s (%s)\nURL: %s\n", cleanName, spec.Description, spec.URL)
-				return downloadFile(spec.URL, dest)
-			}
-
-			// Archive format (tar.bz2, tar.gz, tgz, tar)
-			if fi, err := os.Stat(targetDir); err == nil && fi.IsDir() {
-				entries, _ := os.ReadDir(targetDir)
-				if len(entries) > 0 {
-					fmt.Printf("already present: %s\n", targetDir)
-					return nil
-				}
-			}
-			fmt.Printf("downloading %s (%s)\nURL: %s\n", cleanName, spec.Description, spec.URL)
-			return downloadAndExtractArchive(spec.URL, spec.Format, targetDir)
-		}
-
-		// Whisper GGML model
-		whisperModel := cleanWhisperName(cleanName)
-		dest := filepath.Join(cfg.ModelDir, "ggml-"+whisperModel+".bin")
-		if _, err := os.Stat(dest); err == nil {
-			fmt.Printf("already present: %s\n", dest)
-			return nil
-		}
-		fmt.Printf("downloading %s (%s)\nURL: %s\n", cleanName, spec.Description, spec.URL)
-		return downloadFile(spec.URL, dest)
+	spec, ok := knownModels[cleanName]
+	if !ok {
+		return unknownModelError(cleanName)
 	}
 
-	// Fallback: assume Whisper GGML model on Hugging Face
-	whisperModel := cleanWhisperName(name)
-	dest := filepath.Join(cfg.ModelDir, "ggml-"+whisperModel+".bin")
+	if spec.Engine == "sherpa" {
+		targetDir := filepath.Join(cfg.ModelDir, "sherpa", spec.TargetDir)
+		if spec.Format == "raw" {
+			if err := os.MkdirAll(targetDir, 0o755); err != nil {
+				return fmt.Errorf("create dir %s: %w", targetDir, err)
+			}
+			dest := filepath.Join(targetDir, filepath.Base(spec.URL))
+			if _, err := os.Stat(dest); err == nil {
+				fmt.Printf("already present: %s\n", dest)
+				return nil
+			}
+			fmt.Printf("downloading %s (%s)\nURL: %s\n", spec.Name, spec.Description, spec.URL)
+			return downloadFile(spec.URL, dest)
+		}
+
+		// Archive format (tar.bz2, tar.gz, tgz, tar)
+		if fi, err := os.Stat(targetDir); err == nil && fi.IsDir() {
+			entries, _ := os.ReadDir(targetDir)
+			if len(entries) > 0 {
+				fmt.Printf("already present: %s\n", targetDir)
+				return nil
+			}
+		}
+		fmt.Printf("downloading %s (%s)\nURL: %s\n", spec.Name, spec.Description, spec.URL)
+		return downloadAndExtractArchive(spec.URL, spec.Format, targetDir)
+	}
+
+	// Whisper GGML model. The file keeps the name upstream serves it under,
+	// which is not the catalog name.
+	dest := filepath.Join(cfg.ModelDir, spec.Filename)
 	if _, err := os.Stat(dest); err == nil {
 		fmt.Printf("already present: %s\n", dest)
 		return nil
 	}
-	url := "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-" + whisperModel + ".bin"
-	fmt.Printf("downloading %s\nURL: %s\n", name, url)
-	return downloadFile(url, dest)
+	fmt.Printf("downloading %s (%s)\nURL: %s\n", spec.Name, spec.Description, spec.URL)
+	return downloadFile(spec.URL, dest)
 }
 
-func cleanWhisperName(name string) string {
-	name = strings.TrimPrefix(name, "whisper-")
-	name = strings.TrimPrefix(name, "whisper_")
-	if name == "distil-whisper-large-v3" || name == "distil-whisper-large-v3.bin" {
-		return "distil-large-v3"
+// unknownModelError reports a name the catalog does not carry, naming the
+// entries closest to what was typed. There is no fallback download: one name
+// per model means a typo is an error, and an error that lists real candidates
+// is more use than one that silently fetches something else.
+func unknownModelError(name string) error {
+	near := nearestModelNames(name, 3)
+	if len(near) == 0 {
+		return fmt.Errorf("unknown model %q\n\n%s", name, catalogSummary())
 	}
-	name = strings.TrimPrefix(name, "ggml-")
-	name = strings.TrimSuffix(name, ".bin")
-	return name
+	return fmt.Errorf("unknown model %q — did you mean %s?\n\n%s",
+		name, strings.Join(quoteAll(near), " or "), catalogSummary())
+}
+
+func quoteAll(names []string) []string {
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = fmt.Sprintf("%q", n)
+	}
+	return out
+}
+
+// nearestModelNames ranks the catalog by how close each name is to what was
+// typed and returns the best few. Closeness is edit distance, with a name that
+// contains the typed string pulled to the front so that "base.en" still finds
+// "whisper-base.en" after the family prefixes landed — that substring case is
+// exactly the mistake the rename creates.
+func nearestModelNames(name string, limit int) []string {
+	type scored struct {
+		name     string
+		contains bool
+		dist     int
+	}
+	lower := strings.ToLower(name)
+
+	var all []scored
+	for _, m := range modelCatalog {
+		cand := strings.ToLower(m.Name)
+		all = append(all, scored{
+			name:     m.Name,
+			contains: strings.Contains(cand, lower) || strings.Contains(lower, cand),
+			dist:     editDistance(lower, cand),
+		})
+	}
+	sort.SliceStable(all, func(i, j int) bool {
+		if all[i].contains != all[j].contains {
+			return all[i].contains
+		}
+		return all[i].dist < all[j].dist
+	})
+
+	var out []string
+	for _, s := range all {
+		// A candidate that shares nothing with what was typed is noise; the
+		// summary below the message already lists the whole catalog.
+		if !s.contains && s.dist > len(lower) {
+			break
+		}
+		out = append(out, s.name)
+		if len(out) == limit {
+			break
+		}
+	}
+	return out
+}
+
+// editDistance is Levenshtein, iterative with a single row. The catalog has a
+// couple of dozen short names, so the naive version is free.
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	curr := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		curr[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			curr[j] = min(prev[j]+1, min(curr[j-1]+1, prev[j-1]+cost))
+		}
+		prev, curr = curr, prev
+	}
+	return prev[len(b)]
 }
 
 func downloadAndExtractArchive(url, format, targetDir string) error {
@@ -660,6 +769,38 @@ type installedModel struct {
 	size int64
 }
 
+// cacheKey is the name a model appears under in scanInstalled's map. For a
+// whisper model that is its catalog name; for a sherpa model it is the
+// directory the archive unpacks into, which is not always the catalog name
+// because a renamed entry pins TargetDir to keep an existing download.
+func cacheKey(m KnownModel) string {
+	if m.Engine != "sherpa" {
+		return m.Name
+	}
+	if m.TargetDir != "" {
+		return m.TargetDir
+	}
+	return knownModels[m.Name].TargetDir
+}
+
+// cachedModels indexes the catalog by cache key, so a directory found on disk
+// can be traced back to the entry that put it there.
+var cachedModels = func() map[string]KnownModel {
+	m := make(map[string]KnownModel, len(modelCatalog))
+	for _, entry := range modelCatalog {
+		m[cacheKey(entry)] = entry
+	}
+	return m
+}()
+
+// installedEntry reports what the cache holds for one catalog entry, or nil.
+func installedEntry(installed map[string]installedModel, m KnownModel) *installedModel {
+	if inst, ok := installed[cacheKey(m)]; ok {
+		return &inst
+	}
+	return nil
+}
+
 // listCatalog prints every model mavor can download, with what is on disk
 // marked. With installedOnly, it prints just the downloaded ones.
 func listCatalog(w io.Writer, cfg config.Config, installedOnly bool) error {
@@ -667,20 +808,12 @@ func listCatalog(w io.Writer, cfg config.Config, installedOnly bool) error {
 	active := activeModelName(cfg)
 
 	type row struct {
-		name, engine, size, langs, stream, status, aliases string
+		name, engine, size, langs, stream, status string
 	}
 	var rows []row
 
 	for _, m := range modelCatalog {
-		// A model counts as downloaded under any of its names, since that is
-		// the directory `mavor models pull` would have created.
-		var got *installedModel
-		for _, key := range append([]string{m.Name}, m.Aliases...) {
-			if inst, ok := installed[key]; ok {
-				got = &inst
-				break
-			}
-		}
+		got := installedEntry(installed, m)
 		if installedOnly && got == nil {
 			continue
 		}
@@ -689,7 +822,7 @@ func listCatalog(w io.Writer, cfg config.Config, installedOnly bool) error {
 		if got != nil {
 			status = markerDownloaded + " " + formatFileSize(got.size)
 		}
-		if active != "" && (m.Name == active || slices.Contains(m.Aliases, active)) {
+		if active != "" && m.Name == active {
 			status += "  " + markerActive
 		}
 
@@ -698,13 +831,12 @@ func listCatalog(w io.Writer, cfg config.Config, installedOnly bool) error {
 			stream = "yes"
 		}
 		rows = append(rows, row{
-			name:    m.Name,
-			engine:  m.Engine,
-			size:    formatFileSize(m.DownloadSize),
-			langs:   m.Languages,
-			stream:  stream,
-			status:  status,
-			aliases: strings.Join(m.Aliases, ", "),
+			name:   m.Name,
+			engine: m.Engine,
+			size:   formatFileSize(m.DownloadSize),
+			langs:  m.Languages,
+			stream: stream,
+			status: status,
 		})
 	}
 
@@ -712,8 +844,8 @@ func listCatalog(w io.Writer, cfg config.Config, installedOnly bool) error {
 
 	if len(rows) == 0 {
 		fmt.Fprintln(w, "No models downloaded yet. Get one with:")
-		fmt.Fprintln(w, "    mavor models pull base.en        # 141 MB, English, the default")
-		fmt.Fprintln(w, "    mavor models pull tiny.en        #  74 MB, English, fastest")
+		fmt.Fprintln(w, "    mavor models pull whisper-base.en   # 141 MB, English, the default")
+		fmt.Fprintln(w, "    mavor models pull whisper-tiny.en   #  74 MB, English, fastest")
 		fmt.Fprintln(w, "\nRun `mavor models list` to see everything available.")
 		return nil
 	}
@@ -730,17 +862,16 @@ func listCatalog(w io.Writer, cfg config.Config, installedOnly bool) error {
 		wStatus = max(wStatus, runeLen(r.status))
 	}
 
-	line := func(name, engine, size, langs, stream, status, aliases string) {
+	line := func(name, engine, size, langs, stream, status string) {
 		fmt.Fprintln(w, strings.TrimRight(strings.Join([]string{
 			padRight(name, wName), padRight(engine, wEngine), padLeft(size, wSize),
-			padRight(langs, wLangs), padRight(stream, wStream),
-			padRight(status, wStatus), aliases,
+			padRight(langs, wLangs), padRight(stream, wStream), status,
 		}, "  "), " "))
 	}
 
-	line("NAME", "ENGINE", "SIZE", "LANGUAGES", "STREAM", "STATUS", "ALIASES")
+	line("NAME", "ENGINE", "SIZE", "LANGUAGES", "STREAM", "STATUS")
 	for _, r := range rows {
-		line(r.name, r.engine, r.size, r.langs, r.stream, r.status, r.aliases)
+		line(r.name, r.engine, r.size, r.langs, r.stream, r.status)
 	}
 
 	fmt.Fprintf(w, "\n%s active   %s downloaded   %s not downloaded\n", markerActive, markerDownloaded, markerAbsent)
@@ -774,13 +905,7 @@ func listCatalogVerbose(w io.Writer, cfg config.Config, installedOnly bool) erro
 
 	shown := 0
 	for _, m := range modelCatalog {
-		var got *installedModel
-		for _, key := range append([]string{m.Name}, m.Aliases...) {
-			if inst, ok := installed[key]; ok {
-				got = &inst
-				break
-			}
-		}
+		got := installedEntry(installed, m)
 		if installedOnly && got == nil {
 			continue
 		}
@@ -790,7 +915,7 @@ func listCatalogVerbose(w io.Writer, cfg config.Config, installedOnly bool) erro
 		if got != nil {
 			state = fmt.Sprintf("%s downloaded (%s)", markerDownloaded, formatFileSize(got.size))
 		}
-		if active != "" && (m.Name == active || slices.Contains(m.Aliases, active)) {
+		if active != "" && m.Name == active {
 			state += "   " + markerActive + " active"
 		}
 
@@ -803,15 +928,12 @@ func listCatalogVerbose(w io.Writer, cfg config.Config, installedOnly bool) erro
 		field(w, "speed", speedDetail(m))
 		field(w, "vocabulary", m.Vocabulary)
 		field(w, "gpu", gpuDetail(m.Engine))
-		if len(m.Aliases) > 0 {
-			field(w, "aliases", strings.Join(m.Aliases, ", "))
-		}
 		field(w, "status", state)
 		field(w, "source", m.URL)
 	}
 
 	if shown == 0 {
-		fmt.Fprintln(w, "\nNo models downloaded yet. Get one with `mavor models pull base.en`.")
+		fmt.Fprintln(w, "\nNo models downloaded yet. Get one with `mavor models pull whisper-base.en`.")
 		return nil
 	}
 
@@ -833,17 +955,17 @@ type catalogJSON struct {
 // including the ones only --verbose renders, so a consumer never has to parse
 // the human tables to recover a property.
 type catalogModelJSON struct {
-	Name        string   `json:"name"`
-	Aliases     []string `json:"aliases"`
-	Engine      string   `json:"engine"`
-	Family      string   `json:"family"`
-	Description string   `json:"description"`
-	URL         string   `json:"url"`
-	DownloadS   int64    `json:"download_size"`
-	Languages   string   `json:"languages"`
-	Streaming   bool     `json:"streaming"`
-	Transducer  bool     `json:"transducer"`
-	Vocabulary  string   `json:"vocabulary"`
+	Name        string `json:"name"`
+	Engine      string `json:"engine"`
+	Family      string `json:"family"`
+	Description string `json:"description"`
+	URL         string `json:"url"`
+	Filename    string `json:"filename,omitempty"`
+	DownloadS   int64  `json:"download_size"`
+	Languages   string `json:"languages"`
+	Streaming   bool   `json:"streaming"`
+	Transducer  bool   `json:"transducer"`
+	Vocabulary  string `json:"vocabulary"`
 
 	// Speed is the relative tier and MeasuredRTF the benchmark, kept as
 	// separate fields so a consumer cannot mistake one for the other. The
@@ -871,24 +993,18 @@ func listCatalogJSON(w io.Writer, cfg config.Config, installedOnly bool) error {
 
 	out := catalogJSON{ModelDir: cfg.ModelDir, Models: []catalogModelJSON{}}
 	for _, m := range modelCatalog {
-		var got *installedModel
-		for _, key := range append([]string{m.Name}, m.Aliases...) {
-			if inst, ok := installed[key]; ok {
-				got = &inst
-				break
-			}
-		}
+		got := installedEntry(installed, m)
 		if installedOnly && got == nil {
 			continue
 		}
 
 		row := catalogModelJSON{
 			Name:        m.Name,
-			Aliases:     m.Aliases,
 			Engine:      m.Engine,
 			Family:      m.Family,
 			Description: m.Description,
 			URL:         m.URL,
+			Filename:    m.Filename,
 			DownloadS:   m.DownloadSize,
 			Languages:   m.Languages,
 			Streaming:   m.Streaming,
@@ -898,10 +1014,7 @@ func listCatalogJSON(w io.Writer, cfg config.Config, installedOnly bool) error {
 			MeasuredRTF: m.MeasuredRTF,
 			SpeedIsEst:  m.MeasuredRTF == 0,
 			Installed:   got != nil,
-			Active:      active != "" && (m.Name == active || slices.Contains(m.Aliases, active)),
-		}
-		if row.Aliases == nil {
-			row.Aliases = []string{}
+			Active:      active != "" && m.Name == active,
 		}
 		if got != nil {
 			row.InstalledSize = got.size
@@ -957,7 +1070,7 @@ func gpuDetail(engine string) string {
 	if engine == "sherpa" {
 		return "none in practice — the bundled ONNX Runtime is a CPU-only build"
 	}
-	return "offload via gpu_layers, if your whisper.cpp has a GPU backend"
+	return "used automatically when the whisper.cpp build has a GPU backend"
 }
 
 // The status markers are multi-byte, so columns are padded by rune count.
@@ -990,13 +1103,17 @@ func scanInstalled(cfg config.Config) map[string]installedModel {
 	}
 	for _, e := range entries {
 		name := e.Name()
-		if !e.IsDir() && strings.HasPrefix(name, "ggml-") && strings.HasSuffix(name, ".bin") {
+		if !e.IsDir() && speech.IsWhisperModelFile(name) {
 			info, err := e.Info()
 			if err != nil {
 				continue
 			}
-			stem := strings.TrimSuffix(strings.TrimPrefix(name, "ggml-"), ".bin")
-			found[stem] = installedModel{size: info.Size()}
+			// Keyed by catalog name, not by the file's own stem: the two
+			// differ for every whisper model, and the listing looks models
+			// up by the name it prints. A file with no catalog entry keeps
+			// its stem so a hand-placed model still shows up.
+			key, _ := speech.WhisperCatalogName(name)
+			found[key] = installedModel{size: info.Size()}
 			continue
 		}
 		if e.IsDir() && name != "sherpa" {
@@ -1038,7 +1155,7 @@ func activeModelName(cfg config.Config) string {
 func unknownInstalled(installed map[string]installedModel) []string {
 	var extras []string
 	for name := range installed {
-		if _, known := knownModels[name]; !known {
+		if _, known := cachedModels[name]; !known {
 			extras = append(extras, name)
 		}
 	}
@@ -1066,7 +1183,7 @@ func dirSize(path string) int64 {
 }
 
 func describeSherpaModel(name, dirPath string) string {
-	if km, ok := knownModels[name]; ok {
+	if km, ok := cachedModels[name]; ok {
 		if km.Family != "" {
 			return fmt.Sprintf("Sherpa ONNX / %s", km.Family)
 		}

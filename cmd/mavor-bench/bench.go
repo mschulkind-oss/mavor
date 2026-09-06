@@ -5,8 +5,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
+
+	"github.com/mschulkind-oss/mavor/internal/speech"
 )
 
 // benchWhisper runs one whisper model on one device, o.runs times, and folds
@@ -19,7 +20,7 @@ func benchWhisper(ctx context.Context, w whisperRunner, m catalogModel, modelDir
 		Family:  m.Family,
 		Backend: backend{Engine: "whisper-cli", Device: w.device, Build: w.build, Mode: "batch", Binary: w.binary},
 	}
-	modelPath := filepath.Join(modelDir, "ggml-"+m.Name+".bin")
+	modelPath := speech.WhisperModelPath(modelDir, m.Name)
 	if _, err := os.Stat(modelPath); err != nil {
 		res.Failed, res.Error = true, fmt.Sprintf("model file not found at %s", modelPath)
 		return res

@@ -25,7 +25,7 @@ type ServerTranscriber struct {
 	// or an HTTP/HTTPS URL (e.g. "http://localhost:8080").
 	Endpoint string
 
-	// Model is the model name to pass in the request (e.g. "base.en").
+	// Model is the model name to pass in the request (e.g. "whisper-base.en").
 	Model string
 
 	// Client is the http.Client used to send requests. If nil, one is created automatically.

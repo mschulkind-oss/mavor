@@ -11,6 +11,7 @@ import (
 
 	"github.com/mschulkind-oss/mavor/internal/config"
 	"github.com/mschulkind-oss/mavor/internal/ipc"
+	"github.com/mschulkind-oss/mavor/internal/speech"
 )
 
 type Check struct {
@@ -108,7 +109,7 @@ func runSetup(args []string) error {
 	}
 
 	// Step 4: Default voice model
-	modelPath := filepath.Join(cfg.ModelDir, "ggml-"+cfg.Model+".bin")
+	modelPath := speech.WhisperModelPath(cfg.ModelDir, cfg.Model)
 	if cfg.Engine == "sherpa" && cfg.SherpaModel != "" {
 		modelPath = filepath.Join(cfg.ModelDir, "sherpa", cfg.SherpaModel)
 	}
@@ -436,7 +437,7 @@ func checkModel() (bool, string) {
 		return false, fmt.Sprintf("sherpa model not found at %s (fix: run 'mavor doctor --fix')", modelDir)
 	}
 
-	modelPath := filepath.Join(cfg.ModelDir, "ggml-"+cfg.Model+".bin")
+	modelPath := speech.WhisperModelPath(cfg.ModelDir, cfg.Model)
 	if _, err := os.Stat(modelPath); err == nil {
 		return true, fmt.Sprintf("whisper model found at %s", modelPath)
 	}

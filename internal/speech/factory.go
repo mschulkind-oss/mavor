@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/mschulkind-oss/mavor/internal/config"
@@ -24,7 +23,7 @@ func Factory(cfg config.Config, logger *slog.Logger) (Transcriber, error) {
 
 	switch engine {
 	case "cli":
-		modelPath := filepath.Join(cfg.ModelDir, "ggml-"+cfg.Model+".bin")
+		modelPath := WhisperModelPath(cfg.ModelDir, cfg.Model)
 		if _, err := os.Stat(modelPath); err != nil {
 			return nil, fmt.Errorf("speech: model %q not found at %s — run `mavor models pull %s`: %w", cfg.Model, modelPath, cfg.Model, err)
 		}
@@ -35,7 +34,7 @@ func Factory(cfg config.Config, logger *slog.Logger) (Transcriber, error) {
 		return cli, nil
 
 	case "server":
-		modelPath := filepath.Join(cfg.ModelDir, "ggml-"+cfg.Model+".bin")
+		modelPath := WhisperModelPath(cfg.ModelDir, cfg.Model)
 		isUnix, _ := IsUnixSocket(cfg.ServerSocket)
 		if isUnix {
 			if _, err := os.Stat(modelPath); err != nil {

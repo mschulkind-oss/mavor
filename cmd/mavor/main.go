@@ -222,7 +222,7 @@ func runDaemon(args []string) error {
 		}
 	}
 
-	modelPath := filepath.Join(cfg.ModelDir, "ggml-"+cfg.Model+".bin")
+	modelPath := speech.WhisperModelPath(cfg.ModelDir, cfg.Model)
 	logger.Info("daemon starting",
 		"mode", cfg.Mode,
 		"preset", cfg.Preset,

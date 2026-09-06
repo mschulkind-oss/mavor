@@ -20,7 +20,7 @@ func TestFactoryCLIValidModel(t *testing.T) {
 
 	cfg := config.Config{
 		Engine:   "cli",
-		Model:    "base.en",
+		Model:    "whisper-base.en",
 		ModelDir: modelDir,
 		Threads:  4,
 	}
@@ -51,7 +51,7 @@ func TestFactoryCLIGPUOffDisablesGPU(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(modelDir, "ggml-base.en.bin"), []byte("fake-model"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cfg := config.Config{Engine: "cli", Model: "base.en", ModelDir: modelDir, GPU: "off"}
+	cfg := config.Config{Engine: "cli", Model: "whisper-base.en", ModelDir: modelDir, GPU: "off"}
 
 	transcriber, err := Factory(cfg, slog.Default())
 	if err != nil {
@@ -71,7 +71,7 @@ func TestFactoryCLIGPUAutoLeavesGPUEnabled(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(modelDir, "ggml-base.en.bin"), []byte("fake-model"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cfg := config.Config{Engine: "cli", Model: "base.en", ModelDir: modelDir, GPU: "auto"}
+	cfg := config.Config{Engine: "cli", Model: "whisper-base.en", ModelDir: modelDir, GPU: "auto"}
 
 	transcriber, err := Factory(cfg, slog.Default())
 	if err != nil {
@@ -89,7 +89,7 @@ func TestFactoryServerGPUOffReachesSupervisor(t *testing.T) {
 	}
 	cfg := config.Config{
 		Engine:       "server",
-		Model:        "base.en",
+		Model:        "whisper-base.en",
 		ModelDir:     modelDir,
 		ServerSocket: filepath.Join(t.TempDir(), "server.sock"),
 		GPU:          "off",
@@ -131,7 +131,7 @@ func TestFactoryServerUnixSocket(t *testing.T) {
 	sockPath := filepath.Join(t.TempDir(), "server.sock")
 	cfg := config.Config{
 		Engine:       "server",
-		Model:        "base.en",
+		Model:        "whisper-base.en",
 		ModelDir:     modelDir,
 		ServerSocket: sockPath,
 		Threads:      2,
@@ -252,7 +252,7 @@ func TestModelNotFoundErrorNamesTheRealBinary(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 
 	_, err := Factory(
-		config.Config{Engine: "cli", Model: "base.en", ModelDir: t.TempDir()},
+		config.Config{Engine: "cli", Model: "whisper-base.en", ModelDir: t.TempDir()},
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 	if err == nil {
