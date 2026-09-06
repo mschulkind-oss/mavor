@@ -273,6 +273,29 @@ func (d *Display) NewSurface(namespace string, layer Layer, anchor uint32, width
 		return nil, err
 	}
 
+	// An EMPTY input region, so the surface is click-through everywhere.
+	//
+	// A wl_surface accepts pointer input across its whole extent by default.
+	// The overlay is mostly transparent and is about to become much larger
+	// than its ink, so without this it would swallow clicks in the region it
+	// covers — a status indicator that eats your mouse. Keyboard focus is
+	// already refused above; this is the pointer half of the same promise.
+	//
+	// wl_compositor.create_region(id:new_id), then wl_surface.set_input_region
+	// with it. A region with no rectangles added to it is empty.
+	region := d.conn.newID(nil)
+	b = newBuilder(d.compositor, 1)
+	b.putObject(region)
+	if err := d.conn.send(b); err != nil {
+		return nil, err
+	}
+	// wl_surface.set_input_region(region:object)
+	b = newBuilder(s.surface, 5)
+	b.putObject(region)
+	if err := d.conn.send(b); err != nil {
+		return nil, err
+	}
+
 	if err := s.Commit(); err != nil {
 		return nil, err
 	}

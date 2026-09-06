@@ -20,10 +20,41 @@ import (
 type WL struct {
 	log *slog.Logger
 
-	cmds   chan func(*wlState)
+	// quit is closed by Close. It carries no values: producers write state
+	// rather than queueing edits, so the only thing the loop needs from the
+	// outside is the signal to stop.
+	quit   chan struct{}
 	done   chan struct{}
 	closed sync.Once
 	err    chan error
+
+	// want is the latest state the producers asked for. They write it and
+	// return; the render loop reads a snapshot each frame.
+	//
+	// A queue of edits was the wrong shape. Every one of these values is
+	// idempotent — only the newest has meaning — so a queue can only choose
+	// between blocking the producer and losing the newest value, and the old
+	// code chose to drop. Dropping a level sample is invisible; dropping a
+	// Show(Transcribing) is the overlay never changing state, which is
+	// exactly what a user reported. Latest-wins has neither failure: nobody
+	// blocks, and being overwritten by something newer is what should happen
+	// to a superseded value.
+	mu      sync.Mutex
+	want    desired
+	wantSeq uint64
+}
+
+// desired is what the producers want on screen. Guarded by WL.mu.
+type desired struct {
+	visual  Visual
+	preview string
+	level   float64
+	// hasLevel says a level arrived since the last frame; without it a
+	// silent moment is indistinguishable from no sample at all.
+	hasLevel bool
+	// setAt is when the newest of these was written, so a frame can report
+	// how long the update waited before it reached the screen.
+	setAt time.Time
 }
 
 // wlState is everything the render goroutine owns exclusively.
@@ -38,9 +69,12 @@ type wlState struct {
 	// fraction.
 	maxPreview int
 	// img is the scratch the scene is drawn into, kept between frames.
-	img    *image.RGBA
-	levels []float64
-	mapped bool
+	img *image.RGBA
+	// sceneSetAt is when the newest update in the current scene was written
+	// by its producer, so a frame can report how long it waited.
+	sceneSetAt time.Time
+	levels     []float64
+	mapped     bool
 	// reqW/reqH is the size the surface has been asked for. Re-requesting the
 	// same size is not a no-op but a hang: the compositor has no reason to
 	// send another configure, and the resize would wait for one that never
@@ -81,13 +115,15 @@ func NewWL(topMargin int, previewFraction float64, log *slog.Logger) (*WL, error
 	log.Info("overlay: preview width cap",
 		"px", maxPreview, "output_width", d.OutputWidth, "fraction", previewFraction)
 
-	// Size is provisional: the surface is resized to fit whatever is being
-	// drawn, and the first real frame corrects it.
-	w, h, err := SceneSize(Scene{Visual: Recording})
+	// The size, once and for good. Wide enough for the preview cap and tall
+	// enough for the strip whether or not one is showing, so no frame ever
+	// needs a different surface than the one already on screen.
+	w, h, err := FixedSurfaceSize(maxPreview)
 	if err != nil {
 		d.Close()
 		return nil, err
 	}
+	log.Info("overlay: fixed surface", "w", w, "h", h, "preview_cap_px", maxPreview)
 	s, err := d.NewSurface("mavor", wayland.LayerTop, wayland.AnchorTop, w, h)
 	if err != nil {
 		d.Close()
@@ -108,7 +144,7 @@ func NewWL(topMargin int, previewFraction float64, log *slog.Logger) (*WL, error
 
 	o := &WL{
 		log:  log,
-		cmds: make(chan func(*wlState), 64),
+		quit: make(chan struct{}),
 		done: make(chan struct{}),
 		err:  make(chan error, 1),
 	}
@@ -137,20 +173,37 @@ func (o *WL) run(st *wlState) {
 	tick := time.NewTicker(pulsePeriod / 24)
 	defer tick.Stop()
 	start := time.Now()
+	var seen uint64
+
+	// apply folds the latest state the producers asked for into the scene
+	// this goroutine owns. Producers never touch the scene themselves.
+	apply := func() bool {
+		d, changed := o.takeDesired(&seen)
+		if !changed {
+			return false
+		}
+		if d.visual != st.scene.Visual {
+			resetWave(st.levels)
+		}
+		st.scene.Visual = d.visual
+		st.scene.Preview = d.preview
+		if d.hasLevel {
+			shiftWave(st.levels, waveDisplayLevel(d.level))
+		}
+		st.scene.Levels = st.levels
+		st.sceneSetAt = d.setAt
+		return true
+	}
 
 	for {
 		select {
-		case fn, ok := <-o.cmds:
-			if !ok {
-				return
-			}
-			fn(st)
-			if err := o.paint(st, start); err != nil {
-				o.fail(err)
-				return
-			}
+		case <-o.quit:
+			return
 		case <-tick.C:
-			if !st.animate {
+			// A change is reason to paint even when nothing is animating:
+			// it is how a state the producer asked for reaches the screen.
+			changed := apply()
+			if !st.animate && !changed {
 				continue
 			}
 			if err := o.paint(st, start); err != nil {
@@ -193,23 +246,19 @@ func (o *WL) paint(st *wlState, start time.Time) error {
 	}
 	st.scene.Phase = phase
 	st.scene.MaxPreviewWidth = st.maxPreview
+	st.scene.SurfaceW, st.scene.SurfaceH = st.reqW, st.reqH
 
 	w, h, err := SceneSize(st.scene)
 	if err != nil {
 		return err
 	}
+	// No resize. The canvas was fixed at startup and the scene is laid out
+	// inside it, which is the whole design: a resize re-centres the surface,
+	// blocks this loop on a compositor round-trip, and can race a stale
+	// configure. If this ever fires, something has un-pinned the scene.
 	if w != st.reqW || h != st.reqH {
-		// Every resize is a re-centre, so a preview that grows a character
-		// at a time makes the overlay walk sideways. Logged with the text
-		// length that caused it, because the two together are the whole
-		// explanation for an overlay that will not sit still.
-		o.debug("overlay: surface resized",
-			"from_w", st.reqW, "from_h", st.reqH, "to_w", w, "to_h", h,
-			"preview_chars", len(st.scene.Preview))
-		if err := st.surface.Resize(w, h); err != nil {
-			return err
-		}
-		st.reqW, st.reqH = w, h
+		o.log.Warn("overlay: scene wants a size the fixed surface does not have",
+			"scene_w", w, "scene_h", h, "surface_w", st.reqW, "surface_h", st.reqH)
 	}
 	// Allocate against the size the compositor assigned, which is what the
 	// buffer must match, rather than the size that was asked for.
@@ -250,9 +299,17 @@ func (o *WL) paint(st *wlState, start time.Time) error {
 	// Render measures and draws every glyph of the preview, so its cost
 	// grows with the text. This is the number to look at when the overlay
 	// feels like it has lost frames.
+	// age is how long the newest update waited between a producer writing it
+	// and it reaching the screen. It is the number that would have named the
+	// blocking-resize stall on sight, so it is logged on every frame.
+	var ageMS int64
+	if !st.sceneSetAt.IsZero() {
+		ageMS = time.Since(st.sceneSetAt).Milliseconds()
+	}
 	o.debug("overlay: painted",
 		"w", sw, "h", sh, "preview_chars", len(st.scene.Preview),
-		"render_ms", time.Since(renderStart).Milliseconds(),
+		"render_us", time.Since(renderStart).Microseconds(),
+		"update_age_ms", ageMS,
 		"visual", st.scene.Visual)
 
 	if err := st.surface.Attach(st.buf); err != nil {
@@ -290,50 +347,76 @@ func blit(img *image.RGBA, buf *wayland.Buffer) {
 }
 
 // post hands work to the render goroutine, failing rather than blocking if the
-// loop has stopped.
-func (o *WL) post(fn func(*wlState)) error {
+
+// Show transitions to a visual state. Never dropped: it is recorded as the
+// latest wanted state, and the next frame paints it.
+func (o *WL) Show(v Visual) error {
 	select {
 	case <-o.done:
 		return errors.New("overlay: closed")
-	case o.cmds <- fn:
-		return nil
 	default:
-		// A full queue means the render loop is behind. Dropping a level
-		// update is better than stalling the audio path that sent it.
-		return nil
 	}
+	o.mu.Lock()
+	if v != o.want.visual {
+		// A state change starts the preview over: the text belonged to the
+		// state being left.
+		o.want.preview = ""
+	}
+	o.want.visual = v
+	o.want.setAt = time.Now()
+	o.wantSeq++
+	o.mu.Unlock()
+	return nil
 }
 
-// Show transitions to a visual state.
-func (o *WL) Show(v Visual) error {
-	return o.post(func(st *wlState) {
-		if v != st.scene.Visual {
-			resetWave(st.levels)
-			st.scene.Preview = ""
-		}
-		st.scene.Visual = v
-		st.scene.Levels = st.levels
-	})
-}
-
-// SetLevel appends an audio level to the waveform history.
-func (o *WL) SetLevel(level float64) error {
-	return o.post(func(st *wlState) {
-		// The same fixed-length ring the GTK canvas scrolled, so the
-		// scrolling behaviour keeps its existing unit tests.
-		shiftWave(st.levels, waveDisplayLevel(level))
-		st.scene.Levels = st.levels
-	})
-}
+// showLegacy is the old queued path, kept only for the fields the render loop
 
 // SetText updates the partial-transcription preview strip.
+// SetLevel records the newest audio level. Never dropped and never blocking:
+// the audio path must not wait on the overlay.
+func (o *WL) SetLevel(level float64) error {
+	select {
+	case <-o.done:
+		return errors.New("overlay: closed")
+	default:
+	}
+	o.mu.Lock()
+	o.want.level, o.want.hasLevel = level, true
+	o.want.setAt = time.Now()
+	o.wantSeq++
+	o.mu.Unlock()
+	return nil
+}
+
 func (o *WL) SetText(text string) error {
-	return o.post(func(st *wlState) { st.scene.Preview = text })
+	select {
+	case <-o.done:
+		return errors.New("overlay: closed")
+	default:
+	}
+	o.mu.Lock()
+	o.want.preview = text
+	o.want.setAt = time.Now()
+	o.wantSeq++
+	o.mu.Unlock()
+	return nil
+}
+
+// takeDesired snapshots what the producers last asked for, and reports whether
+// anything changed since the render loop last looked.
+func (o *WL) takeDesired(seen *uint64) (desired, bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	d := o.want
+	changed := o.wantSeq != *seen
+	*seen = o.wantSeq
+	o.want.hasLevel = false
+	return d, changed
 }
 
 // Close stops the render loop and releases the connection. Idempotent.
 func (o *WL) Close() error {
-	o.closed.Do(func() { close(o.cmds) })
+	o.closed.Do(func() { close(o.quit) })
 	<-o.done
 	select {
 	case err := <-o.err:

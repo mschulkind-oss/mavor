@@ -66,6 +66,45 @@ type Scene struct {
 	MaxPreviewWidth int
 	// Phase drives the pulsing dot and the typing dots, in [0,1).
 	Phase float64
+
+	// SurfaceW and SurfaceH pin the canvas size. When set, the scene is laid
+	// out INSIDE them instead of defining them, and SceneSize returns them
+	// unchanged however much or little there is to draw.
+	//
+	// This is what lets the overlay allocate one Wayland surface and never
+	// resize it. Resizing to hug the contents is what made the surface
+	// re-centre on every new word, block the render loop on a compositor
+	// round-trip, and race a stale configure. Zero leaves the old
+	// hug-the-contents behaviour, which is what tests and the storybook want.
+	SurfaceW, SurfaceH int
+}
+
+// FixedSurfaceSize is the canvas the overlay allocates once and keeps: wide
+// enough for the preview cap, and tall enough for the preview strip whether or
+// not one is showing.
+//
+// The height is reserved unconditionally on purpose. A surface that grows when
+// the preview arrives is a resize, and the whole point is to have none. The
+// reserved region is transparent, so an idle overlay looks exactly as it did.
+func FixedSurfaceSize(maxPreviewWidth int) (int, int, error) {
+	f, err := textFaces()
+	if err != nil {
+		return 0, 0, err
+	}
+	// The widest pill of any state, so the canvas fits whichever is showing.
+	w := 0
+	for _, v := range []Visual{Recording, Transcribing, Error} {
+		pw, _ := pillSize(f, Scene{Visual: v})
+		if pw > w {
+			w = pw
+		}
+	}
+	if maxPreviewWidth > w {
+		w = maxPreviewWidth
+	}
+	_, pillH := pillSize(f, Scene{Visual: Recording})
+	h := pillH + previewGap + previewSize + 2*previewPadY + 4
+	return w, h, nil
 }
 
 // face lazily builds the text faces from the embedded Go font. Embedding the
@@ -325,6 +364,11 @@ func SceneSize(s Scene) (int, int, error) {
 	f, err := textFaces()
 	if err != nil {
 		return 0, 0, err
+	}
+	// A pinned canvas is the answer whatever is on it: the surface must not
+	// change size as the contents do.
+	if s.SurfaceW > 0 && s.SurfaceH > 0 {
+		return s.SurfaceW, s.SurfaceH, nil
 	}
 	pillW, pillH := pillSize(f, s)
 	w, h := pillW, pillH
