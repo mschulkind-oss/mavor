@@ -69,7 +69,7 @@ wrong. Never twist the code to match it.
 
 - **`"ggml-"+name+".bin"` is duplicated in nine non-test places** across
   `factory.go:27,38`, `doctor.go:111,439`, `main.go:225`, `models_cmd.go:506,517`,
-  `bench.go:22`, `sweep.go:120,172`. **Constraint:** §5 makes the catalog name and
+  `bench.go:22`, `sweep.go:120,172`. **Constraint:** [§5](./configuration-surface.md#5-model-naming) makes the catalog name and
   the filename different, so route every one through a single resolver. Change some
   and not others and you get "model not found" from only some code paths, with
   everything compiling.
@@ -84,7 +84,7 @@ wrong. Never twist the code to match it.
 - **`runSetup` lives in `doctor.go:65`**, not a `setup.go`. Symptom of missing it:
   you write a new setup path and the `setup` subcommand still runs the old one.
 - **`models_cmd_test.go:271-304, 574, 650`** assert every canonical name and alias
-  resolves and that catalog length matches. These fail *by design* under §5 —
+  resolves and that catalog length matches. These fail *by design* under [§5](./configuration-surface.md#5-model-naming) —
   rewrite to the new names, do not repair until green.
 - **The daemon holds exactly one `Transcriber`** (`main.go:174` → `daemon.go` field).
   Nothing is a singleton, so a second instance is structurally fine, but every
@@ -102,13 +102,13 @@ Each step ends green and committable.
 2. **Catalog rename.** Prefix the eleven whisper names, delete `Aliases`, add the
    explicit `Filename`, introduce the one path resolver and route all nine call
    sites through it. → `just check`
-3. **Collapse the build to cgo** (§4). Delete `build_tags.go` and `sherpa_stub.go`,
+3. **Collapse the build to cgo** ([§4](./configuration-surface.md#4-the-build-is-cgo-always)). Delete `build_tags.go` and `sherpa_stub.go`,
    drop the tags from their siblings, fold `build-sherpa`/`bench-sherpa` into
    `build`/`bench`. Must precede step 5. → `just check && just build`
 4. **The schema.** Nested structs, `Default()`, thread autodetect, runtime and
    placement derivation, template generated from `Default()`. → `just check`
-5. **The preview.** Companion model, resolution rule (§6.2), phrase-mode fallback,
-   config-driven idempotent `setup`, fatal-on-named-model-missing (§10.2). Largest
+5. **The preview.** Companion model, resolution rule ([§6.2](./configuration-surface.md#62-the-resolution-rule)), phrase-mode fallback,
+   config-driven idempotent `setup`, fatal-on-named-model-missing ([§10.2](./configuration-surface.md#102-failure-paths)). Largest
    step. → `just check && just test-int`
 6. **Vocabulary.** The table → whisper prompt and sherpa hotwords; decoding method
    follows from it. → `just check`
@@ -116,11 +116,11 @@ Each step ends green and committable.
 
 ## Ships with
 
-- **Unit, by case** — the §10.1 table is the case list: both `words` and `file` set;
+- **Unit, by case** — the [§10.1](./configuration-surface.md#101-degenerate-inputs) table is the case list: both `words` and `file` set;
   vocabulary over whisper's 224-token cap; `threads ≤ 0`; `top_margin < 0`;
   `preview.source` equal to `model`; unknown key warns but does not fail; absent
-  config file. Plus §10.2: named-model-missing is fatal, corrupt companion degrades.
-- **The test that enforces the §2.1 drift never recurs:** scaffolded template parses
+  config file. Plus [§10.2](./configuration-surface.md#102-failure-paths): named-model-missing is fatal, corrupt companion degrades.
+- **The test that enforces the [§2.1](./configuration-surface.md#21-three-keys-that-are-wrong-not-merely-confusing) drift never recurs:** scaffolded template parses
   to exactly `Default()`. This one is the reason the bug class dies.
 - **Integration** — `test/integration/transcribe_test.go` (`TestCannedWAVReachesClipboard`)
   drives a real config through `RunDaemon` to the clipboard. Extend it for the new
@@ -131,13 +131,13 @@ Each step ends green and committable.
   (`TestDefaultsAreReasonable` asserts `Model == "base.en"`, `Engine == "cli"`),
   `cmd/mavor/models_cmd_test.go` (see Traps), `internal/speech/factory_test.go`
   (engine dispatch, and `:120` asserts the stub error that no longer exists).
-- **Docs by path** — `docs/user-guide.md` §7 is the annotated reference and has 38
+- **Docs by path** — `docs/user-guide.md` [§7](./configuration-surface.md#7-vocabulary-and-decoding) is the annotated reference and has 38
   hits on old keys; `README.md` (8), `docs/quickstart.md` (2),
   `docs/reference/how-mavor-works.md` (4), `docs/choosing-a-model.md` (3).
   `AGENTS.md` "Build Tags" and "Justfile Recipes" both describe the pre-cgo world.
 - **Non-code surfaces** — `.goreleaser.yaml`, the Homebrew formula block in it, the
   PyPI wrapper, `Justfile:4,6`, the `mavor config init` template, `doctor` output
-  (§10.6 lists what it must report), and error text for a missing named model.
+  ([§10.6](./configuration-surface.md#106-what-done-looks-like) lists what it must report), and error text for a missing named model.
 - **Norms** — `just check` before each commit; the pre-commit hook runs `just
   check-ci` and will reject otherwise. `docs/reports/model-benchmarks.md` is
   generated: rerun `just bench`, never edit.
@@ -159,11 +159,11 @@ at startup, tested through `Default()`, invisible downstream.
 
 ## Don't
 
-- Don't add a compatibility shim for the old keys — §11 rejected it; unknown keys
-  warn and `doctor` reports them (§10.1).
-- Don't expose `decoding_method`, `sherpa_provider`, or a language-model key. §7 and
-  §9 give the reasons; each is a decided no, not an omission.
+- Don't add a compatibility shim for the old keys — [§11](./configuration-surface.md#11-alternatives-considered) rejected it; unknown keys
+  warn and `doctor` reports them ([§10.1](./configuration-surface.md#101-degenerate-inputs)).
+- Don't expose `decoding_method`, `sherpa_provider`, or a language-model key. [§7](./configuration-surface.md#7-vocabulary-and-decoding) and
+  [§9](./configuration-surface.md#9-chosen-for-you-threads-gpu-and-the-sherpa-provider) give the reasons; each is a decided no, not an omission.
 - Don't make the companion model's failure fatal in general — only a model *named*
-  in the config is fatal (§10.2). The distinction is the whole ruling.
+  in the config is fatal ([§10.2](./configuration-surface.md#102-failure-paths)). The distinction is the whole ruling.
 - Don't touch `docs/design/active-window-context-and-vocabulary-prompting.md`. It
   adopts this key shape later; this change does not edit it.

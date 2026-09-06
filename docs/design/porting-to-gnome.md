@@ -81,7 +81,7 @@ both declining to do it.
 > never promised to keep stable.
 
 This also corrects
-[`wayland-dictation-stack.md` §1.8](../research/wayland-dictation-stack.md#18-what-the-field-actually-uses-in-2026),
+[`wayland-dictation-stack.md` [§1](#1-the-verdict).8](../research/wayland-dictation-stack.md#18-what-the-field-actually-uses-in-2026),
 which lists Blurt as "injects via the Shell, no external tool". It does not.
 
 **Every no-prompt route on GNOME costs something structural.** The portal route
@@ -285,7 +285,7 @@ v0.1.0, published 2025-06-15, and is cgo over the C library. Since `7e52f94`
 mavor's build is cgo unconditionally (see
 [`docs/roadmap.md` §2](../roadmap.md#2-up-next-)), so cgo is no longer the
 objection it was when
-[`wayland-dictation-stack.md` §1.7](../research/wayland-dictation-stack.md#17-what-an-ime-based-approach-would-actually-buy)
+[`wayland-dictation-stack.md` [§1](#1-the-verdict).7](../research/wayland-dictation-stack.md#17-what-an-ime-based-approach-would-actually-buy)
 was written — a pre-1.0 third-party binding on the critical path still is.
 
 **`ydotool`.** Works everywhere because it is beneath the compositor: the
@@ -402,7 +402,7 @@ which is hold-to-talk expressed properly at the protocol level. Compare what
 mavor asks sway users to live with: `bindsym --release` has been unreliable
 since 2021 — press any other key before releasing and the stop binding never
 fires, which for dictation is a common accident, not an exotic one
-([`wayland-dictation-stack.md` §3.1](../research/wayland-dictation-stack.md#31-sway-does-give-you-key-release--the-premise-needs-correcting)).
+([`wayland-dictation-stack.md` [§3](#3-the-three-gnome-shaped-problems).1](../research/wayland-dictation-stack.md#31-sway-does-give-you-key-release--the-premise-needs-correcting)).
 A portal `Deactivated` signal has no such failure mode.
 
 | | `bindsym --release` (today) | GlobalShortcuts portal |
@@ -621,7 +621,7 @@ tests the compositor's capabilities rather than `$PATH`.
 - **Preedit, inline partial text at the cursor, or an IME product.** Recorded in
   [§3.1](#31-injection--the-port-that-actually-matters) and rejected here for
   the same reasons
-  [`wayland-dictation-stack.md` §1.7](../research/wayland-dictation-stack.md#17-what-an-ime-based-approach-would-actually-buy)
+  [`wayland-dictation-stack.md` [§1](#1-the-verdict).7](../research/wayland-dictation-stack.md#17-what-an-ime-based-approach-would-actually-buy)
   rejected it.
 - **Shipping anything to `extensions.gnome.org`.** If an extension is written,
   publishing and maintaining a listing there is separate work with a separate
@@ -797,7 +797,7 @@ for injection first, with the HUD riding along.
    `xdg-desktop-portal-wlr` does not implement it. The alternative is accepting
    toggle-only on GNOME and saying so. This decides whether "compositor
    keybindings, not our problem" — the standing position in
-   [`wayland-dictation-stack.md` §3.2](../research/wayland-dictation-stack.md#32-the-options-ranked)
+   [`wayland-dictation-stack.md` [§3](#3-the-three-gnome-shaped-problems).2](../research/wayland-dictation-stack.md#32-the-options-ranked)
    — survives contact with a desktop that has no such keybindings.
 
    <!-- vantage: oq id=OQ-GN6 leaning="Yes, but only alongside the GNOME dispatcher — and it is opt-in, because it buys nothing on wlroots and the CLI path has to keep working unchanged." -->

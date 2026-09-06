@@ -298,7 +298,7 @@ system rather than proposing one. Item 7 below carries the graduation.
 ### ✅ 7. The config file had 29 keys and three of them were wrong — RESOLVED (2026-09-05)
 
 Built across six commits, `adb0760`..`7e52f94`, in the order
-[`configuration-surface.md` §14](design/configuration-surface.md#14-what-i-would-build-in-order)
+[`configuration-surface.md` [§1](#1-attention-required-)4](design/configuration-surface.md#14-what-i-would-build-in-order)
 laid out. The three broken keys are gone: `gpu_layers` passed `-ngl` to
 whisper.cpp, which does not accept it, so any non-zero value broke every
 transcription and `doctor` recommended setting it; `device` was written into a

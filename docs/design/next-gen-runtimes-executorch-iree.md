@@ -101,7 +101,7 @@ no run behind them:
 Both would add a *second* cgo dependency alongside sherpa-onnx's. That is a
 smaller step than it was when this was written: the cross-compilable pure-Go
 build no longer exists, so the first cgo dependency has already been paid for
-(see [`configuration-surface.md`](configuration-surface.md) §4). What is left
+(see [`configuration-surface.md`](configuration-surface.md) [§4](./configuration-surface.md#4-the-build-is-cgo-always)). What is left
 to weigh is a second toolchain and a second set of shared objects in the
 release archive, not the loss of a pure-Go build.
 
