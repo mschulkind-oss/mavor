@@ -98,15 +98,18 @@ no run behind them:
 | **IREE** | Compiled `.vmfb` / `.so` | Whole-graph operator fusion; no interpreter dispatch | Native SPIR-V Vulkan | Direct C-ABI (cgo) | An MLIR/LLVM toolchain in the container, plus a torch-mlir export of each model |
 | **ExecuTorch** | Exported `.pte` | PyTorch 2.0 export without ONNX schema drift | Vulkan delegate / XNNPACK | C-API shared library | A PyTorch export step per model and a second cgo runtime alongside sherpa's |
 
-Both would replace a cross-compilable pure-Go default build with a second
-cgo dependency, which is the same trade `sherpa` already makes — and the
-reason the sherpa engines sit behind a build tag.
+Both would add a *second* cgo dependency alongside sherpa-onnx's. That is a
+smaller step than it was when this was written: the cross-compilable pure-Go
+build no longer exists, so the first cgo dependency has already been paid for
+(see [`configuration-surface.md`](configuration-surface.md) §4). What is left
+to weigh is a second toolchain and a second set of shared objects in the
+release archive, not the loss of a pure-Go build.
 
 ## 4. Implementation Strategy for `mavor`
 
 1. **Phase 1 — shipped.** `whisper-cli` / `whisper-server` (CPU, and Vulkan
-   from a GPU build) and in-process `sherpa-onnx` behind the `sherpa` build
-   tag, selected by `engine` in `config.toml`.
+   from a GPU build) and in-process `sherpa-onnx`, always linked in, selected
+   by `engine` in `config.toml`.
 2. **Phase 2 — frozen.** An experimental `engine = "iree"` backend linking
    compiled `.vmfb` modules on Mesa RADV/ANV systems.
 3. **Phase 3 — frozen.** A `.pte` bundle loader as an alternative to ONNX

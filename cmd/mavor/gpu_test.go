@@ -57,100 +57,123 @@ func TestDetectGPUBackendsFromLinkedLibraries(t *testing.T) {
 	}
 }
 
-func TestGPUReportForWhisper(t *testing.T) {
-	cases := []struct {
-		name     string
-		cfg      config.Config
-		backends []string
-		devices  []string
-		wantOK   bool
-		contains string
-	}{
-		{
-			// Not asking for the GPU is a valid, common setup. Reporting it
-			// as a failure would train people to ignore doctor output.
-			name:     "not requested, no backend",
-			cfg:      config.Config{Engine: "cli", GPULayers: 0},
-			wantOK:   true,
-			contains: "CPU",
-		},
-		{
-			name:     "not requested but available",
-			cfg:      config.Config{Engine: "cli", GPULayers: 0},
-			backends: []string{"vulkan"},
-			devices:  []string{"/dev/dri/renderD128"},
-			wantOK:   true,
-			contains: "gpu_layers",
-		},
-		{
-			name:     "requested and available",
-			cfg:      config.Config{Engine: "cli", GPULayers: 32},
-			backends: []string{"vulkan"},
-			devices:  []string{"/dev/dri/renderD128"},
-			wantOK:   true,
-			contains: "vulkan",
-		},
-		{
-			// The silent-CPU-fallback case: the config asks for offload the
-			// binary cannot do, and whisper.cpp just runs on the CPU.
-			name:     "requested but binary has no GPU backend",
-			cfg:      config.Config{Engine: "cli", GPULayers: 32},
-			backends: nil,
-			devices:  []string{"/dev/dri/renderD128"},
-			wantOK:   false,
-			contains: "no GPU backend",
-		},
-		{
-			name:     "requested, backend linked, but no device",
-			cfg:      config.Config{Engine: "cli", GPULayers: 32},
-			backends: []string{"vulkan"},
-			devices:  nil,
-			wantOK:   false,
-			contains: "no GPU device",
-		},
-	}
+// gpuReport reports what whisper.cpp loaded. It never advises a config
+// setting, because there is no setting that turns acceleration on — the bug
+// this replaced was doctor telling users to set gpu_layers, which made every
+// transcription fail.
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			ok, msg := gpuReport(tc.cfg, tc.backends, tc.devices)
-			if ok != tc.wantOK {
-				t.Errorf("gpuReport() ok = %v, want %v (msg: %s)", ok, tc.wantOK, msg)
-			}
-			if !strings.Contains(msg, tc.contains) {
-				t.Errorf("gpuReport() msg = %q, want it to mention %q", msg, tc.contains)
-			}
-		})
+func TestGPUReportNoBackendIsNormal(t *testing.T) {
+	ok, msg := gpuReport(config.Config{Engine: "cli"}, nil, nil)
+	if !ok {
+		t.Errorf("a machine with no GPU is a normal setup, got failure: %s", msg)
+	}
+	if !strings.Contains(msg, "CPU") {
+		t.Errorf("msg = %q, want it to say the work happens on the CPU", msg)
 	}
 }
 
-func TestGPUReportForSherpa(t *testing.T) {
-	// The ONNX Runtime bundled with the sherpa-onnx Go binding carries no
-	// provider libraries, so a GPU provider silently falls back to CPU.
-	// Doctor has to say so rather than let the user believe it took effect.
-	ok, msg := gpuReport(config.Config{Engine: "sherpa", SherpaProvider: "cuda"}, nil, []string{"/dev/dri/renderD128"})
-	if ok {
-		t.Errorf("a GPU sherpa_provider against the bundled CPU-only runtime should be flagged, got ok (msg: %s)", msg)
-	}
-	if !strings.Contains(msg, "cuda") {
-		t.Errorf("message should name the configured provider, got %q", msg)
-	}
-
-	ok, msg = gpuReport(config.Config{Engine: "sherpa", SherpaProvider: "cpu"}, nil, nil)
+func TestGPUReportNamesTheLoadedBackendAndDeviceCount(t *testing.T) {
+	ok, msg := gpuReport(config.Config{Engine: "cli"}, []string{"vulkan"}, []string{"/dev/dri/renderD128"})
 	if !ok {
-		t.Errorf("sherpa on CPU is a normal setup, got failure: %s", msg)
+		t.Errorf("a loaded backend with a device behind it is healthy, got failure: %s", msg)
 	}
+	if !strings.Contains(msg, "vulkan") {
+		t.Errorf("msg = %q, want it to name the loaded backend", msg)
+	}
+	if !strings.Contains(msg, "1 device") {
+		t.Errorf("msg = %q, want it to report how many devices are visible", msg)
+	}
+}
 
-	// ONNX Runtime has no Vulkan execution provider at all.
-	ok, msg = gpuReport(config.Config{Engine: "sherpa", SherpaProvider: "vulkan"}, nil, nil)
+// A backend with nothing behind it is the one genuine failure: whisper.cpp
+// will fall back to the CPU and say nothing.
+func TestGPUReportFailsWhenBackendLoadedButNoDevice(t *testing.T) {
+	ok, msg := gpuReport(config.Config{Engine: "cli"}, []string{"vulkan"}, nil)
 	if ok {
-		t.Errorf("vulkan is not an ONNX Runtime execution provider and should be flagged (msg: %s)", msg)
+		t.Errorf("a loaded backend with no device should be flagged, got ok (msg: %s)", msg)
+	}
+	if !strings.Contains(msg, "no GPU device") {
+		t.Errorf("msg = %q, want it to say no device is visible", msg)
+	}
+}
+
+func TestGPUReportSaysWhenConfigDisabledTheGPU(t *testing.T) {
+	ok, msg := gpuReport(
+		config.Config{Engine: "cli", GPU: "off"},
+		[]string{"vulkan"},
+		[]string{"/dev/dri/renderD128"},
+	)
+	if !ok {
+		t.Errorf("turning the GPU off deliberately is not a fault, got failure: %s", msg)
+	}
+	if !strings.Contains(msg, "disabled by config") {
+		t.Errorf("msg = %q, want it to say the config disabled the GPU", msg)
+	}
+}
+
+// The old message told users to "set gpu_layers in config.toml to offload",
+// which appended a flag whisper-cli rejects. No report may recommend a
+// setting again, under any combination of backends and devices.
+func TestGPUReportNeverAdvisesASetting(t *testing.T) {
+	engines := []string{"cli", "server", "sherpa"}
+	gpus := []string{"", "auto", "off"}
+	backendSets := [][]string{nil, {"vulkan"}, {"cuda", "vulkan"}}
+	deviceSets := [][]string{nil, {"/dev/dri/renderD128"}}
+
+	for _, engine := range engines {
+		for _, gpu := range gpus {
+			for _, backends := range backendSets {
+				for _, devices := range deviceSets {
+					_, msg := gpuReport(config.Config{Engine: engine, GPU: gpu}, backends, devices)
+					for _, banned := range []string{"gpu_layers", "-ngl"} {
+						if strings.Contains(msg, banned) {
+							t.Errorf("gpuReport(engine=%q gpu=%q backends=%v devices=%v) mentions %q: %s",
+								engine, gpu, backends, devices, banned, msg)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// sherpa cannot use a GPU in this build at all: the sherpa-onnx Go binding
+// vendors a CPU-only ONNX Runtime with no provider libraries. The report says
+// so plainly rather than reasoning about a provider key.
+func TestGPUReportForSherpaSaysCPU(t *testing.T) {
+	ok, msg := gpuReport(config.Config{Engine: "sherpa"}, nil, nil)
+	if !ok {
+		t.Errorf("sherpa on the CPU is the only thing this build does; not a fault: %s", msg)
+	}
+	if !strings.Contains(msg, "CPU") {
+		t.Errorf("msg = %q, want it to say sherpa runs on the CPU", msg)
+	}
+}
+
+func TestGPUReportForSherpaMentionsUnusableDevices(t *testing.T) {
+	ok, msg := gpuReport(config.Config{Engine: "sherpa"}, nil, []string{"/dev/dri/renderD128"})
+	if !ok {
+		t.Errorf("a GPU that sherpa cannot reach is not a fault: %s", msg)
+	}
+	if !strings.Contains(msg, "unusable") {
+		t.Errorf("msg = %q, want it to say the present device cannot be used", msg)
+	}
+}
+
+// A GPU-capable whisper build is not reported differently because the user
+// also set a sherpa provider: the sherpa line does not consult it any more.
+func TestGPUReportForSherpaIgnoresProviderKey(t *testing.T) {
+	_, withProvider := gpuReport(config.Config{Engine: "sherpa", SherpaProvider: "cuda"}, nil, nil)
+	_, without := gpuReport(config.Config{Engine: "sherpa"}, nil, nil)
+	if withProvider != without {
+		t.Errorf("sherpa report varied with sherpa_provider:\n  %q\n  %q", withProvider, without)
 	}
 }
 
 // whisper.cpp 1.9+ loads its ggml backends dynamically and announces each one
 // on startup. That announcement is the only trustworthy signal: a build can
 // link libvulkan.so and still ship no libggml-vulkan.so, in which case it
-// transcribes on the CPU no matter what -ngl says.
+// transcribes on the CPU whatever the configuration says.
 func TestParseLoadedBackends(t *testing.T) {
 	cases := []struct {
 		name string

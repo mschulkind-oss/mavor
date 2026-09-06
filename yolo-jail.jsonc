@@ -24,9 +24,10 @@
     "wl-clipboard", // wl-copy / wl-paste
     // No GUI toolkit. The overlay speaks wlr-layer-shell directly and is
     // painted in Go, so there is no GTK4, cairo, pango or gobject-introspection
-    // here and no .dev outputs to supply headers — mavor's own source contains
-    // no cgo at all. pkg-config stays for the optional `sherpa` build tag,
-    // which is the one variant that still compiles C.
+    // here and no .dev outputs to supply headers. mavor itself is a cgo
+    // program — it links sherpa-onnx, whose Go binding vendors its own
+    // prebuilt shared objects — so a C toolchain and pkg-config both have to
+    // be here for `just build` to work at all.
     "pkg-config",
     // Audio stack (headless-capable via null-sink + virtual sources)
     "pipewire",

@@ -100,12 +100,44 @@ func TestWhisperCliCancelKillsProcess(t *testing.T) {
 }
 
 func TestDefaultCommandWithOpts(t *testing.T) {
-	cmd := DefaultCommandWithOpts(t.Context(), "/models/base.bin", "/tmp/audio.wav", 32, 8)
+	cmd := DefaultCommandWithOpts(t.Context(), "/models/base.bin", "/tmp/audio.wav", 8, false)
 	args := strings.Join(cmd.Args, " ")
-	if !strings.Contains(args, "-ngl 32") {
-		t.Errorf("expected -ngl 32 in args, got: %s", args)
-	}
 	if !strings.Contains(args, "-t 8") {
 		t.Errorf("expected -t 8 in args, got: %s", args)
+	}
+}
+
+// TestWhisperCommandNeverPassesNGL is the regression test for the bug that
+// gpu = "auto"|"off" replaced. mavor used to append "-ngl <n>" whenever
+// gpu_layers was non-zero; whisper-cli has no such flag and exits with
+// "error: unknown argument: -ngl", so every transcription failed. No
+// configuration may put that flag on the command line again.
+func TestWhisperCommandNeverPassesNGL(t *testing.T) {
+	for _, noGPU := range []bool{false, true} {
+		for _, threads := range []int{0, 1, 32} {
+			cmd := DefaultCommandWithOpts(t.Context(), "/models/base.bin", "/tmp/audio.wav", threads, noGPU)
+			args := strings.Join(cmd.Args, " ")
+			if strings.Contains(args, "-ngl") {
+				t.Fatalf("whisper-cli argv contains -ngl, which the binary rejects (threads=%d no_gpu=%v): %s",
+					threads, noGPU, args)
+			}
+		}
+	}
+}
+
+func TestWhisperCommandGPUOffPassesNG(t *testing.T) {
+	cmd := DefaultCommandWithOpts(t.Context(), "/models/base.bin", "/tmp/audio.wav", 4, true)
+	args := strings.Join(cmd.Args, " ")
+	if !strings.Contains(args, "-ng") {
+		t.Errorf("gpu off should pass -ng, got: %s", args)
+	}
+}
+
+func TestWhisperCommandGPUAutoOmitsNG(t *testing.T) {
+	cmd := DefaultCommandWithOpts(t.Context(), "/models/base.bin", "/tmp/audio.wav", 4, false)
+	for _, a := range cmd.Args {
+		if a == "-ng" || a == "--no-gpu" {
+			t.Errorf("gpu auto must not disable the GPU, got argv: %v", cmd.Args)
+		}
 	}
 }

@@ -72,13 +72,29 @@ Two rules the harness enforces, and any replacement for it should keep:
   a GPU backend and a device must enumerate, or the column is refused. Four
   earlier reports published CPU numbers under GPU headings; see the roadmap.
 
-## Build Tags
+## The build is cgo, always
 
-The default build is pure Go and needs no system headers: `CGO_ENABLED=0`
-works, and so does cross-compilation.
+There is one build of mavor and it links the in-process sherpa-onnx
+recognizers through cgo. There is no pure-Go variant and no `sherpa` build
+tag: both were deleted, because thirteen of the catalog's models are
+unreachable without the ONNX runtime. So a C toolchain is a build
+requirement, `CGO_ENABLED=0` does not work, and cross-compiling needs a cross
+toolchain (which is why releases are `linux/amd64` only for now — see the
+`goarch` comment in `.goreleaser.yaml`).
 
-- `sherpa`: links the in-process sherpa-onnx recognizers. The one variant that
-  needs cgo, and so the one that cannot be cross-compiled.
+**The distribution unit is a directory, not a file.** `bin/mavor` is
+dynamically linked against `libsherpa-onnx-c-api.so` and `libonnxruntime.so`,
+which are vendored in the Go module cache rather than committed here.
+`scripts/sherpa-libs.sh` is the one place that finds them; `just build`,
+`just install` and the goreleaser `before` hook all call it. The binary is
+linked with `-r '$ORIGIN:$ORIGIN/../lib'`, so it finds those libraries beside
+itself (the release tarball, `bin/`) or one directory up in `lib/`
+(`~/.local/lib`, a Homebrew prefix). Without that rpath the linker bakes in an
+absolute path into the *build host's* module cache and the binary runs
+nowhere else.
+
+Two build tags remain, and both are test-only:
+
 - `integration`: Enables the headless Sway + PipeWire integration test harness.
 - `e2e`: Enables end-to-end transcription tests with real downloaded models.
 
@@ -123,13 +139,11 @@ works, and so does cross-compilation.
 - `just test-int` — Run headless Wayland integration tests (`go test -tags=integration ./test/integration/...`).
 - `just test-e2e` — Run real whisper transcription test.
 - `just storybook` — Generate UI Storybook HTML report with real headless screenshots (`test/reports/ui-storybook.html`).
-- `just bench` — Benchmark every installed model: speed, peak memory, accuracy, CPU and GPU, plus thread scaling and warm-server-versus-cold-CLI sweeps. Regenerates `docs/reports/model-benchmarks.md`.
-- `just bench-sherpa` — The same sweep with the in-process sherpa engines linked in (needs cgo).
+- `just bench` — Benchmark every installed model on every backend, whisper.cpp and the in-process sherpa engines alike: speed, peak memory, accuracy, CPU and GPU, plus thread scaling and warm-server-versus-cold-CLI sweeps. Regenerates `docs/reports/model-benchmarks.md`.
 - `just bench-models` — Download the whole catalog so there is something to benchmark (~16 GB).
 - `just bench-gpu-build` — Build the Vulkan whisper.cpp the GPU column needs; the packaged whisper-cpp is CPU-only.
-- `just build` — Compile the static, pure-Go binary to `bin/mavor`.
-- `just build-sherpa` — Compile with the in-process sherpa-onnx engines (cgo).
-- `just install` — Compile and copy binary to `~/.local/bin/mavor`.
+- `just build` — Compile `bin/mavor` and copy its two sherpa-onnx shared objects in beside it. `bin/` is the artifact; the binary alone will not start.
+- `just install` — Compile, then copy the binary to `~/.local/bin/mavor` and the shared objects to `~/.local/lib`.
 - `just deploy` — Install binary and set up systemd user service.
 - `just doctor` — Run environment health check (`mavor doctor`).
 - `just dev` — Run daemon in debug mode against active Wayland session.

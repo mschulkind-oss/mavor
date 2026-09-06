@@ -26,6 +26,14 @@ func TestDefaultsAreReasonable(t *testing.T) {
 	if !strings.HasSuffix(d.Socket, "/mavor.sock") {
 		t.Errorf("Socket = %q, want suffix /mavor.sock", d.Socket)
 	}
+	// whisper.cpp uses whatever GPU backend its build loaded; "auto" is
+	// mavor staying out of the way, and "off" is the only other value.
+	if d.GPU != "auto" {
+		t.Errorf("GPU = %q, want auto", d.GPU)
+	}
+	if d.GPUOff() {
+		t.Error("GPUOff() = true for the default config, want false")
+	}
 	if d.Engine != "cli" {
 		t.Errorf("Engine = %q, want cli", d.Engine)
 	}
@@ -68,8 +76,7 @@ func TestLoadValidTOMLOverridesDefaults(t *testing.T) {
 model = "tiny.en"
 model_dir = "/var/lib/mavor/models"
 socket = "/run/user/1000/mavor.sock"
-gpu_layers = 32
-device = "vulkan"
+gpu = "off"
 threads = 8
 engine = "server"
 server_socket = "/run/user/1000/custom-server.sock"
@@ -95,8 +102,7 @@ duck_streams = ["spotify", "firefox", "vlc"]
 		Model:                "tiny.en",
 		ModelDir:             "/var/lib/mavor/models",
 		Socket:               "/run/user/1000/mavor.sock",
-		GPULayers:            32,
-		Device:               "vulkan",
+		GPU:                  "off",
 		Threads:              8,
 		Engine:               "server",
 		ServerSocket:         "/run/user/1000/custom-server.sock",
@@ -383,5 +389,52 @@ func TestDefaultLogFileHonorsXDGStateHome(t *testing.T) {
 	want := filepath.Join(base, "mavor", "daemon.log")
 	if got := Default().LogFile; got != want {
 		t.Errorf("Default().LogFile = %q, want %q", got, want)
+	}
+}
+
+func TestGPUDefaultsToAutoWhenUnset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(`model = "tiny.en"`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GPU != "auto" {
+		t.Errorf("GPU = %q with no gpu key, want auto", cfg.GPU)
+	}
+	if cfg.GPUOff() {
+		t.Error("GPUOff() = true with no gpu key, want false")
+	}
+}
+
+func TestGPUOffIsRead(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(`gpu = "off"`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.GPUOff() {
+		t.Errorf("GPUOff() = false for gpu = %q, want true", cfg.GPU)
+	}
+}
+
+// A Config literal that never went through Resolve still has to mean "auto",
+// because that is how every test and every in-process caller builds one.
+func TestZeroValueGPUMeansAuto(t *testing.T) {
+	if (Config{}).GPUOff() {
+		t.Error("GPUOff() = true for the zero Config, want false (auto)")
+	}
+}
+
+func TestGPUOffIgnoresCaseAndSpacing(t *testing.T) {
+	for _, v := range []string{"off", "OFF", " Off "} {
+		if !(Config{GPU: v}).GPUOff() {
+			t.Errorf("GPUOff() = false for gpu = %q, want true", v)
+		}
 	}
 }

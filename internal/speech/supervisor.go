@@ -31,14 +31,12 @@ type SupervisorConfig struct {
 	// ServerSocket is the Unix domain socket path or HTTP URL/address.
 	ServerSocket string
 
-	// GPULayers is the number of model layers offloaded to GPU (-ngl).
-	GPULayers int
-
 	// Threads is the number of CPU threads (-t).
 	Threads int
 
-	// Device specifies the compute device ("auto", "vulkan", "rocm", "cpu").
-	Device string
+	// NoGPU forces CPU execution (-ng). whisper-server has no layer-offload
+	// flag; it uses whatever GPU backend its build loaded unless told not to.
+	NoGPU bool
 
 	// CommandFunc allows injecting a custom command generator (useful for unit tests).
 	CommandFunc func(ctx context.Context, cfg SupervisorConfig) *exec.Cmd
@@ -115,8 +113,8 @@ func DefaultServerCommand(ctx context.Context, cfg SupervisorConfig) *exec.Cmd {
 	if cfg.Threads > 0 {
 		args = append(args, "-t", fmt.Sprint(cfg.Threads))
 	}
-	if cfg.GPULayers > 0 {
-		args = append(args, "-ngl", fmt.Sprint(cfg.GPULayers))
+	if cfg.NoGPU {
+		args = append(args, "-ng")
 	}
 
 	// A host and a port is the only way this binary can be told where to

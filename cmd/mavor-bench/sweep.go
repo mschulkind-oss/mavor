@@ -191,7 +191,6 @@ func benchWarmServer(ctx context.Context, models []catalogModel, counts []int, m
 			ModelPath:    modelPath,
 			ServerSocket: endpoint,
 			Threads:      threads,
-			Device:       "cpu",
 			Logger:       quietLogger(),
 		})
 

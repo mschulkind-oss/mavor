@@ -26,7 +26,7 @@ This document explores how new users discover, install, configure, dictate with,
 
 **First 10 minutes:**
 
-1. Maya discovers `mavor` on an `r/swaywm` discussion comparing local Linux dictation tools. The project claims pure-Go simplicity, native `wlr-layer-shell` HUD overlays, and zero focus-stealing windows.
+1. Maya discovers `mavor` on an `r/swaywm` discussion comparing local Linux dictation tools. The project claims a single self-contained daemon, native `wlr-layer-shell` HUD overlays, and zero focus-stealing windows.
 
 2. Maya installs the binary using Go:
    ```console
@@ -162,10 +162,11 @@ This document explores how new users discover, install, configure, dictate with,
 
 **First 10 minutes:**
 
-1. Derek finds `mavor` in a curated list of minimalist Wayland utilities. Seeing that the binary is statically compiled pure Go with zero shared-library baggage, he downloads the pre-built release tarball:
+1. Derek finds `mavor` in a curated list of minimalist Wayland utilities. Seeing one daemon with no Python, Node or Electron anywhere near it, he downloads the pre-built release tarball. It carries the binary and the two sherpa-onnx shared objects it links against, which have to travel together:
    ```console
    $ tar -xzf mavor_v0.1.0_linux_amd64.tar.gz
    $ install -m 0755 mavor ~/.local/bin/mavor
+   $ install -m 0644 -D -t ~/.local/lib lib*.so
    ```
 
 2. Derek avoids automated setup scripts that might touch system configuration. Instead, he inspects his system directly:
@@ -253,7 +254,7 @@ This document explores how new users discover, install, configure, dictate with,
 - Wondering where daemon logs go when launched via Sway `exec`. Unless `--log-file` is specified, logs default to `~/.local/state/mavor/daemon.log` or stderr.
 
 **What makes this work:**
-- The pure-Go binary needs no shared C runtime or GPU libraries.
+- The binary needs no GPU libraries and no runtime beyond glibc and the two shared objects that ship with it.
 - The `cli` engine architecture frees 100% of model memory immediately after transcription finishes.
 
 ---
@@ -385,13 +386,13 @@ This document explores how new users discover, install, configure, dictate with,
 
 **First 10 minutes:**
 
-1. Sam finds `mavor` while researching `sherpa-onnx` integrations for Linux. Sam discovers that `mavor` includes an optional in-process CGO backend supporting NVIDIA FastConformer (Parakeet-TDT) with 80ms causal chunk streaming.
+1. Sam finds `mavor` while researching `sherpa-onnx` integrations for Linux. Sam discovers that `mavor` links an in-process CGO backend supporting NVIDIA FastConformer (Parakeet-TDT) with 80ms causal chunk streaming, in every build.
 
-2. Because pre-built releases are pure Go, Sam builds the native CGO binary from source:
+2. The pre-built release would do, but Sam builds from source out of habit:
    ```console
    $ git clone https://github.com/mschulkind-oss/mavor && cd mavor
    $ mise install
-   $ just build-sherpa
+   $ just build
    $ just deploy
    ```
 
@@ -492,7 +493,7 @@ This document explores how new users discover, install, configure, dictate with,
     - Specialized jargon (`StatefulSet`, `ConfigMap`) is boosted by the transducer beam search and transcribed perfectly.
     - The instant Sam releases the hotkey, the text is already completely typed into the terminal. Post-speech wait latency is **less than 60 milliseconds**.
 
-    **Gap:** If a user downloads pre-built release binaries (pure Go) and attempts to set `engine = "sherpa"`, the daemon will fail at startup explaining that `sherpa` requires CGO. `mavor models pull parakeet` could warn upfront if the active binary lacks the `sherpa` build tag.
+    **Closed:** this used to be a gap — a pre-built release was pure Go, so `engine = "sherpa"` failed at startup on a downloaded binary. There is one build now and it always links sherpa-onnx, so a release binary reaches every model in the catalog.
 
 **What would trip them up:**
 - Attempting to use `sherpa_hotwords_file` with Whisper or CTC models. Vocabulary boosting via shallow fusion is an architectural feature of Transducer models (Parakeet-TDT, Zipformer) and has no effect on Whisper.

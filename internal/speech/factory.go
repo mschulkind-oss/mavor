@@ -29,8 +29,8 @@ func Factory(cfg config.Config, logger *slog.Logger) (Transcriber, error) {
 			return nil, fmt.Errorf("speech: model %q not found at %s — run `mavor models pull %s`: %w", cfg.Model, modelPath, cfg.Model, err)
 		}
 		cli := NewWhisperCli(modelPath)
-		cli.GPULayers = cfg.GPULayers
 		cli.Threads = cfg.Threads
+		cli.NoGPU = cfg.GPUOff()
 		cli.Logger = logger
 		return cli, nil
 
@@ -51,9 +51,8 @@ func Factory(cfg config.Config, logger *slog.Logger) (Transcriber, error) {
 			st.Supervisor = NewSupervisor(SupervisorConfig{
 				ModelPath:    modelPath,
 				ServerSocket: cfg.ServerSocket,
-				GPULayers:    cfg.GPULayers,
 				Threads:      cfg.Threads,
-				Device:       cfg.Device,
+				NoGPU:        cfg.GPUOff(),
 				Logger:       logger,
 			})
 		}

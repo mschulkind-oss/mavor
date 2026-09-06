@@ -19,11 +19,10 @@ func TestFactoryCLIValidModel(t *testing.T) {
 	}
 
 	cfg := config.Config{
-		Engine:    "cli",
-		Model:     "base.en",
-		ModelDir:  modelDir,
-		GPULayers: 16,
-		Threads:   4,
+		Engine:   "cli",
+		Model:    "base.en",
+		ModelDir: modelDir,
+		Threads:  4,
 	}
 
 	transcriber, err := Factory(cfg, slog.Default())
@@ -37,11 +36,75 @@ func TestFactoryCLIValidModel(t *testing.T) {
 	if cli.ModelPath != modelFile {
 		t.Errorf("ModelPath = %q, want %q", cli.ModelPath, modelFile)
 	}
-	if cli.GPULayers != 16 {
-		t.Errorf("GPULayers = %d, want 16", cli.GPULayers)
-	}
 	if cli.Threads != 4 {
 		t.Errorf("Threads = %d, want 4", cli.Threads)
+	}
+	// An unset gpu key means "auto": whisper.cpp decides, mavor does not
+	// pass -ng.
+	if cli.NoGPU {
+		t.Error("NoGPU = true with no gpu key set, want false (auto)")
+	}
+}
+
+func TestFactoryCLIGPUOffDisablesGPU(t *testing.T) {
+	modelDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(modelDir, "ggml-base.en.bin"), []byte("fake-model"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{Engine: "cli", Model: "base.en", ModelDir: modelDir, GPU: "off"}
+
+	transcriber, err := Factory(cfg, slog.Default())
+	if err != nil {
+		t.Fatalf("Factory failed: %v", err)
+	}
+	cli, ok := transcriber.(*WhisperCli)
+	if !ok {
+		t.Fatalf("expected *WhisperCli, got %T", transcriber)
+	}
+	if !cli.NoGPU {
+		t.Error("NoGPU = false with gpu = \"off\", want true")
+	}
+}
+
+func TestFactoryCLIGPUAutoLeavesGPUEnabled(t *testing.T) {
+	modelDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(modelDir, "ggml-base.en.bin"), []byte("fake-model"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{Engine: "cli", Model: "base.en", ModelDir: modelDir, GPU: "auto"}
+
+	transcriber, err := Factory(cfg, slog.Default())
+	if err != nil {
+		t.Fatalf("Factory failed: %v", err)
+	}
+	if transcriber.(*WhisperCli).NoGPU {
+		t.Error("NoGPU = true with gpu = \"auto\", want false")
+	}
+}
+
+func TestFactoryServerGPUOffReachesSupervisor(t *testing.T) {
+	modelDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(modelDir, "ggml-base.en.bin"), []byte("fake-model"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{
+		Engine:       "server",
+		Model:        "base.en",
+		ModelDir:     modelDir,
+		ServerSocket: filepath.Join(t.TempDir(), "server.sock"),
+		GPU:          "off",
+	}
+
+	transcriber, err := Factory(cfg, slog.Default())
+	if err != nil {
+		t.Fatalf("Factory failed: %v", err)
+	}
+	st := transcriber.(*ServerTranscriber)
+	if st.Supervisor == nil {
+		t.Fatal("expected a supervisor for a unix-socket server")
+	}
+	if !st.Supervisor.cfg.NoGPU {
+		t.Error("SupervisorConfig.NoGPU = false with gpu = \"off\", want true")
 	}
 }
 
@@ -71,7 +134,6 @@ func TestFactoryServerUnixSocket(t *testing.T) {
 		Model:        "base.en",
 		ModelDir:     modelDir,
 		ServerSocket: sockPath,
-		GPULayers:    8,
 		Threads:      2,
 	}
 
@@ -117,16 +179,55 @@ func TestFactoryServerHTTP(t *testing.T) {
 	}
 }
 
-func TestFactorySherpa(t *testing.T) {
-	cfg := config.Config{
-		Engine: "sherpa",
+// mavor is a cgo program and the in-process sherpa-onnx recognizers are always
+// linked in, so the package-level builders the transcriber reaches for are set
+// by the time any test runs. Before the build collapsed to cgo these were nil
+// in the default build and a stub returned "not compiled in"; that variant no
+// longer exists, and this test is what says so.
+func TestSherpaRecognizersAreAlwaysLinkedIn(t *testing.T) {
+	if DefaultOfflineRecognizerBuilder == nil {
+		t.Error("DefaultOfflineRecognizerBuilder = nil, want the cgo builder")
 	}
-	_, err := Factory(cfg, slog.Default())
+	if DefaultOnlineRecognizerBuilder == nil {
+		t.Error("DefaultOnlineRecognizerBuilder = nil, want the cgo builder")
+	}
+}
+
+// A sherpa model directory holding a transducer's three ONNX files plus its
+// tokens is enough to construct the transcriber: the model is opened by
+// Start, not by Factory, so this exercises dispatch without an ONNX file.
+func TestFactorySherpaBuildsTranscriber(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+
+	modelDir := t.TempDir()
+	for _, name := range []string{"encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"} {
+		if err := os.WriteFile(filepath.Join(modelDir, name), []byte("stub"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	transcriber, err := Factory(config.Config{Engine: "sherpa", Model: modelDir}, slog.Default())
+	if err != nil {
+		t.Fatalf("Factory() error = %v, want a sherpa transcriber", err)
+	}
+	if _, ok := transcriber.(*SherpaTranscriber); !ok {
+		t.Fatalf("Factory() = %T, want *SherpaTranscriber", transcriber)
+	}
+}
+
+// The failure a user can still hit is a model that is not there. It must be
+// reported as a missing model, never as a missing build variant.
+func TestFactorySherpaMissingModelBlamesTheModel(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+
+	_, err := Factory(config.Config{Engine: "sherpa", Model: "no-such-model", ModelDir: t.TempDir()}, slog.Default())
 	if err == nil {
-		t.Fatal("expected error for sherpa engine in default build")
+		t.Fatal("Factory() = nil error for a sherpa model that is not on disk, want an error")
 	}
-	if !strings.Contains(err.Error(), "sherpa") {
-		t.Fatalf("error %q should mention sherpa", err)
+	for _, banned := range []string{"not supported in this build", "not compiled in", "-tags sherpa"} {
+		if strings.Contains(err.Error(), banned) {
+			t.Errorf("error %q still describes the deleted pure-Go build (%q)", err, banned)
+		}
 	}
 }
 

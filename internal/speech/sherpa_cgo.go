@@ -1,5 +1,3 @@
-//go:build sherpa
-
 package speech
 
 import (

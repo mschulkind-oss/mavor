@@ -40,7 +40,8 @@ duck_audio = true
 # engine = "server"           # "server", "cli", or "sherpa"
 # model = "base.en"           # Whisper GGML model name
 # threads = 4                 # CPU inference threads
-# gpu_layers = 0              # Set >0 to offload layers to Vulkan/ROCm (-ngl)
+# gpu = "auto"                # "auto" or "off". whisper only; whisper.cpp uses
+#                           # whatever GPU backend its build loaded. "off" passes -ng.
 # streaming_strategy = "auto" # "auto", "vad_batch" (Whisper pauses), or "transducer" (Parakeet)
 # silence_threshold_ms = 450  # Pause duration to trigger VAD batch slice
 # min_phrase_ms = 600         # Minimum speech duration before slicing

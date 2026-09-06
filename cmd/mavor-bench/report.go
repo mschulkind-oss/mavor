@@ -401,8 +401,8 @@ func writeFailures(b *strings.Builder, r *report) {
 func writeMethod(b *strings.Builder, r *report) {
 	b.WriteString("## How to rerun this\n\n")
 	b.WriteString("```console\n")
-	b.WriteString("$ just bench            # whisper on CPU, plus GPU if a Vulkan build is present\n")
-	b.WriteString("$ just bench-sherpa     # adds the in-process sherpa engines (needs cgo)\n")
+	b.WriteString("$ just bench            # every backend: whisper on CPU, the in-process\n")
+	b.WriteString("                        # sherpa engines, and GPU if a Vulkan build is present\n")
 	b.WriteString("$ just bench-gpu-build  # build the Vulkan whisper.cpp the GPU column needs\n")
 	b.WriteString("```\n\n")
 	b.WriteString("Method, so a rerun elsewhere means the same thing:\n\n")

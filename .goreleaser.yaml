@@ -8,6 +8,16 @@ before:
   hooks:
     - go mod tidy
     - go vet ./...
+    # mavor is a cgo program that links sherpa-onnx, and the two shared
+    # objects that entails are vendored inside the Go module cache rather than
+    # in this repo. Stage them where the archive can pick them up.
+    #
+    # dist/sherpa-lib rather than dist/goreleaser/lib on purpose: `--clean`
+    # wipes the configured `dist` directory and `before` hooks run ahead of
+    # that, so anything staged inside it would be gone before the archive is
+    # built. The script is shared with `just build`, so the release and a
+    # local build ship the same set of libraries.
+    - bash scripts/sherpa-libs.sh dist/sherpa-lib
 
 builds:
   - id: mavor
@@ -18,22 +28,47 @@ builds:
       - -X main.Version={{.Tag}}
       - -X main.Commit={{.ShortCommit}}
       - -X main.BuildTime={{.Date}}
+      # Without this the linker records an absolute path into the *runner's*
+      # Go module cache as the RUNPATH, and the released binary starts on no
+      # machine but the one that built it. $ORIGIN covers the flat archive
+      # layout (binary and shared objects side by side); $ORIGIN/../lib covers
+      # the split layout the Homebrew formula installs.
+      - -r $ORIGIN:$ORIGIN/../lib
     env:
-      - CGO_ENABLED=0
+      # There is one build and it is cgo: the in-process sherpa-onnx
+      # recognizers are always linked in. A C toolchain is a build
+      # requirement, which ubuntu-latest satisfies with its preinstalled gcc.
+      - CGO_ENABLED=1
     # Linux only because that is what has a backend today: the overlay's
     # shared-memory buffers are memfd, so a darwin build does not currently
     # compile. Widen this list when another platform's overlay and emitter
     # exist — nothing else here is Linux-specific.
     goos:
       - linux
+    # amd64 only, and that is an unanswered question rather than a decision.
+    #
+    # cgo cannot cross-compile to arm64 from the amd64 runner: `go build` with
+    # GOARCH=arm64 fails in runtime/cgo with `gcc_arm64.S:30: Error: no such
+    # instruction`. arm64 needs either a native arm64 runner or an
+    # aarch64-linux-gnu cross toolchain installed in the release workflow, and
+    # nobody has chosen which. Until then the arch is absent from releases —
+    # the PyPI wrapper says so, and an arm64 user builds from source.
     goarch:
       - amd64
-      - arm64
 
 archives:
   - id: default
     formats: ["tar.gz"]
     name_template: "mavor_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # The distribution unit is a directory, not a file: `mavor` does not start
+    # without these two beside it. They land at the archive root, next to the
+    # binary, which is the layout the $ORIGIN RUNPATH above expects.
+    files:
+      - src: dist/sherpa-lib/*.so
+        dst: "."
+        strip_parent: true
+        info:
+          mode: 0644
 
 checksum:
   name_template: "checksums.txt"
@@ -66,8 +101,13 @@ brews:
       - name: whisper-cpp
       - name: wl-clipboard
       - name: wtype
+    # Not `bin.install "mavor"` alone: the binary is dynamically linked
+    # against sherpa-onnx and would abort at startup with the shared objects
+    # left in the Cellar's root. lib.install puts them at <prefix>/lib, which
+    # is exactly the $ORIGIN/../lib entry in the binary's RUNPATH.
     install: |
       bin.install "mavor"
+      lib.install "libonnxruntime.so", "libsherpa-onnx-c-api.so"
     caveats: |
       mavor needs a Wayland compositor implementing wlr-layer-shell and
       virtual-keyboard-v1: sway, Hyprland, river, Wayfire, niri, labwc. It

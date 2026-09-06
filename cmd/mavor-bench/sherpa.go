@@ -159,11 +159,3 @@ func pcm16LE(samples []float32) []byte {
 func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
-
-// sherpaAvailable reports whether this binary was built with the sherpa tag.
-// Without it the recognizer builder is nil and every sherpa row would fail
-// identically; the report says "not built in" once instead of printing
-// twelve indistinguishable errors.
-func sherpaAvailable() bool {
-	return speech.DefaultOfflineRecognizerBuilder != nil
-}

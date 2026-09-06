@@ -93,11 +93,19 @@ go install github.com/mschulkind-oss/mavor/cmd/mavor@latest
 
 Each tagged release publishes a `linux/amd64` tarball and a `checksums.txt`
 on the [releases page](https://github.com/mschulkind-oss/mavor/releases).
+The tarball holds three files, and `mavor` needs the other two: it is
+dynamically linked against sherpa-onnx. Keep them together — either beside the
+binary, or one directory up in `lib/`, which is where the binary looks.
 
 ```bash
 tar -xzf mavor_v0.1.0_linux_amd64.tar.gz
 install -m 0755 mavor ~/.local/bin/mavor
+install -m 0644 -D -t ~/.local/lib lib*.so     # ~/.local/bin/../lib
 ```
+
+`linux/arm64` is not published yet: mavor links sherpa-onnx through cgo, which
+the amd64 release builder cannot cross-compile. Build from source on the
+machine instead.
 
 ### From source
 
@@ -105,7 +113,7 @@ install -m 0755 mavor ~/.local/bin/mavor
 git clone https://github.com/mschulkind-oss/mavor
 cd mavor
 mise install                 # gets the right toolchain
-just install                 # builds and copies binary to ~/.local/bin/mavor
+just install                 # binary to ~/.local/bin, libraries to ~/.local/lib
 
 # Or deploy binary + install systemd user service in one step:
 just deploy
@@ -293,15 +301,15 @@ in the build depends on it.
 | `just test-int` | integration tests: spawns headless sway + waybar + daemon     |
 | `just test-e2e` | e2e: real whisper transcription with the `tiny.en` model      |
 | `just storybook`| runs UI storybook test and produces HTML screenshot report    |
-| `just install`  | builds and installs binary to `~/.local/bin/mavor`            |
+| `just install`  | installs to `~/.local/bin/mavor`, libraries to `~/.local/lib` |
 | `just deploy`   | installs binary and sets up systemd user service              |
 | `just doctor`   | runs environment health check (`mavor doctor`)                |
-| `just build`    | compiles binary at `bin/mavor`                                |
+| `just build`    | compiles `bin/mavor` plus the shared objects it needs         |
 | `just dev`      | runs the daemon against your live Wayland session, verbose    |
 
 ### Test layout
 
-- **Unit tests** (`go test ./...`): pure Go, mocked Recorder/Transcriber/
+- **Unit tests** (`go test ./...`): mocked Recorder/Transcriber/
   Overlay/Output. Fast, run under `-race`.
 - **Integration tests** (`go test -tags=integration ./test/integration/...`):
   spin up a real headless wlroots sway, optionally waybar, the real daemon
@@ -330,14 +338,17 @@ internal/daemon/             # wires everything; main.go is a thin caller
 test/integration/            # headless sway + audio-stack test harness
 ```
 
-### Build tags
+### The build is cgo
 
-The default build is pure Go. `CGO_ENABLED=0` works, cross-compilation works,
-and no system development headers are needed to build it.
+There is one build and it links the in-process sherpa-onnx recognizers, so a C
+compiler is required, `CGO_ENABLED=0` does not work, and cross-compiling needs
+a cross toolchain. The two shared objects sherpa-onnx brings with it are
+vendored in the Go module cache and copied next to the binary by `just build`;
+the binary is linked with an `$ORIGIN` rpath so it finds them beside itself or
+in a sibling `lib/`. `bin/` is the artifact, not `bin/mavor`.
 
-- `sherpa`: link the in-process sherpa-onnx recognizers. This is the only
-  variant that needs cgo, and therefore the only one that cannot be
-  cross-compiled.
+The remaining build tags are test-only:
+
 - `integration`: build the headless-sway test harness.
 - `e2e`: opt in to tests that exercise real whisper-cli + a downloaded model.
 
@@ -355,7 +366,8 @@ much of the heavy lifting they do:
   [sherpa-onnx-go](https://github.com/k2-fsa/sherpa-onnx-go) — the in-process
   `sherpa` engine, including the streaming transducers.
   ([ONNX Runtime](https://github.com/microsoft/onnxruntime) rides along inside
-  the platform modules; a `sherpa`-tagged build links roughly 90 MB of it.)
+  the platform modules, and is the 26 MB `libonnxruntime.so` that every mavor
+  release ships beside the binary.)
 - [OpenAI Whisper](https://github.com/openai/whisper),
   [NVIDIA NeMo](https://github.com/NVIDIA/NeMo) (Parakeet),
   [k2-fsa/icefall](https://github.com/k2-fsa/icefall) (Zipformer),

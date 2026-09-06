@@ -1,6 +1,7 @@
 # Build artifacts
 /bin/
 /dist/goreleaser/
+/dist/sherpa-lib/
 /mavor
 /mavor-bench
 *.test

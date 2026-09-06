@@ -18,6 +18,19 @@ commit := `git describe --always --dirty --match 'v[0-9]*' 2>/dev/null || echo u
 build_time := `date -u +%Y-%m-%dT%H:%M:%SZ`
 ldflags := "-X main.Commit=" + commit + " -X main.BuildTime=" + build_time
 
+# RUNPATH baked into the binary. mavor links sherpa-onnx through cgo, and the
+# two shared objects that comes with are vendored in the Go module cache — so
+# without this the linker records an absolute path into *this machine's*
+# ~/go/pkg/mod and the binary runs on no other machine.
+#
+# Two entries, because there are two layouts the binary is shipped in:
+#   $ORIGIN        — flat: bin/, the release tarball, the PyPI wrapper's cache
+#   $ORIGIN/../lib — split: <prefix>/bin + <prefix>/lib, which is what
+#                    `just install` and the Homebrew formula produce
+# The shared objects carry their own $ORIGIN RPATH, so once they sit beside
+# each other libsherpa-onnx-c-api.so finds libonnxruntime.so on its own.
+rpath := "$ORIGIN:$ORIGIN/../lib"
+
 # Show available recipes.
 default:
     @just --list
@@ -61,23 +74,33 @@ done: check-ci
 doctor:
     @go run ./cmd/mavor doctor
 
-# Build the static, pure-Go binary into ./bin/mavor.
+# There is one build and it is cgo: the in-process sherpa-onnx recognizers are
+# always linked in, so a C toolchain is a build requirement and
+# cross-compilation needs a cross toolchain. `bin/` is the distribution unit,
+# not `bin/mavor` — the binary alone will not start.
+#
+# Build mavor and the shared objects it needs into ./bin.
 build: (_ensure-model default_model)
-    @mkdir -p bin
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p bin
     go mod download
-    CGO_ENABLED=0 go build -ldflags '{{ldflags}}' -v -o bin/mavor ./cmd/mavor
+    go build -ldflags '{{ldflags}} -r {{rpath}}' -v -o bin/mavor ./cmd/mavor
+    ./scripts/sherpa-libs.sh bin
+    echo "built bin/mavor and its sherpa-onnx shared objects"
 
-# Build with the in-process sherpa-onnx engines linked in (needs cgo).
-build-sherpa: (_ensure-model default_model)
-    @mkdir -p bin
-    go build -tags sherpa -ldflags '{{ldflags}}' -v -o bin/mavor ./cmd/mavor
-    @echo "Built mavor with sherpa-onnx (cgo) at bin/mavor"
-
-# Install the binary to ~/.local/bin/mavor.
+# The split layout is the second $ORIGIN entry in {{rpath}}: the binary at
+# ~/.local/bin/mavor looks in ~/.local/bin first and then ~/.local/lib, so the
+# 31 MB of ONNX Runtime does not land in a directory that is on $PATH.
+#
+# Install mavor to ~/.local/bin and its shared objects to ~/.local/lib.
 install: build
-    @mkdir -p "${HOME}/.local/bin"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "${HOME}/.local/bin" "${HOME}/.local/lib"
     install -m 0755 bin/mavor "${HOME}/.local/bin/mavor"
-    @echo "Installed mavor to ${HOME}/.local/bin/mavor"
+    ./scripts/sherpa-libs.sh "${HOME}/.local/lib"
+    echo "Installed mavor to ${HOME}/.local/bin/mavor (libraries in ${HOME}/.local/lib)"
 
 # Deploy binary and install/restart systemd user service.
 deploy: install
@@ -104,8 +127,9 @@ storybook:
     @echo "UI Storybook Report: test/reports/ui-storybook.html"
 
 # Benchmark every installed model: speed, peak memory, accuracy, on every
-# backend this machine can run, plus the two setting sweeps — thread scaling
-# and warm whisper-server versus cold CLI. Writes
+# backend this machine can run — whisper.cpp and the in-process sherpa-onnx
+# engines, which are always linked in — plus the two setting sweeps: thread
+# scaling and warm whisper-server versus cold CLI. Writes
 # docs/reports/model-benchmarks.md and test/reports/benchmarks/latest.json.
 #
 # The sweeps run over -sweep-models at -thread-sweep thread counts; pass
@@ -125,19 +149,6 @@ bench *args: build
         echo "no Vulkan whisper build at {{bench_gpu_bin}} — run 'just bench-gpu-build' for the GPU column" >&2
     fi
     go run ./cmd/mavor-bench "${gpu_flag[@]}" {{args}}
-
-# The same sweep with the in-process sherpa-onnx engines linked in. Needs cgo,
-# so it cannot cross-compile and is a separate recipe rather than the default.
-#
-# Benchmark every model including the sherpa engines (needs cgo).
-bench-sherpa *args: build
-    #!/usr/bin/env bash
-    set -euo pipefail
-    gpu_flag=()
-    if [ -x "{{bench_gpu_bin}}/whisper-cli" ]; then
-        gpu_flag=(-whisper-gpu "{{bench_gpu_bin}}/whisper-cli")
-    fi
-    CGO_ENABLED=1 go run -tags sherpa ./cmd/mavor-bench "${gpu_flag[@]}" {{args}}
 
 # Skips what is already cached; stops if the disk drops below 6 GB free.
 #
@@ -199,8 +210,10 @@ release version:
     # the same release. Whichever loses fails with "a release with the same tag
     # name already exists" — which is how v0.1.0 published carrying no assets.
     #
-    # Nothing generated has to ride in the tag: mavor is pure Go with no
-    # embedded bundle, so the tag is plain HEAD and goreleaser builds from it.
+    # Nothing generated has to ride in the tag: there is no embedded bundle,
+    # so the tag is plain HEAD and goreleaser builds from it. The shared
+    # objects the cgo build needs come out of the Go module cache at release
+    # time, not out of the repo.
     if [ -n "$(git status --porcelain)" ]; then
         echo "working tree is dirty — commit or stash first" >&2
         exit 1

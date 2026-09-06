@@ -39,7 +39,7 @@ Set it in `~/.config/mavor/config.toml`:
 ```toml
 model = "base.en"
 
-# Or a sherpa model, which needs a binary built with `just build-sherpa`:
+# Or a sherpa model — the in-process engines are always linked in:
 # engine = "sherpa"
 # sherpa_model = "canary-180m"
 ```
@@ -141,8 +141,8 @@ configuration in which it is the right pick.
 
 ## Sherpa models
 
-These need a binary built with `just build-sherpa` (it requires cgo, so it
-cannot be cross-compiled). They run in-process rather than shelling out.
+These run in-process rather than shelling out, and are linked into every
+build.
 
 | Model | Languages | Time | RAM | Formatting | Notes |
 |---|---|---:|---:|---|---|
@@ -195,10 +195,9 @@ tables with your numbers.
 ```console
 $ just bench-models     # download the catalog (~16 GB)
 $ just bench-gpu-build  # build the Vulkan whisper.cpp, for the GPU column
-$ just bench            # whisper models
-$ just bench-sherpa     # adds the in-process sherpa engines
+$ just bench            # every backend: whisper and the sherpa engines
 ```
 
-Both write [`model-benchmarks.md`](./reports/model-benchmarks.md) and the raw
+It writes [`model-benchmarks.md`](./reports/model-benchmarks.md) and the raw
 results beside it. A model absent from your cache is reported as absent
 rather than silently skipped, and a backend that cannot run says why.

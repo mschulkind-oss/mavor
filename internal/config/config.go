@@ -63,12 +63,17 @@ type Config struct {
 	// Socket is the daemon's IPC socket path.
 	Socket string `toml:"socket"`
 
-	// GPULayers is the number of model layers to offload to GPU via Vulkan/ROCm (-ngl).
-	// 0 means CPU-only.
-	GPULayers int `toml:"gpu_layers"`
-
-	// Device specifies the compute device: "auto", "vulkan", "rocm", or "cpu".
-	Device string `toml:"device"`
+	// GPU controls whether whisper.cpp may use a GPU: "auto" (default) or
+	// "off". There is no layer count to set — whisper.cpp uses whatever GPU
+	// backend its build loaded, for the whole model or not at all, and the
+	// only control it offers is -ng/--no-gpu, which "off" maps to. An empty
+	// value means "auto".
+	//
+	// This applies to whisper models only. sherpa models run on the CPU
+	// whatever this says, because the ONNX Runtime vendored by the Go binding
+	// is a CPU-only build. `mavor doctor` reports which backend actually
+	// loaded, which is the only reliable answer.
+	GPU string `toml:"gpu"`
 
 	// Threads is the number of CPU threads to use for inference (-t). Defaults to 4.
 	Threads int `toml:"threads"`
@@ -161,8 +166,7 @@ func Default() Config {
 		Model:                "base.en",
 		ModelDir:             defaultModelDir(),
 		Socket:               defaultSocket(),
-		GPULayers:            0,
-		Device:               "auto",
+		GPU:                  "auto",
 		Threads:              4,
 		Engine:               "cli",
 		LogFile:              defaultLogFile(),
@@ -201,6 +205,9 @@ func (c *Config) Resolve() {
 	if c.MinPhraseMS <= 0 {
 		c.MinPhraseMS = 600
 	}
+	if c.GPU == "" {
+		c.GPU = "auto"
+	}
 
 	// Apply Preset to Model if model was not explicitly overridden
 	if c.Model == "" || c.Model == "base.en" {
@@ -213,6 +220,13 @@ func (c *Config) Resolve() {
 			c.Model = "base.en"
 		}
 	}
+}
+
+// GPUOff reports whether the configuration forbids GPU use. Anything other
+// than "off" — including the empty value a Config literal starts with — means
+// "auto", so a caller that never ran Resolve still gets the default.
+func (c Config) GPUOff() bool {
+	return strings.EqualFold(strings.TrimSpace(c.GPU), "off")
 }
 
 // Path returns the canonical config file location. Honors XDG_CONFIG_HOME.

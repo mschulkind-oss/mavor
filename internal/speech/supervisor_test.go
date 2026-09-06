@@ -284,7 +284,6 @@ func TestDefaultServerCommandArgs(t *testing.T) {
 		BinaryPath:   "/usr/bin/whisper-server",
 		ModelPath:    "/models/base.bin",
 		ServerSocket: "http://127.0.0.1:9090",
-		GPULayers:    16,
 		Threads:      6,
 	}
 	cmd := DefaultServerCommand(context.Background(), cfg)
@@ -293,9 +292,6 @@ func TestDefaultServerCommandArgs(t *testing.T) {
 	if !strings.Contains(args, "-m /models/base.bin") {
 		t.Errorf("expected -m in args: %s", args)
 	}
-	if !strings.Contains(args, "-ngl 16") {
-		t.Errorf("expected -ngl 16 in args: %s", args)
-	}
 	if !strings.Contains(args, "-t 6") {
 		t.Errorf("expected -t 6 in args: %s", args)
 	}
@@ -303,6 +299,51 @@ func TestDefaultServerCommandArgs(t *testing.T) {
 	// before it binds anything.
 	if strings.Contains(args, "--socket") {
 		t.Errorf("argv passes --socket, which the server rejects: %s", args)
+	}
+}
+
+// TestServerCommandNeverPassesNGL is the server-side half of the -ngl
+// regression: whisper-server rejects the flag exactly as whisper-cli does, so
+// no SupervisorConfig may produce it.
+func TestServerCommandNeverPassesNGL(t *testing.T) {
+	for _, noGPU := range []bool{false, true} {
+		cfg := SupervisorConfig{
+			BinaryPath:   "/usr/bin/whisper-server",
+			ModelPath:    "/models/base.bin",
+			ServerSocket: "http://127.0.0.1:9090",
+			Threads:      6,
+			NoGPU:        noGPU,
+		}
+		args := strings.Join(DefaultServerCommand(context.Background(), cfg).Args, " ")
+		if strings.Contains(args, "-ngl") {
+			t.Fatalf("whisper-server argv contains -ngl, which the binary rejects (no_gpu=%v): %s", noGPU, args)
+		}
+	}
+}
+
+func TestServerCommandGPUOffPassesNG(t *testing.T) {
+	cfg := SupervisorConfig{
+		BinaryPath:   "/usr/bin/whisper-server",
+		ModelPath:    "/models/base.bin",
+		ServerSocket: "http://127.0.0.1:9090",
+		NoGPU:        true,
+	}
+	args := strings.Join(DefaultServerCommand(context.Background(), cfg).Args, " ")
+	if !strings.Contains(args, "-ng") {
+		t.Errorf("NoGPU should pass -ng, got: %s", args)
+	}
+}
+
+func TestServerCommandGPUAutoOmitsNG(t *testing.T) {
+	cfg := SupervisorConfig{
+		BinaryPath:   "/usr/bin/whisper-server",
+		ModelPath:    "/models/base.bin",
+		ServerSocket: "http://127.0.0.1:9090",
+	}
+	for _, a := range DefaultServerCommand(context.Background(), cfg).Args {
+		if a == "-ng" || a == "--no-gpu" {
+			t.Errorf("the default must not disable the GPU, got argv: %v", a)
+		}
 	}
 }
 

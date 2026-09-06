@@ -29,8 +29,11 @@ territory in depth — engines, streaming, ducking, every config key.
 go install github.com/mschulkind-oss/mavor/cmd/mavor@latest
 ```
 
-The default build is pure Go, so this needs no system headers. Tagged
-releases also publish a `linux/amd64` tarball — see
+mavor links sherpa-onnx through cgo, so this needs a C compiler on the
+machine — but nothing else: the shared objects come out of the Go module
+cache, and `go install` leaves the binary pointing at them there. Tagged
+releases also publish a `linux/amd64` tarball, which carries those shared
+objects alongside the binary — see
 [Install in the README](../README.md#install) for that route and for
 building from source with `just install`.
 

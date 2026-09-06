@@ -16,8 +16,8 @@
 //
 //	mavor-bench [flags]
 //
-//	go run ./cmd/mavor-bench                 # whisper only, CPU
-//	go run -tags sherpa ./cmd/mavor-bench    # adds the in-process sherpa engines
+//	go run ./cmd/mavor-bench                 # every backend this machine has
+//	go run ./cmd/mavor-bench -no-sherpa      # whisper only
 package main
 
 import (
@@ -211,13 +211,13 @@ func run() error {
 		}
 	}
 
+	// The in-process sherpa engines are always linked in — mavor is a cgo
+	// program with no pure-Go variant — so the only way this column goes
+	// missing is someone asking for it to.
 	sherpa := sherpaRunner{modelDir: cat.ModelDir, threads: o.threads, provider: "cpu"}
-	sherpaOK := sherpaAvailable() && !o.skipSherpa
-	switch {
-	case o.skipSherpa:
+	sherpaOK := !o.skipSherpa
+	if o.skipSherpa {
 		report.Skipped = append(report.Skipped, skipNote{"sherpa", "disabled with -no-sherpa"})
-	case !sherpaAvailable():
-		report.Skipped = append(report.Skipped, skipNote{"sherpa", "this binary was built without the `sherpa` build tag; rebuild with `go run -tags sherpa ./cmd/mavor-bench`"})
 	}
 	// sherpa-onnx has no GPU column at all: the ONNX Runtime vendored by the
 	// Go binding carries no execution providers, so requesting one falls back

@@ -1,10 +1,8 @@
-//go:build !sherpa
-
 package main
 
-// defaultBuildTags describes the variant of the binary, which now turns only
-// on whether the in-process sherpa engine is compiled in. The overlay is
-// always present and always pure Go.
+// defaultBuildTags describes the variant of the binary. There is only one:
+// mavor is a cgo program that links the in-process sherpa-onnx ONNX
+// recognizers, and the overlay is pure Go regardless.
 func defaultBuildTags() string {
-	return "wayland,layer-shell"
+	return "wayland,layer-shell,cgo"
 }

@@ -186,13 +186,15 @@ type SherpaStreamRecognizer interface {
 // RecognizerBuilderFunc builds a SherpaRecognizer from configuration.
 type RecognizerBuilderFunc func(cfg config.Config, sc SherpaOfflineConfig, logger *slog.Logger) (SherpaRecognizer, error)
 
-// DefaultOfflineRecognizerBuilder is initialized by CGO build or stub.
+// DefaultOfflineRecognizerBuilder is set by sherpa_cgo.go's init, which is
+// unconditional: mavor has one build and it links sherpa-onnx. A test may
+// still swap it for a fake.
 var DefaultOfflineRecognizerBuilder RecognizerBuilderFunc
 
 // OnlineRecognizerBuilderFunc builds a streaming SherpaRecognizer.
 type OnlineRecognizerBuilderFunc func(cfg config.Config, sc SherpaOnlineConfig, logger *slog.Logger) (SherpaRecognizer, error)
 
-// DefaultOnlineRecognizerBuilder is initialized by CGO build or stub.
+// DefaultOnlineRecognizerBuilder is set the same way, and for the same reason.
 //
 // It was written, and then nothing called it: every model went through the
 // offline builder, so no streaming model had ever been loaded and the
@@ -332,7 +334,7 @@ func (s *SherpaTranscriber) Start(ctx context.Context) error {
 		switch {
 		case s.Streaming:
 			if s.OnlineRecognizerBuilder == nil {
-				return fmt.Errorf("speech: sherpa streaming recognizer not initialized (engine requires -tags sherpa or injected recognizer)")
+				return fmt.Errorf("speech: sherpa streaming recognizer not initialized (no injected recognizer, and the linked-in builder was cleared)")
 			}
 			rec, err := s.OnlineRecognizerBuilder(s.Config, s.SherpaOnlineConfig, s.Logger)
 			if err != nil {
@@ -341,7 +343,7 @@ func (s *SherpaTranscriber) Start(ctx context.Context) error {
 			s.Recognizer = rec
 		default:
 			if s.RecognizerBuilder == nil {
-				return fmt.Errorf("speech: sherpa recognizer not initialized (engine requires -tags sherpa or injected recognizer)")
+				return fmt.Errorf("speech: sherpa recognizer not initialized (no injected recognizer, and the linked-in builder was cleared)")
 			}
 			rec, err := s.RecognizerBuilder(s.Config, s.SherpaConfig, s.Logger)
 			if err != nil {

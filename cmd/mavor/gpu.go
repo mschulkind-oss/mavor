@@ -1,7 +1,6 @@
 package main
 
 import (
-	"cmp"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,10 +13,12 @@ import (
 )
 
 // GPU acceleration in mavor is a property of the build you are running, not of
-// mavor itself, and it fails quietly: whisper.cpp given -ngl on a CPU-only build
-// transcribes on the CPU without a word, and ONNX Runtime falls back the same
-// way when asked for a provider it has no library for. The checks here exist
-// to turn that silence into a doctor line.
+// mavor itself, and it fails quietly: whisper.cpp uses a GPU when its build
+// loaded a GPU backend and silently runs on the CPU when it did not, and ONNX
+// Runtime falls back the same way when asked for a provider it has no library
+// for. Nothing in the configuration can turn acceleration on — the only knob
+// is `gpu = "off"`, which turns it off. So the checks here exist to report
+// what actually loaded rather than to advise a setting.
 
 // gpuLibraryMarkers maps a backend name to the shared libraries a whisper.cpp
 // build links against when it is compiled with that backend.
@@ -30,7 +31,8 @@ var gpuLibraryMarkers = map[string][]string{
 
 // detectGPUBackends reports which GPU backends a binary is linked against,
 // given `ldd` output for it. A whisper.cpp build compiled without GPU support
-// links none of them, which is exactly the case that makes -ngl a no-op.
+// links none of them, which is exactly the case where transcription runs on
+// the CPU whatever the configuration says.
 func detectGPUBackends(ldd string) []string {
 	var found []string
 	for backend, markers := range gpuLibraryMarkers {
@@ -55,7 +57,7 @@ var cpuBackends = map[string]bool{"cpu": true, "blas": true}
 // This is the authoritative signal. Since ggml moved to dynamically loaded
 // backends, a whisper.cpp package can link libvulkan.so and still ship no
 // libggml-vulkan.so — it announces only the CPU backend and transcribes on the
-// CPU, whatever -ngl is set to. Linkage alone reports that build as GPU-capable.
+// CPU. Linkage alone reports that build as GPU-capable.
 func parseLoadedBackends(out string) []string {
 	var found []string
 	for _, line := range strings.Split(out, "\n") {
@@ -136,60 +138,61 @@ func checkGPU() (bool, string) {
 	return gpuReport(cfg, whisperGPUBackends(), gpuDevices())
 }
 
-// gpuReport turns the configured engine, the backends the binary is linked
-// against, and the devices present into a single doctor line. It fails only
-// when the configuration asks for acceleration that cannot happen — having no
-// GPU is a normal setup, not an error.
+// gpuReport turns the configured engine, the backends whisper.cpp actually
+// loaded, and the devices present into a single doctor line.
+//
+// It reports; it does not advise a setting. whisper.cpp offers no way to ask
+// for a GPU — it uses one when its build has one — so the only thing a user
+// can do here is install a build with a GPU backend, and the only thing the
+// config can say is `gpu = "off"`. Having no GPU is a normal setup, so the
+// only failure is a build that loaded a backend with no device behind it.
 func gpuReport(cfg config.Config, backends, devices []string) (bool, string) {
 	if cfg.Engine == "sherpa" {
-		return sherpaGPUReport(cfg, devices)
+		return sherpaGPUReport(devices)
+	}
+
+	if cfg.GPUOff() {
+		return true, fmt.Sprintf(
+			"disabled by config (gpu = \"off\" passes -ng; whisper-cli loaded %s) — remove the key to use whatever this build has",
+			describeBackends(backends))
 	}
 
 	switch {
-	case cfg.GPULayers > 0 && len(backends) == 0:
-		return false, fmt.Sprintf(
-			"gpu_layers = %d but whisper-cli loaded no GPU backend — it will transcribe on the CPU "+
-				"(fix: set gpu_layers = 0, or install a whisper.cpp built with -DGGML_VULKAN=ON)", cfg.GPULayers)
+	case len(backends) == 0:
+		return true, "CPU only (whisper-cli loaded no GPU backend — the stock build ships CPU backends only; " +
+			"install a whisper.cpp built with -DGGML_VULKAN=ON for acceleration)"
 
-	case cfg.GPULayers > 0 && len(devices) == 0:
+	case len(devices) == 0:
 		return false, fmt.Sprintf(
-			"gpu_layers = %d and whisper-cli loaded the %s backend, but no GPU device is visible "+
+			"whisper-cli loaded the %s backend but no GPU device is visible "+
 				"(looked for /dev/dri/renderD* and /dev/nvidia*) — it will transcribe on the CPU",
-			cfg.GPULayers, strings.Join(backends, "+"))
-
-	case cfg.GPULayers > 0:
-		return true, fmt.Sprintf("%d layers offloaded via %s (%d device(s))",
-			cfg.GPULayers, strings.Join(backends, "+"), len(devices))
-
-	case len(backends) > 0 && len(devices) > 0:
-		return true, fmt.Sprintf("available via %s but unused — set gpu_layers in config.toml to offload",
 			strings.Join(backends, "+"))
 
 	default:
-		return true, "CPU only (whisper-cli loaded no GPU backend — the stock build ships CPU backends only)"
+		return true, fmt.Sprintf("%s backend loaded by whisper-cli, %d device(s) visible — used automatically",
+			strings.Join(backends, "+"), len(devices))
 	}
 }
 
-// onnxGPUProviders are the execution providers ONNX Runtime can actually be
-// built with. Vulkan is deliberately absent: ONNX Runtime has no Vulkan
-// execution provider, so configuring one can only ever fall back to CPU.
-var onnxGPUProviders = []string{"cuda", "coreml", "rocm", "tensorrt", "dml"}
-
-func sherpaGPUReport(cfg config.Config, devices []string) (bool, string) {
-	provider := cfg.SherpaProvider
-	if provider == "" || provider == "cpu" {
-		return true, fmt.Sprintf("CPU (sherpa_provider = %q; the ONNX Runtime bundled with the Go binding is a CPU-only build)",
-			cmp.Or(provider, "cpu"))
+// describeBackends names what whisper.cpp loaded, for a line that has to read
+// well whether or not there was anything to name.
+func describeBackends(backends []string) string {
+	if len(backends) == 0 {
+		return "no GPU backend anyway"
 	}
+	return "the " + strings.Join(backends, "+") + " backend"
+}
 
-	if !slices.Contains(onnxGPUProviders, provider) {
-		return false, fmt.Sprintf(
-			"sherpa_provider = %q is not an ONNX Runtime execution provider — it will fall back to CPU "+
-				"(valid: cpu, %s)", provider, strings.Join(onnxGPUProviders, ", "))
+// sherpaGPUReport states the one fact there is to state: this build cannot use
+// a GPU for sherpa models. The sherpa-onnx Go binding vendors a CPU-only
+// libonnxruntime.so with no execution-provider libraries beside it, and
+// sherpa-onnx answers a provider it cannot honor by logging "Fallback to cpu!"
+// and carrying on. See docs/design/configuration-surface.md §9.
+func sherpaGPUReport(devices []string) (bool, string) {
+	msg := "CPU (sherpa models run on the CPU in this build — the ONNX Runtime vendored by the " +
+		"sherpa-onnx Go binding is CPU-only and ships no execution-provider libraries)"
+	if len(devices) > 0 {
+		msg += fmt.Sprintf(" — %d GPU device(s) present but unusable from here", len(devices))
 	}
-
-	return false, fmt.Sprintf(
-		"sherpa_provider = %q, but the ONNX Runtime bundled with the sherpa-onnx Go binding ships no provider "+
-			"libraries and will fall back to CPU (%d GPU device(s) present; needs a runtime built against %s)",
-		provider, len(devices), provider)
+	return true, msg
 }

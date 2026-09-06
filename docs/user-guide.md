@@ -81,7 +81,6 @@ engine = "cli"     # Options: "cli" (default), "sherpa", or "server"
 | **Resident Memory** | **~0 MB** — freed after each dictation | 150 MB – 2.3 GB, held while the daemon runs | ~0 MB locally; the server holds it |
 | **Supported Models** | 11 Whisper GGML models | 13 sherpa models — NeMo, Zipformer, Moonshine, SenseVoice, Canary | Any Whisper / OpenAI-compatible model |
 | **Hotword Boosting** | No | Transducer models only | Engine dependent |
-| **Needs cgo** | No | **Yes** (`just build-sherpa`) | No |
 | **Best For** | Almost everyone — it is the default for good reason | Non-English, or watching words appear as you speak | Offloading inference to a LAN or GPU box |
 
 > [!NOTE]
@@ -114,8 +113,8 @@ engine = "cli"     # Options: "cli" (default), "sherpa", or "server"
 - **Trade-off:** holds weights in RAM — 457 MB for `canary-180m`, 1.56 GB for `parakeet-tdt-0.6b`, 150 MB for `zipformer-streaming`. And the streaming models are markedly less accurate than the batch ones: 9.1% word error rate against 1.8%.
 
 > [!NOTE]
-> The `sherpa` engine needs a binary built with `just build-sherpa`. It is the
-> one variant requiring cgo, so it cannot be cross-compiled. See
+> The `sherpa` engine is linked into every build — there is no separate cgo
+> variant to build any more. See
 > [`choosing-a-model.md`](./choosing-a-model.md) for which sherpa model to pick.
 
 #### 3. `engine = "server"` — Offloaded or Shared Inference
@@ -153,8 +152,10 @@ engine = "cli"     # Options: "cli" (default), "sherpa", or "server"
 
 - Go ≥ 1.26
 - `just` task runner
-- CGO compiler (`gcc` or `clang`)
-- No development headers. The default build is pure Go (`CGO_ENABLED=0`); only the optional `sherpa` build tag needs a C toolchain.
+- A C compiler (`gcc` or `clang`). This is not optional: mavor links the
+  in-process sherpa-onnx recognizers, so `CGO_ENABLED=0` does not build.
+- No development headers beyond that. sherpa-onnx's Go binding vendors its own
+  prebuilt shared objects; nothing has to be installed system-wide.
 
 ---
 
@@ -162,7 +163,9 @@ engine = "cli"     # Options: "cli" (default), "sherpa", or "server"
 
 ### Quick Install (`just install`)
 
-Builds the binary and installs it to `~/.local/bin/mavor`:
+Builds the binary, installs it to `~/.local/bin/mavor`, and puts the two
+sherpa-onnx shared objects it links against in `~/.local/lib` — the binary is
+linked to look there, and will not start without them:
 
 ```console
 $ git clone https://github.com/mschulkind-oss/mavor && cd mavor
@@ -180,15 +183,18 @@ $ just deploy
 
 ### Cross-compiling
 
-The default build is pure Go, so a binary for another architecture needs no
-toolchain beyond Go itself:
+Not without a cross toolchain. mavor is a cgo program, and `go build` for
+another architecture fails inside Go's own runtime rather than in mavor:
 
 ```console
-$ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/mavor-arm64 ./cmd/mavor
+$ GOOS=linux GOARCH=arm64 go build ./cmd/mavor
+# runtime/cgo
+gcc_arm64.S:30: Error: no such instruction: `stp x29,x30,[sp,'
 ```
 
-The `sherpa` build tag is the exception: it links the in-process ONNX
-recognizers through cgo and must be built on the target architecture.
+Build on the target architecture, or install an `aarch64-linux-gnu` cross
+toolchain and point `CC` at it. This is also why releases publish
+`linux/amd64` only.
 
 ---
 
@@ -457,17 +463,12 @@ parakeet  sherpa   429.4 MB  en         yes     ✓ 429.4 MB     parakeet-tdt
 punctuates and capitalises as well as `base.en`, in 457 MB, across English,
 Spanish, German and French.
 
-1. Build with cgo, which the sherpa engine requires:
-   ```console
-   $ just build-sherpa
-   ```
-
-2. Download the model:
+1. Download the model:
    ```console
    $ mavor models pull canary-180m
    ```
 
-3. Update `~/.config/mavor/config.toml`:
+2. Update `~/.config/mavor/config.toml`:
    ```toml
    engine = "sherpa"
    sherpa_model = "canary-180m"
@@ -476,7 +477,7 @@ Spanish, German and French.
    For streaming instead — words appearing as you speak, at a real cost in
    accuracy — use `sherpa_model = "zipformer-streaming"`.
 
-4. Restart the daemon:
+3. Restart the daemon:
    ```console
    $ mavor service restart    # or: pkill -f 'mavor daemon' && mavor daemon
    ```

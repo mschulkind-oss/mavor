@@ -37,32 +37,39 @@ type CommandFunc func(ctx context.Context, model, wavPath string) *exec.Cmd
 //
 // -otxt writes <wav>.txt; -nt suppresses timestamps; -np silences progress.
 func DefaultCommand(ctx context.Context, model, wavPath string) *exec.Cmd {
-	return DefaultCommandWithOpts(ctx, model, wavPath, 0, 0)
+	return DefaultCommandWithOpts(ctx, model, wavPath, 0, false)
 }
 
-// DefaultCommandWithOpts builds the whisper-cli invocation with optional GPU layer
-// offloading (-ngl) and CPU thread count (-t).
-func DefaultCommandWithOpts(ctx context.Context, model, wavPath string, gpuLayers, threads int) *exec.Cmd {
+// DefaultCommandWithOpts builds the whisper-cli invocation with a CPU thread
+// count (-t) and an optional GPU opt-out (-ng).
+//
+// There is no layer-offload flag to pass. whisper.cpp uses whatever GPU
+// backend its build loaded, all or nothing, and rejects -ngl outright:
+// `whisper-cli -ngl 99` exits with "error: unknown argument: -ngl". The only
+// GPU control it accepts is -ng/--no-gpu, which noGPU sets.
+func DefaultCommandWithOpts(ctx context.Context, model, wavPath string, threads int, noGPU bool) *exec.Cmd {
 	args := []string{
 		"-m", model,
 		"-f", wavPath,
 		"-otxt", "-nt", "-np",
 	}
-	if gpuLayers > 0 {
-		args = append(args, "-ngl", fmt.Sprint(gpuLayers))
-	}
 	if threads > 0 {
 		args = append(args, "-t", fmt.Sprint(threads))
+	}
+	if noGPU {
+		args = append(args, "-ng")
 	}
 	return exec.CommandContext(ctx, "whisper-cli", args...)
 }
 
 type WhisperCli struct {
 	ModelPath string
-	GPULayers int
 	Threads   int
-	Build     CommandFunc
-	Logger    *slog.Logger
+	// NoGPU forces CPU execution (-ng). Set from config gpu = "off"; the
+	// zero value leaves whisper.cpp to use whatever backend it loaded.
+	NoGPU  bool
+	Build  CommandFunc
+	Logger *slog.Logger
 }
 
 func NewWhisperCli(modelPath string) *WhisperCli {
@@ -81,7 +88,7 @@ func (w *WhisperCli) Transcribe(ctx context.Context, wavPath string) (string, er
 	if w.Build != nil {
 		cmd = w.Build(ctx, w.ModelPath, wavPath)
 	} else {
-		cmd = DefaultCommandWithOpts(ctx, w.ModelPath, wavPath, w.GPULayers, w.Threads)
+		cmd = DefaultCommandWithOpts(ctx, w.ModelPath, wavPath, w.Threads, w.NoGPU)
 	}
 	wavSize := int64(-1)
 	if fi, err := os.Stat(wavPath); err == nil {

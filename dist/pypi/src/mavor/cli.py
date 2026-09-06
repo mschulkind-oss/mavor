@@ -22,6 +22,12 @@ REPO = "mschulkind-oss/mavor"
 BIN_DIR = Path(__file__).parent / "bin"
 BIN_NAME = "mavor"
 
+# mavor is a cgo program: the binary links sherpa-onnx and will not start
+# without these beside it. The release archive is flat — binary and shared
+# objects at the root — and the binary's RUNPATH begins with $ORIGIN, so
+# unpacking all three into BIN_DIR is the whole of the install.
+LIB_NAMES = ("libonnxruntime.so", "libsherpa-onnx-c-api.so")
+
 
 def _target() -> tuple[str, str]:
     """Resolve the release archive's os/arch, or exit explaining why not.
@@ -39,9 +45,17 @@ def _target() -> tuple[str, str]:
             "the overlay is built on Linux shared memory. Linux only, for now."
         )
 
-    arch = {"x86_64": "amd64", "amd64": "amd64", "arm64": "arm64", "aarch64": "arm64"}.get(machine)
+    # amd64 only. mavor became a cgo program, and cgo cannot cross-compile to
+    # arm64 from the amd64 release runner, so no arm64 archive is published —
+    # see the goarch comment in .goreleaser.yaml. An arm64 user builds from
+    # source until that is resolved, so say that rather than 404ing.
+    arch = {"x86_64": "amd64", "amd64": "amd64"}.get(machine)
     if arch is None:
-        sys.exit(f"mavor has no build for {machine}; releases cover amd64 and arm64.")
+        sys.exit(
+            f"mavor publishes no {machine} build: it links sherpa-onnx through cgo, "
+            "which the amd64 release builder cannot cross-compile. Build from "
+            f"source instead: https://github.com/{REPO}"
+        )
 
     return "linux", arch
 
@@ -74,30 +88,45 @@ def _download() -> Path:
             sys.exit(f"could not download {url}: {e.reason}")
 
         with tarfile.open(local, "r:gz") as tar:
-            # Extract only the binary. A release archive is ours, but a
-            # tarball is still the wrong place to trust member paths.
-            member = tar.getmember(BIN_NAME)
-            if member.issym() or member.islnk():
-                sys.exit(f"unexpected link in release archive: {member.name}")
-            extracted = tar.extractfile(member)
-            if extracted is None:
-                sys.exit(f"{BIN_NAME} missing from {archive}")
-            dest = _binary()
-            with open(dest, "wb") as out:
-                shutil.copyfileobj(extracted, out)
+            # Extract the binary and its shared objects by name, and nothing
+            # else. A release archive is ours, but a tarball is still the
+            # wrong place to trust member paths.
+            for name in (BIN_NAME, *LIB_NAMES):
+                try:
+                    member = tar.getmember(name)
+                except KeyError:
+                    sys.exit(f"{name} missing from {archive}")
+                if member.issym() or member.islnk():
+                    sys.exit(f"unexpected link in release archive: {member.name}")
+                extracted = tar.extractfile(member)
+                if extracted is None:
+                    sys.exit(f"{name} missing from {archive}")
+                with open(BIN_DIR / name, "wb") as out:
+                    shutil.copyfileobj(extracted, out)
 
+    dest = _binary()
     dest.chmod(dest.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     return dest
 
 
+def _cached_files() -> tuple[Path, ...]:
+    return tuple(BIN_DIR / name for name in (BIN_NAME, *LIB_NAMES))
+
+
 def main() -> None:
     binary = _binary()
-    if not binary.exists():
+    # The whole set has to be present, not just the binary. A cache holding
+    # mavor without its shared objects execs fine and then dies in the dynamic
+    # loader, which is a far worse message than re-downloading.
+    if not all(f.exists() for f in _cached_files()):
         binary = _download()
 
     try:
         sys.exit(subprocess.run([str(binary), *sys.argv[1:]]).returncode)
     except FileNotFoundError:
-        sys.exit(f"mavor binary missing at {binary}; reinstall the package to fetch it again.")
+        sys.exit(
+            f"mavor is missing from {BIN_DIR}; delete that directory and run "
+            "mavor again to fetch the release archive."
+        )
     except KeyboardInterrupt:
         sys.exit(130)
