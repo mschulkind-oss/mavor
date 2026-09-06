@@ -50,10 +50,26 @@ type Config struct {
 	Preview    Preview    `toml:"preview"`
 	Ducking    Ducking    `toml:"ducking"`
 	Vocabulary Vocabulary `toml:"vocabulary"`
+	Logging    Logging    `toml:"logging"`
 	Output     Output     `toml:"output"`
 	Overlay    Overlay    `toml:"overlay"`
 	Advanced   Advanced   `toml:"advanced"`
 	Paths      Paths      `toml:"paths"`
+}
+
+// Logging configures how much the daemon says about what it is doing. Where
+// it says it is Paths.Log, which stays with the other filesystem locations.
+type Logging struct {
+	// Verbose drops the daemon to debug level, which turns on the
+	// per-frame and per-chunk detail the quiet levels leave out: overlay
+	// surface sizes and repaint timings, preview chunk cadence and text
+	// growth, and how long each stage of a dictation took.
+	//
+	// Off by default because it is genuinely noisy — the preview alone logs
+	// on a 30 ms tick. Turn it on when something is wrong and you want the
+	// next occurrence explained rather than reproduced. `mavor daemon -v`
+	// does the same for one run; the flag wins when both are set.
+	Verbose bool `toml:"verbose"`
 }
 
 // Output configures what mavor does with a finished transcript. Typing it into
@@ -197,6 +213,11 @@ func Default() Config {
 		},
 		Vocabulary: Vocabulary{
 			Boost: DefaultBoost,
+		},
+		Logging: Logging{
+			// Off: debug level logs on every preview tick and every
+			// overlay repaint.
+			Verbose: false,
 		},
 		Output: Output{
 			// Off: see the field's own comment. Typing is the product;

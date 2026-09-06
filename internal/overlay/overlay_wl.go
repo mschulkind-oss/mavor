@@ -176,6 +176,13 @@ func (o *WL) paint(st *wlState, start time.Time) error {
 		return err
 	}
 	if w != st.reqW || h != st.reqH {
+		// Every resize is a re-centre, so a preview that grows a character
+		// at a time makes the overlay walk sideways. Logged with the text
+		// length that caused it, because the two together are the whole
+		// explanation for an overlay that will not sit still.
+		o.debug("overlay: surface resized",
+			"from_w", st.reqW, "from_h", st.reqH, "to_w", w, "to_h", h,
+			"preview_chars", len(st.scene.Preview))
 		if err := st.surface.Resize(w, h); err != nil {
 			return err
 		}
@@ -196,11 +203,19 @@ func (o *WL) paint(st *wlState, start time.Time) error {
 		st.buf, st.bufW, st.bufH = b, sw, sh
 	}
 
+	renderStart := time.Now()
 	img, err := Render(st.scene)
 	if err != nil {
 		return err
 	}
 	blit(img, st.buf)
+	// Render measures and draws every glyph of the preview, so its cost
+	// grows with the text. This is the number to look at when the overlay
+	// feels like it has lost frames.
+	o.debug("overlay: painted",
+		"w", sw, "h", sh, "preview_chars", len(st.scene.Preview),
+		"render_ms", time.Since(renderStart).Milliseconds(),
+		"visual", st.scene.Visual)
 
 	if err := st.surface.Attach(st.buf); err != nil {
 		return err
@@ -288,4 +303,13 @@ func (o *WL) Close() error {
 	default:
 		return nil
 	}
+}
+
+// debug logs at debug level, tolerating a nil logger. The paint path calls it
+// on every frame, so it must never be the thing that panics an overlay.
+func (o *WL) debug(msg string, args ...any) {
+	if o.log == nil {
+		return
+	}
+	o.log.Debug(msg, args...)
 }

@@ -152,8 +152,10 @@ func runDaemon(args []string) error {
 		return err
 	}
 	cfg := cfgFile.Config
+	// The flag wins over the config key: -v is what you reach for to debug
+	// one run, and it would be surprising if a config file could refuse it.
 	logLevel := slog.LevelInfo
-	if verbose {
+	if verbose || cfg.Logging.Verbose {
 		logLevel = slog.LevelDebug
 	}
 

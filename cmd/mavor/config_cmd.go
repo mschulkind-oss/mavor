@@ -71,6 +71,14 @@ volume = %-25q# "0%%" mutes; "25%%" merely lowers
 # boost = %s   # transducers only. 1.5 to 3.0 is the useful range; higher
 #               # makes these words appear where they were not said.
 
+[logging]
+# Debug-level detail: overlay surface sizes and repaint timings, preview
+# chunk cadence and text growth, and how long each stage of a dictation
+# took. Noisy — the preview alone logs on a 30 ms tick — so it is off
+# until something is wrong. `+"`mavor daemon -v`"+` does the same for one run.
+# Output goes wherever paths.log points.
+verbose = %t
+
 [output]
 # Your transcript is always typed into the focused window. This also copies
 # it to the clipboard, replacing whatever was there. Off by default: it
@@ -103,6 +111,7 @@ top_margin = %d   # px below the top of the usable area, under your bar
 		d.Ducking.Enabled,
 		d.Ducking.Volume,
 		strconv.FormatFloat(float64(d.Vocabulary.Boost), 'f', -1, 32),
+		d.Logging.Verbose,
 		d.Output.Clipboard,
 		d.Overlay.TopMargin,
 		d.Advanced.Placement,

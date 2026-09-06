@@ -396,11 +396,19 @@ func (d *Daemon) runStreamPreview(ctx context.Context, gen uint64, src speech.St
 					continue
 				}
 				fed++
+				feedStart := time.Now()
 				partial, err := src.FeedChunk(ctx, chunk)
 				if err != nil {
 					d.logger.Warn("streaming: feed chunk failed", "err", err)
 					continue
 				}
+				// Per tick, so debug only. bytes says whether audio is
+				// keeping up; chars says how far the preview has grown,
+				// which is what drives the overlay's width; feed_ms says
+				// whether the recognizer is the thing falling behind.
+				d.logger.Debug("streaming: chunk fed",
+					"bytes", len(chunk), "chars", len(partial),
+					"feed_ms", time.Since(feedStart).Milliseconds(), "chunk_n", fed)
 				if partial != "" {
 					if gotText == 0 {
 						d.logger.Info("streaming: preview is producing text", "after_chunks", fed)
@@ -575,6 +583,7 @@ func (d *Daemon) stopStreamingMonitoring() {
 }
 
 func (d *Daemon) runTranscription(ctx context.Context) {
+	cycleStart := time.Now()
 	d.logger.Info("pipeline: stopping recorder for transcription")
 	wav, err := d.recorder.Stop()
 	if err != nil {
@@ -598,12 +607,14 @@ func (d *Daemon) runTranscription(ctx context.Context) {
 		}
 	}
 
+	transcribeStart := time.Now()
 	text, err := d.transcriber.Transcribe(ctx, wav)
 	if err != nil {
 		d.reportError("pipeline: transcribe failed — aborting", err)
 		return
 	}
-	d.logger.Info("pipeline: transcript received", "text_len", len(text))
+	transcribeMS := time.Since(transcribeStart).Milliseconds()
+	d.logger.Info("pipeline: transcript received", "text_len", len(text), "transcribe_ms", transcribeMS)
 	if text == "" {
 		d.logger.Warn("pipeline: empty transcript — skipping emit (whisper found no speech?)")
 		d.machine.Apply(state.EventTranscribeDone)
@@ -618,6 +629,7 @@ func (d *Daemon) runTranscription(ctx context.Context) {
 	}
 
 	d.logger.Info("pipeline: dispatching output")
+	emitStart := time.Now()
 	if err := d.output.Emit(ctx, text); err != nil {
 		// We still complete the FSM transition; the user already heard
 		// themselves and clipboard fallback may have worked.
@@ -625,8 +637,23 @@ func (d *Daemon) runTranscription(ctx context.Context) {
 	} else {
 		d.logger.Info("pipeline: output dispatch ok")
 	}
+	emitMS := time.Since(emitStart).Milliseconds()
 	d.machine.Apply(state.EventTranscribeDone)
-	d.logger.Info("pipeline: cycle complete (back to idle)")
+
+	// The overlay stays up for this whole span, so "it lingered" is a
+	// question about which stage was slow rather than about the overlay.
+	// Typing is per-character and is usually the long pole on a long
+	// dictation: chars_per_sec is the number that says so.
+	var charsPerSec int64
+	if emitMS > 0 {
+		charsPerSec = int64(len(text)) * 1000 / emitMS
+	}
+	d.logger.Info("pipeline: cycle complete (back to idle)",
+		"chars", len(text),
+		"transcribe_ms", transcribeMS,
+		"emit_ms", emitMS,
+		"emit_chars_per_sec", charsPerSec,
+		"total_ms", time.Since(cycleStart).Milliseconds())
 }
 
 func visualFor(s state.State) overlay.Visual {
