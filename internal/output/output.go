@@ -48,6 +48,11 @@ func DefaultRunner(ctx context.Context, name string, args []string, stdin []byte
 type Wayland struct {
 	Run    Runner
 	Logger *slog.Logger
+
+	// Clipboard also copies each transcript via wl-copy. Off unless the
+	// config turns it on; the zero value is the default behaviour, so a
+	// Wayland built by hand in a test does not silently clobber anything.
+	Clipboard bool
 }
 
 func NewWayland() *Wayland {
@@ -61,9 +66,13 @@ func CleanText(s string) string {
 	return strings.Join(fields, " ")
 }
 
-// Emit types text into the focused window AND copies it to the clipboard.
-// We run both regardless of which (if any) succeeds; a copy-on-failure is
-// still useful even when typing didn't reach the right window.
+// Emit types text into the focused window, and copies it to the clipboard when
+// Clipboard is set.
+//
+// Both run regardless of whether the other succeeds: a copy is still useful
+// when typing did not reach the right window, which is the whole reason the
+// option exists. It is off by default because the recovery is worth less than
+// the clipboard it destroys on every utterance — see config.Output.Clipboard.
 func (w *Wayland) Emit(ctx context.Context, text string) error {
 	log := w.Logger
 	if log == nil {
@@ -77,6 +86,9 @@ func (w *Wayland) Emit(ctx context.Context, text string) error {
 	log.Info("output: dispatching", "text_len", len(text), "text_preview", truncate(text, 200))
 	typeErr := w.Run(ctx, "wtype", []string{"--", text}, nil)
 	log.Info("output: wtype done", "err", fmt.Sprint(typeErr), "elapsed_ms", time.Since(start).Milliseconds())
+	if !w.Clipboard {
+		return typeErr
+	}
 	copyStart := time.Now()
 	copyErr := w.Run(ctx, "wl-copy", nil, []byte(text))
 	log.Info("output: wl-copy done", "err", fmt.Sprint(copyErr), "elapsed_ms", time.Since(copyStart).Milliseconds())

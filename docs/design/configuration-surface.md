@@ -12,7 +12,7 @@ vantage:
 # Twenty-nine keys, and the three that lie
 
 **Status:** DECIDED (2026-09-05). Nothing built; every open question is settled
-and the Decision Ledger carries the five rulings. Evidence in §2 verified against
+and the Decision Ledger carries the five rulings. Evidence in [§2](#2-what-exists-today) verified against
 the tree at `62db92c` on 2026-09-05.
 
 **The short version.** `config.toml` exposes 29 keys. Three of them are wrong
@@ -227,7 +227,7 @@ and refused at daemon start, rather than silently ignored.
 
 ## 4. The build is cgo, always
 
-**Decided 2026-09-05 (OQ-1): mavor is a cgo program.** The pure-Go build is not
+**Decided 2026-09-05 ([OQ-1](#decision-ledger)): mavor is a cgo program.** The pure-Go build is not
 demoted to a second artifact, it is deleted. The `sherpa` build tag goes with
 it, `just build` becomes what `just build-sherpa` was, and `build-sherpa` and
 `bench-sherpa` collapse into `build` and `bench`.
@@ -235,7 +235,7 @@ it, `just build` becomes what `just build-sherpa` was, and `build-sherpa` and
 This was a live question because `AGENTS.md` states the default build is pure Go
 and `CGO_ENABLED=0` works. The sherpa runtime is the one variant needing cgo,
 which is why thirteen of the twenty-four catalog models are unreachable in that
-default build — and why §6 could not make a sherpa model the default preview
+default build — and why [§6](#6-the-preview) could not make a sherpa model the default preview
 source without settling this first.
 
 ### 4.1 What the ruling costs, measured
@@ -288,7 +288,7 @@ gcc_arm64.S:30: Error: no such instruction: `stp x29,x30,[sp,'
 - **A C toolchain becomes a build requirement**, including in CI.
 
 What it buys is the reason: thirteen catalog models, the streaming preview
-companion of §6, sub-second Parakeet, and a config file that never has to
+companion of [§6](#6-the-preview), sub-second Parakeet, and a config file that never has to
 explain a build tag to anyone. That last one is why this section is in a
 document about `config.toml` at all.
 
@@ -340,7 +340,7 @@ release the key — partial results are provisional, and typing them would inser
 the same words twice.
 
 Today the preview has two mechanisms behind a key that selects neither reliably
-(§2.2). The proposal names both and picks a better default.
+([§2.2](#22-keys-that-are-aliases-for-other-keys)). The proposal names both and picks a better default.
 
 - **Companion model** *(coined here)* — a small streaming recognizer loaded
   alongside the main model, fed the same audio, emitting partial text
@@ -382,13 +382,13 @@ real-time factor and keeps up on one to two cores, alongside the main model.
    pull for a better preview.
 
 **The designated companion is the 20M-parameter streaming zipformer**, added to
-the catalog for this purpose (OQ-2). The catalogued `zipformer-streaming` is a
+the catalog for this purpose ([OQ-2](#decision-ledger)). The catalogued `zipformer-streaming` is a
 310 MB artifact for a resident int8 encoder of roughly 40 MB, which is a poor
 trade for something that only paints an overlay; the 20M model upstream
 publishes is the right size for the job. It stays selectable by name for anyone
 who wants the larger one.
 
-**`mavor setup` always pulls it** (OQ-3), which makes step 3 a safety net rather
+**`mavor setup` always pulls it** ([OQ-3](#decision-ledger)), which makes step 3 a safety net rather
 than the normal path — it catches a model deleted after setup, or a config
 edited by hand. That follows from a broader rule worth stating on its own:
 
@@ -402,7 +402,7 @@ edited by hand. That follows from a broader rule worth stating on its own:
 Explicit values override the resolution: a model name forces that companion,
 and `"phrases"` forces phrase mode even when a companion is available. **A model
 named explicitly and not found is fatal**, never a silent downgrade — see
-§10.2.
+[§10.2](#102-failure-paths).
 
 ---
 
@@ -451,7 +451,7 @@ the default (P4).
 
 This table lands now rather than waiting for
 [`active-window-context-and-vocabulary-prompting.md`](active-window-context-and-vocabulary-prompting.md)
-to leave review (OQ-4). It is the smaller half of that design rather than a
+to leave review ([OQ-4](#decision-ledger)). It is the smaller half of that design rather than a
 competing one: the window-context work derives the word list at runtime and
 still needs somewhere to put a static list, so it adopts this key shape rather
 than replacing it. It also closes a gap the roadmap already flags — whisper
@@ -539,18 +539,18 @@ Twenty keys, down from twenty-nine, and a first-time user reads the first line.
 |---|---|
 | `mode` | → `preview.enabled` (P2: a boolean that says what it does) |
 | `preset` | deleted; `models list` shows the tradeoff with real numbers |
-| `streaming_strategy` | deleted; it selected nothing (§2.2) |
+| `streaming_strategy` | deleted; it selected nothing ([§2.2](#22-keys-that-are-aliases-for-other-keys)) |
 | `sherpa_model` | folded into `model` (P3) |
-| `device` | deleted; never read (§2.1) |
-| `gpu_layers` | → `advanced.gpu`; the old key broke transcription (§2.1) |
-| `sherpa_provider` | deleted; see §9 |
-| `sherpa_decoding_method` | deleted; follows from vocabulary (§7) |
+| `device` | deleted; never read ([§2.1](#21-three-keys-that-are-wrong-not-merely-confusing)) |
+| `gpu_layers` | → `advanced.gpu`; the old key broke transcription ([§2.1](#21-three-keys-that-are-wrong-not-merely-confusing)) |
+| `sherpa_provider` | deleted; see [§9](#9-chosen-for-you-threads-gpu-and-the-sherpa-provider) |
+| `sherpa_decoding_method` | deleted; follows from vocabulary ([§7](#7-vocabulary-and-decoding)) |
 | `sherpa_hotwords_file`, `sherpa_hotwords_score` | → `vocabulary.file`, `vocabulary.boost` |
-| `sherpa_model_type`, `sherpa_tokens`, `sherpa_encoder`, `sherpa_decoder`, `sherpa_joiner` | leave the config; custom models become a manual topic (§5) |
+| `sherpa_model_type`, `sherpa_tokens`, `sherpa_encoder`, `sherpa_decoder`, `sherpa_joiner` | leave the config; custom models become a manual topic ([§5](#5-model-naming)) |
 | `server_socket` | → `advanced.server`, a URL only. The path form never created a path |
 | `silence_threshold_ms` | → `preview.pause_ms` |
 | `min_phrase_ms` | → `preview.min_phrase_ms` |
-| `threads` | → `advanced.threads`, defaulting to physical cores (§9) |
+| `threads` | → `advanced.threads`, defaulting to physical cores ([§9](#9-chosen-for-you-threads-gpu-and-the-sherpa-provider)) |
 
 ---
 
@@ -595,9 +595,9 @@ a plausible wrong answer that would compile.
 | `top_margin` < 0 | Clamp to 0 |
 | `pause_ms` or `min_phrase_ms` ≤ 0 | Use the default (450 ms / 600 ms) |
 | `model` not in the catalog | Look up as a directory under the sherpa model dir; if absent, **fatal**, naming the closest catalog entries |
-| `preview.source` names a model that is not installed | **Fatal.** A named model is a request, not a hint (§10.2) |
+| `preview.source` names a model that is not installed | **Fatal.** A named model is a request, not a hint ([§10.2](#102-failure-paths)) |
 | `preview.source = "auto"` and the companion is not installed | Warn, fall back to phrase mode, name the model to pull. The only case that downgrades |
-| `preview.source` equal to `model` | Treated as case 1 of §6.2. Never load the same model twice |
+| `preview.source` equal to `model` | Treated as case 1 of [§6.2](#62-the-resolution-rule). Never load the same model twice |
 | Unknown key in the file | Warn at load, listing the key; `doctor` reports it as an error. Never fatal at load |
 | Config file absent | Every default applies. Not an error, as today |
 
@@ -607,7 +607,7 @@ a plausible wrong answer that would compile.
   naming the model and the directory searched. This holds for the main model and
   for an explicitly named `preview.source` alike. A user who writes a model name
   gets that model or an error, never a quiet substitution — and since `mavor
-  setup` makes the current config fully runnable (§6.2), reaching this state
+  setup` makes the current config fully runnable ([§6.2](#62-the-resolution-rule)), reaching this state
   means the config changed after setup, which the message should say.
 - **The companion model fails to load for any other reason** (corrupt files, an
   unreadable directory) → log a warning, fall back to phrase mode, daemon starts.
@@ -661,7 +661,7 @@ and every default applies. Because there is no public release
 ([`../roadmap.md`](../roadmap.md)), the affected population is the author's own
 machine. `mavor doctor` must detect a file whose keys are all unknown and say
 plainly that the schema changed and `mavor config init --force` will scaffold
-the new one. Downloaded model files are untouched — the rename in §5 is a
+the new one. Downloaded model files are untouched — the rename in [§5](#5-model-naming) is a
 catalog-name change, and on-disk names stay upstream's.
 
 ### 10.6 What done looks like
@@ -679,7 +679,7 @@ catalog-name change, and on-disk names stay upstream's.
 - `mavor config show` output, saved and reloaded, produces an identical resolved
   config.
 - The scaffolded template parses to exactly `Default()` — enforced by a test, so
-  the drift in §2.1 cannot recur.
+  the drift in [§2.1](#21-three-keys-that-are-wrong-not-merely-confusing) cannot recur.
 - No configuration causes `-ngl` to be passed to whisper.cpp.
 - `mavor doctor` reports, for the active config: which runtime and placement were
   chosen and why, the thread count and where it came from, whether a GPU backend
@@ -703,8 +703,8 @@ already presents speed and accuracy with measured numbers, and `preset` cannot
 name the twenty-one models outside its three-value enum.
 
 **Make phrase mode the preview default and treat the companion as opt-in.**
-Rejected as the default, kept as the fallback. §6.1 gives the reasons; the
-resolution rule in §6.2 means nobody gets a surprise download either way.
+Rejected as the default, kept as the fallback. [§6.1](#61-why-the-companion-model-becomes-the-default) gives the reasons; the
+resolution rule in [§6.2](#62-the-resolution-rule) means nobody gets a surprise download either way.
 
 **Expose `decoding_method` for users who want beam search without hotwords.**
 Rejected: 0.02% word error rate for several times the decoder work, on the only
@@ -722,9 +722,9 @@ implement, so keeping the name would preserve the lie.
 |---|---|
 | cgo-only means no cross-compilation without a cross toolchain | The only realistic targets are `linux/amd64` and `linux/arm64`; the sherpa module vendors prebuilt objects for both, so the release builds on each host or in a container |
 | A whisper-only user now ships 42 MB and an ONNX Runtime they never load | Accepted deliberately. Two build variants cost more in CI and support than the 30 MB saves |
-| A release built without `$ORIGIN` runs only on the build host | §4.1. The release recipe sets it, and a smoke test runs the artifact from a directory the build did not create |
+| A release built without `$ORIGIN` runs only on the build host | [§4.1](#41-what-the-ruling-costs-measured). The release recipe sets it, and a smoke test runs the artifact from a directory the build did not create |
 | The companion model starves the main model on a small CPU | It costs roughly one core at 0.06–0.08 real-time factor; `doctor` warns below 4 physical cores, and `preview.source = "phrases"` is one line |
-| Deleting aliases breaks the author's own config and any scripts | §10.5: `doctor` detects an all-unknown-keys file and names the fix |
+| Deleting aliases breaks the author's own config and any scripts | [§10.5](#105-pre-existing-state-on-the-day-this-ships): `doctor` detects an all-unknown-keys file and names the fix |
 | The catalog rename invalidates the benchmark report's model column | `just bench` regenerates it; the report is generated, never edited |
 | `[advanced]` becomes a dumping ground | P1 gates additions: no key unless mavor cannot pick the value |
 
@@ -733,16 +733,16 @@ implement, so keeping the name would preserve the lie.
 ## 13. Non-goals
 
 - **Not** a hot-reloading config. A change needs a daemon restart.
-- **Not** a change to any transcription algorithm. The preview work in §6 adds a
+- **Not** a change to any transcription algorithm. The preview work in [§6](#6-the-preview) adds a
   second recognizer; it does not alter how the final transcript is produced.
 - **Not** the window-context half of
   [`active-window-context-and-vocabulary-prompting.md`](active-window-context-and-vocabulary-prompting.md).
   This doc gives vocabulary a static config surface; deriving vocabulary from the
   focused window stays in that doc.
 - **Not** a profile or per-application config system. One file, one set of values.
-- **Not** GPU acceleration for sherpa. §9 explains why it cannot work on this
+- **Not** GPU acceleration for sherpa. [§9](#9-chosen-for-you-threads-gpu-and-the-sherpa-provider) explains why it cannot work on this
   build; [`../roadmap.md`](../roadmap.md) carries the workstream.
-- **Not** a config surface for custom sherpa model files (§5).
+- **Not** a config surface for custom sherpa model files ([§5](#5-model-naming)).
 
 ---
 
@@ -757,7 +757,7 @@ here.
 explicit on-disk filename field the rename requires. This is self-contained and
 touches the catalog, `models pull`, and the docs.
 
-**Third, collapse the build to cgo** (§4). Delete the `sherpa` build tag and the
+**Third, collapse the build to cgo** ([§4](#4-the-build-is-cgo-always)). Delete the `sherpa` build tag and the
 `CGO_ENABLED=0` recipe, fold `build-sherpa` into `build` and `bench-sherpa` into
 `bench`, set `$ORIGIN` in the release recipe, and correct the Build Tags section
 of `AGENTS.md`, which currently states the opposite. This has to land before the
@@ -769,17 +769,44 @@ scaffolded template parses to exactly `Default()`.
 
 **Fifth, the preview.** The companion model, the resolution rule, and phrase
 mode as the named fallback. This is also where `mavor setup` becomes idempotent
-and config-driven (§6.2), and where a named-but-missing model becomes fatal
-(§10.2). The largest piece.
+and config-driven ([§6.2](#62-the-resolution-rule)), and where a named-but-missing model becomes fatal
+([§10.2](#102-failure-paths)). The largest piece.
 
 **Sixth, vocabulary.** The `[vocabulary]` table mapped to a whisper prompt and to
 sherpa hotwords, with the decoding method following from it.
 
 **Seventh, the docs**: the user guide's configuration reference, the quickstart,
-and the `doctor` output described in §10.6.
+and the `doctor` output described in [§10.6](#106-what-done-looks-like).
 
 Steps one and two are worth landing even if the rest of this proposal is
 rejected.
+
+---
+
+## Follow-up: `[output]`, added 2026-09-06
+
+The schema [§8](#8-the-proposed-file) settled had no say over the clipboard, because I never noticed
+mavor was writing to it. It always has: `Emit` ran `wtype` and `wl-copy`
+unconditionally, and the code's own comment gives the reason — a copy is still
+useful when the keystrokes miss the intended window.
+
+That is a real benefit and it was not the user's to decline, which is the test
+P1 sets. So a seventh table:
+
+```toml
+[output]
+clipboard = false
+```
+
+**Off by default**, which is the part worth arguing. The recovery it buys is
+worth less than the clipboard it destroys: someone dictating into an editor
+while holding a URL to paste loses the URL, on every utterance, having asked
+for none of it. `mavor history --copy` already recovers a transcript on demand,
+so the capability is not lost — only the surprise is.
+
+Typing itself is not configurable. It is the product, not a policy.
+
+This makes 21 keys rather than the 20 [§8](#8-the-proposed-file) counted.
 
 ---
 
@@ -787,8 +814,8 @@ rejected.
 
 | ID | Ruling / Decision | Date | Settled in |
 | :--- | :--- | :--- | :--- |
-| OQ-1 | cgo only. The pure-Go build and the `sherpa` tag are deleted, not demoted — one build, one artifact | 2026-09-05 | §4 The build is cgo, always |
-| OQ-2 | The 20M-parameter streaming zipformer is the designated companion; `zipformer-streaming` stays selectable by name | 2026-09-05 | §6.2 The resolution rule |
-| OQ-3 | `mavor setup` always pulls the companion, is idempotent, and makes the current config fully runnable. A named model that is missing is fatal, never a downgrade | 2026-09-05 | §6.2, §10.2 Failure paths |
-| OQ-4 | The `[vocabulary]` table lands now; the window-context design adopts its key shape rather than replacing it | 2026-09-05 | §7 Vocabulary and decoding |
-| OQ-5 | `[preview]` stays a table — `pause_ms` and `min_phrase_ms` belong with the thing they tune | 2026-09-05 | §8 The proposed file |
+| OQ-1 | cgo only. The pure-Go build and the `sherpa` tag are deleted, not demoted — one build, one artifact | 2026-09-05 | [§4](#4-the-build-is-cgo-always) The build is cgo, always |
+| OQ-2 | The 20M-parameter streaming zipformer is the designated companion; `zipformer-streaming` stays selectable by name | 2026-09-05 | [§6.2](#62-the-resolution-rule) The resolution rule |
+| OQ-3 | `mavor setup` always pulls the companion, is idempotent, and makes the current config fully runnable. A named model that is missing is fatal, never a downgrade | 2026-09-05 | [§6.2](#62-the-resolution-rule), [§10.2](#102-failure-paths) Failure paths |
+| OQ-4 | The `[vocabulary]` table lands now; the window-context design adopts its key shape rather than replacing it | 2026-09-05 | [§7](#7-vocabulary-and-decoding) Vocabulary and decoding |
+| OQ-5 | `[preview]` stays a table — `pause_ms` and `min_phrase_ms` belong with the thing they tune | 2026-09-05 | [§8](#8-the-proposed-file) The proposed file |

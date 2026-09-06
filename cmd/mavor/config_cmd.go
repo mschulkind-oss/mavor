@@ -71,6 +71,14 @@ volume = %-25q# "0%%" mutes; "25%%" merely lowers
 # boost = %s   # transducers only. 1.5 to 3.0 is the useful range; higher
 #               # makes these words appear where they were not said.
 
+[output]
+# Your transcript is always typed into the focused window. This also copies
+# it to the clipboard, replacing whatever was there. Off by default: it
+# makes a keystroke that landed in the wrong window recoverable, but it
+# costs you the clipboard on every utterance. `+"`mavor history --copy`"+` recovers
+# a transcript on demand without it.
+clipboard = %t
+
 [overlay]
 top_margin = %d   # px below the top of the usable area, under your bar
 
@@ -95,6 +103,7 @@ top_margin = %d   # px below the top of the usable area, under your bar
 		d.Ducking.Enabled,
 		d.Ducking.Volume,
 		strconv.FormatFloat(float64(d.Vocabulary.Boost), 'f', -1, 32),
+		d.Output.Clipboard,
 		d.Overlay.TopMargin,
 		d.Advanced.Placement,
 		d.Advanced.Threads,

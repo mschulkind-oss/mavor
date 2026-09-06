@@ -50,9 +50,26 @@ type Config struct {
 	Preview    Preview    `toml:"preview"`
 	Ducking    Ducking    `toml:"ducking"`
 	Vocabulary Vocabulary `toml:"vocabulary"`
+	Output     Output     `toml:"output"`
 	Overlay    Overlay    `toml:"overlay"`
 	Advanced   Advanced   `toml:"advanced"`
 	Paths      Paths      `toml:"paths"`
+}
+
+// Output configures what mavor does with a finished transcript. Typing it into
+// the focused window is not optional — it is the product — so the only choice
+// here is what else happens.
+type Output struct {
+	// Clipboard also copies each transcript, replacing whatever was on the
+	// clipboard before.
+	//
+	// Off by default. It makes a keystroke that lands in the wrong window
+	// recoverable, which is a real benefit, but it costs the user their
+	// clipboard on every utterance without asking — and someone who
+	// dictates into an editor while holding a URL to paste loses the URL.
+	// A recovery path that destroys unrelated state is opt-in; `mavor
+	// history --copy` recovers a transcript on demand without it.
+	Clipboard bool `toml:"clipboard"`
 }
 
 // Preview configures the text shown in the overlay while you speak. It is
@@ -180,6 +197,11 @@ func Default() Config {
 		},
 		Vocabulary: Vocabulary{
 			Boost: DefaultBoost,
+		},
+		Output: Output{
+			// Off: see the field's own comment. Typing is the product;
+			// clobbering the clipboard is a side effect nobody asked for.
+			Clipboard: false,
 		},
 		Overlay: Overlay{
 			TopMargin: DefaultTopMargin,

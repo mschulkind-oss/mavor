@@ -24,9 +24,12 @@ func recorder() (Runner, *[]recordedCall) {
 	return r, &calls
 }
 
+// Clipboard: true throughout this file — these predate the setting and are
+// about what Emit does when the copy is switched on. The default is off, and
+// clipboard_test.go owns that half.
 func TestEmitInvokesWtypeAndWlCopy(t *testing.T) {
 	run, calls := recorder()
-	w := &Wayland{Run: run}
+	w := &Wayland{Run: run, Clipboard: true}
 	if err := w.Emit(t.Context(), "hello"); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
@@ -41,7 +44,7 @@ func TestEmitInvokesWtypeAndWlCopy(t *testing.T) {
 
 func TestEmitNormalizesNewlines(t *testing.T) {
 	run, calls := recorder()
-	w := &Wayland{Run: run}
+	w := &Wayland{Run: run, Clipboard: true}
 	if err := w.Emit(t.Context(), "hello\nworld\r\nfrom\tmavor"); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
@@ -62,7 +65,7 @@ func TestEmitRunsBothEvenIfTypingFails(t *testing.T) {
 		}
 		copyCalled = true
 		return nil
-	}}
+	}, Clipboard: true}
 	err := w.Emit(t.Context(), "x")
 	if err == nil {
 		t.Fatal("expected typing error to propagate")
@@ -80,7 +83,7 @@ func TestEmitJoinsErrors(t *testing.T) {
 			return wtypeErr
 		}
 		return wlcopyErr
-	}}
+	}, Clipboard: true}
 	err := w.Emit(t.Context(), "x")
 	if !errors.Is(err, wtypeErr) || !errors.Is(err, wlcopyErr) {
 		t.Fatalf("joined error %v should wrap both %v and %v", err, wtypeErr, wlcopyErr)

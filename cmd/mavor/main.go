@@ -218,6 +218,7 @@ func runDaemon(args []string) error {
 	recorder.SetLogger(logger)
 	outDispatch := output.NewWayland()
 	outDispatch.Logger = logger
+	outDispatch.Clipboard = cfg.Output.Clipboard
 
 	var ducker audio.Ducker = &audio.NoopDucker{}
 	if cfg.Ducking.Enabled {
