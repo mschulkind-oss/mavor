@@ -381,8 +381,11 @@ real-time factor and keeps up on one to two cores, alongside the main model.
 3. **Otherwise**, fall back to phrase mode, and have `doctor` say which model to
    pull for a better preview.
 
-**The designated companion is the 20M-parameter streaming zipformer**, added to
-the catalog for this purpose ([OQ-2](#decision-ledger)). The catalogued `zipformer-streaming` is a
+**The designated companion is the NeMo streaming FastConformer.**
+[OQ-2](#decision-ledger) first chose the 20M streaming zipformer on download
+size, and measurement reversed that: the zipformer loses the opening words of
+an utterance and emits upper case, while the FastConformer gets them and is
+already lower case, at the same latency. The catalogued `zipformer-streaming` is a
 310 MB artifact for a resident int8 encoder of roughly 40 MB, which is a poor
 trade for something that only paints an overlay; the 20M model upstream
 publishes is the right size for the job. It stays selectable by name for anyone
@@ -816,6 +819,7 @@ This makes 21 keys rather than the 20 [§8](#8-the-proposed-file) counted.
 | :--- | :--- | :--- | :--- |
 | OQ-1 | cgo only. The pure-Go build and the `sherpa` tag are deleted, not demoted — one build, one artifact | 2026-09-05 | [§4](#4-the-build-is-cgo-always) The build is cgo, always |
 | OQ-2 | The 20M-parameter streaming zipformer is the designated companion; `zipformer-streaming` stays selectable by name | 2026-09-05 | [§6.2](#62-the-resolution-rule) The resolution rule |
+| OQ-2 | **Superseded 2026-09-06:** the companion is `fastconformer-streaming`. On the same fixture the 20M zipformer lost the opening words and shouted (`'S IS IN THE PIT`) while the FastConformer got them and was already lower case (`luxe is in the pit`), at the same latency. Download size was the wrong thing to optimise for something on screen at every dictation | 2026-09-06 | `speech.DefaultCompanionModel` |
 | OQ-3 | `mavor setup` always pulls the companion, is idempotent, and makes the current config fully runnable. A named model that is missing is fatal, never a downgrade | 2026-09-05 | [§6.2](#62-the-resolution-rule), [§10.2](#102-failure-paths) Failure paths |
 | OQ-4 | The `[vocabulary]` table lands now; the window-context design adopts its key shape rather than replacing it | 2026-09-05 | [§7](#7-vocabulary-and-decoding) Vocabulary and decoding |
 | OQ-5 | `[preview]` stays a table — `pause_ms` and `min_phrase_ms` belong with the thing they tune | 2026-09-05 | [§8](#8-the-proposed-file) The proposed file |
