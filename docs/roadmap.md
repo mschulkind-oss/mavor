@@ -9,7 +9,7 @@ summary: "Living roadmap for the mavor dictation daemon: open decisions, the rea
 
 # Ongoing Work: `mavor` Voice-to-Text Utility
 
-**Status:** 2 Needs Attention (💬), 4 Ready to Implement (📦), 4 Open Threads (🏗️ 1, 🔒 1, 🛑 1, 🧊 1)
+**Status:** 2 Needs Attention (💬), 4 Ready to Implement (📦), 6 Open Threads (🏗️ 1, 🔒 1, 🛑 1, 🧊 3)
 
 ---
 
@@ -488,3 +488,48 @@ heavyweight toolchain to the build.
 
 **Next step:** revisit once item 1 produces catalog-wide numbers. If the fast
 sherpa transducers turn out to close the gap on their own, this stays frozen.
+
+### 🧊 GNOME, and the compositors without the wlroots protocols
+
+[`porting-to-gnome.md`](design/porting-to-gnome.md) prices the port and comes
+back with a split verdict: build a second `output.Dispatcher`, do not build a
+GNOME HUD. The reframing is that **typing is broken on everything that is not
+wlroots, not just on GNOME** — KWin implements `wlr-layer-shell` but not
+`virtual-keyboard-v1`, so KDE gets the pill and never types a character. One
+dispatcher buys both desktops; a HUD buys only GNOME and can only be a GNOME
+Shell extension, which is a second painter in JavaScript on a six-month
+breakage cadence. Both shipped GNOME dictation extensions gave up on injection
+and paste from the clipboard instead.
+
+The document also names a bug on the platform mavor already supports: `doctor`
+checks `$WAYLAND_DISPLAY` and `$PATH`, never what the compositor implements, so
+on GNOME every check is green and every dictation silently fails to type.
+
+**Next step:** answer [`OQ-GN2`](design/porting-to-gnome.md#OQ-GN2) with a
+one-day spike — a keyboard-only RemoteDesktop portal session with
+`persist_mode=2`, restarted and screen-locked — because whether GNOME prompts
+once or every session decides whether any of the rest is worth doing.
+
+### 🧊 Porting to macOS — a bigger job than four interfaces
+
+[`porting-to-macos.md`](design/porting-to-macos.md) tests
+[`../AGENTS.md`](../AGENTS.md)'s claim that porting is "a matter of implementing
+those, not of restructuring" and finds it half true. The seams are the easy
+half: `paint.Render` is already portable, `internal/ipc` is already portable,
+and exactly one file — [`internal/wayland/shm.go#L22`](../internal/wayland/shm.go#L22),
+`memfd_create` — blocks a darwin build. The expensive half is everything with
+no interface in front of it: eight Linux assumptions below the seams, AppKit's
+claim on the process's main thread, and a keybind that has to move *inside*
+mavor because macOS has no compositor config file.
+
+Two findings reorder the plan. macOS keys permission to a code signature, and
+on macOS 26.1 a path-identified (non-bundled) client requesting Accessibility
+does not appear in System Settings at all — so the artifact has to become a
+signed, notarized `.app`, at 99 USD a year forever. And the ONNX Runtime
+vendored for `darwin/arm64` in the pinned `sherpa-onnx-go-macos` declares a
+minimum of **macOS 26.5**, which would make mavor's default engine refuse to
+launch on nearly every Mac in service.
+
+**Next step:** answer [`OQ-MAC2`](design/porting-to-macos.md#OQ-MAC2) — whether
+anyone will own an Apple Developer Program membership — because a "no" there is
+a "no" to the whole port rather than a smaller version of it.
