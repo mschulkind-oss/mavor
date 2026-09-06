@@ -144,7 +144,9 @@ func (r *ParecRecorder) Start(ctx context.Context) error {
 		r.logger.Error("audio: parec start failed", "err", err, "argv", cmd.Args)
 		return fmt.Errorf("audio: start: %w", err)
 	}
-	r.cmd, r.outPath, r.readOffset, r.stderr, r.started = cmd, out, 44, stderr, time.Now()
+	// 0, not 44: the real offset is read from the file's own header on the
+	// first chunk, once parec has written one. See WAVDataOffset.
+	r.cmd, r.outPath, r.readOffset, r.stderr, r.started = cmd, out, 0, stderr, time.Now()
 	stopMon := make(chan struct{})
 	r.stopMonitor = stopMon
 	go r.monitorLevel(out, stopMon)
@@ -184,12 +186,19 @@ func (r *ParecRecorder) ReadChunk() ([]byte, error) {
 	}
 
 	size := stat.Size()
-	if size <= 44 || size <= offset {
+
+	// Where the samples start is a property of the file, not a constant.
+	// Until parec has written enough for the header to be parseable there is
+	// nothing to read anyway.
+	dataAt, err := WAVDataOffset(f)
+	if err != nil {
 		return nil, nil
 	}
-
-	if offset < 44 {
-		offset = 44
+	if offset < dataAt {
+		offset = dataAt
+	}
+	if size <= dataAt || size <= offset {
+		return nil, nil
 	}
 
 	bytesToRead := size - offset

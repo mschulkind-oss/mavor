@@ -47,26 +47,27 @@ func ReadWAVSamples(path string) ([]int16, error) {
 	}
 	defer f.Close()
 
-	header := make([]byte, 44)
-	if _, err := io.ReadFull(f, header); err != nil {
-		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+	dataAt, err := WAVDataOffset(f)
+	if err != nil {
+		// A file too short to hold a header yet is not an error: parec has
+		// simply not written one. A file that is not RIFF/WAVE at all is.
+		stat, statErr := f.Stat()
+		if statErr == nil && stat.Size() < 44 {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("vad: read header: %w", err)
-	}
-
-	// Verify RIFF and WAVE magic headers
-	if string(header[0:4]) != "RIFF" || string(header[8:12]) != "WAVE" {
-		return nil, fmt.Errorf("vad: %s is not a valid RIFF/WAVE file", path)
+		return nil, fmt.Errorf("vad: %s: %w", path, err)
 	}
 
 	stat, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
-	dataSize := stat.Size() - 44
+	dataSize := stat.Size() - dataAt
 	if dataSize <= 0 {
 		return nil, nil
+	}
+	if _, err := f.Seek(dataAt, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("vad: seek to samples: %w", err)
 	}
 
 	rawBytes := make([]byte, dataSize)
@@ -129,10 +130,14 @@ func ReadRecentSamples(path string, maxSamples int) ([]int16, error) {
 	if err != nil {
 		return nil, err
 	}
-	if stat.Size() <= 44 {
+	dataAt, err := WAVDataOffset(f)
+	if err != nil {
 		return nil, nil
 	}
-	dataSize := stat.Size() - 44
+	if stat.Size() <= dataAt {
+		return nil, nil
+	}
+	dataSize := stat.Size() - dataAt
 	bytesToRead := int64(maxSamples * 2)
 	if bytesToRead > dataSize {
 		bytesToRead = dataSize
