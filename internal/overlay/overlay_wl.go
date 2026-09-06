@@ -48,10 +48,19 @@ type WL struct {
 type desired struct {
 	visual  Visual
 	preview string
-	level   float64
-	// hasLevel says a level arrived since the last frame; without it a
-	// silent moment is indistinguishable from no sample at all.
-	hasLevel bool
+	// levels are every sample that arrived since the last frame, oldest
+	// first — not just the newest.
+	//
+	// The waveform is a time history: one column per sample. Keeping only
+	// the newest made the ring advance once per FRAME (37.5 ms) while the
+	// recorder samples every 30 ms, so it scrolled slower than the audio and
+	// by a varying number of columns depending on how the two clocks lined
+	// up. That is the jitter. Draining every sample restores one column per
+	// sample and a uniform scroll.
+	//
+	// Bounded: on the impossible frame where thousands arrive, the OLDEST go,
+	// because a waveform is about what just happened.
+	levels []float64
 	// setAt is when the newest of these was written, so a frame can report
 	// how long the update waited before it reached the screen.
 	setAt time.Time
@@ -187,8 +196,10 @@ func (o *WL) run(st *wlState) {
 		}
 		st.scene.Visual = d.visual
 		st.scene.Preview = d.preview
-		if d.hasLevel {
-			shiftWave(st.levels, waveDisplayLevel(d.level))
+		// One shift per sample, in order: the ring is a time history and a
+		// dropped sample is a missing column.
+		for _, lv := range d.levels {
+			shiftWave(st.levels, waveDisplayLevel(lv))
 		}
 		st.scene.Levels = st.levels
 		st.sceneSetAt = d.setAt
@@ -381,12 +392,20 @@ func (o *WL) SetLevel(level float64) error {
 	default:
 	}
 	o.mu.Lock()
-	o.want.level, o.want.hasLevel = level, true
+	o.want.levels = append(o.want.levels, level)
+	if n := len(o.want.levels); n > maxPendingLevels {
+		o.want.levels = append(o.want.levels[:0], o.want.levels[n-maxPendingLevels:]...)
+	}
 	o.want.setAt = time.Now()
 	o.wantSeq++
 	o.mu.Unlock()
 	return nil
 }
+
+// maxPendingLevels is a couple of seconds of samples at the recorder's 30 ms
+// cadence — far more than a frame should ever hold, and a bound rather than a
+// target.
+const maxPendingLevels = 64
 
 func (o *WL) SetText(text string) error {
 	select {
@@ -410,7 +429,9 @@ func (o *WL) takeDesired(seen *uint64) (desired, bool) {
 	d := o.want
 	changed := o.wantSeq != *seen
 	*seen = o.wantSeq
-	o.want.hasLevel = false
+	// The caller now owns the samples; start a fresh batch rather than
+	// handing out the same slice twice.
+	o.want.levels = nil
 	return d, changed
 }
 

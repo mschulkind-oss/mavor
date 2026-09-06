@@ -103,3 +103,64 @@ func TestProducersNeverBlockWithNoRenderLoop(t *testing.T) {
 		t.Fatal("producers blocked with no render loop draining")
 	}
 }
+
+// The waveform is a time history — one column per sample — so samples are the
+// one thing that must NOT be collapsed to the newest.
+//
+// Keeping only the newest made the ring advance once per frame (37.5 ms) while
+// the recorder samples every 30 ms: it scrolled slower than the audio, by a
+// varying number of columns depending on how the two clocks lined up. That is
+// what "a little bit of jitteriness in the waveform" was.
+func TestEverySampleIsKeptForTheWaveform(t *testing.T) {
+	o := &WL{done: make(chan struct{})}
+	for i := 0; i < 5; i++ {
+		if err := o.SetLevel(float64(i) / 10); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var seen uint64
+	got, changed := o.takeDesired(&seen)
+	if !changed {
+		t.Fatal("no change reported after five samples")
+	}
+	if len(got.levels) != 5 {
+		t.Fatalf("kept %d samples, want all 5 — a dropped sample is a missing column", len(got.levels))
+	}
+	for i, lv := range got.levels {
+		if want := float64(i) / 10; lv != want {
+			t.Errorf("sample %d = %v, want %v — order matters in a time history", i, lv, want)
+		}
+	}
+}
+
+// Taking the batch must not hand the same samples out twice, or the waveform
+// would scroll through them again on the next frame.
+func TestSamplesAreConsumedOnce(t *testing.T) {
+	o := &WL{done: make(chan struct{})}
+	_ = o.SetLevel(0.4)
+	var seen uint64
+	if got, _ := o.takeDesired(&seen); len(got.levels) != 1 {
+		t.Fatalf("first take got %d samples, want 1", len(got.levels))
+	}
+	if got, _ := o.takeDesired(&seen); len(got.levels) != 0 {
+		t.Errorf("second take got %d samples, want none", len(got.levels))
+	}
+}
+
+// The batch is bounded, and it is the OLDEST that go: a waveform is about what
+// just happened.
+func TestPendingSamplesAreBoundedKeepingTheNewest(t *testing.T) {
+	o := &WL{done: make(chan struct{})}
+	for i := 0; i < maxPendingLevels*4; i++ {
+		_ = o.SetLevel(float64(i))
+	}
+	var seen uint64
+	got, _ := o.takeDesired(&seen)
+	if len(got.levels) > maxPendingLevels {
+		t.Fatalf("kept %d samples, over the %d bound", len(got.levels), maxPendingLevels)
+	}
+	last := got.levels[len(got.levels)-1]
+	if want := float64(maxPendingLevels*4 - 1); last != want {
+		t.Errorf("newest sample = %v, want %v — the newest must survive", last, want)
+	}
+}
