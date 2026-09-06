@@ -62,8 +62,25 @@ events. Speech2Text
 ([#8238](https://extensions.gnome.org/extension/8238/gnome-speech2text/),
 declares 46–50) also only "copies the transcribed text into your clipboard".
 Two of two, both living *inside the Shell process* where injection is easiest,
-both declining to do it. That is the strongest available signal about how hard
-this is, and it also corrects
+both declining to do it.
+
+> [!IMPORTANT]
+> Read that as a signal about *willingness*, not about difficulty. The
+> mechanism is not hard and it is not missing: `ClutterVirtualInputDevice`
+> exposes
+> [`notify_keyval(time_us, keyval, key_state)`](https://mutter.gnome.org/clutter/class.VirtualInputDevice.html),
+> reached from an extension through
+> [`Clutter.Seat.create_virtual_device`](https://mutter.gnome.org/clutter/method.Seat.create_virtual_device.html)
+> with a keyboard device type (both verified 2026-09-06). An extension can
+> inject real keystrokes into the focused application on GNOME Wayland with no
+> per-session prompt. Blurt's author says he *wanted to avoid* simulating input
+> events — a design preference, plausibly about focus and safety, not a report
+> that he tried and failed. Nobody should read this doc and conclude injection
+> on GNOME is impossible. It is possible, it is prompt-free, and
+> [§3.1](#31-injection--the-port-that-actually-matters) rates it as working. What it costs is a JavaScript add-on against an API GNOME has
+> never promised to keep stable.
+
+This also corrects
 [`wayland-dictation-stack.md` §1.8](../research/wayland-dictation-stack.md#18-what-the-field-actually-uses-in-2026),
 which lists Blurt as "injects via the Shell, no external tool". It does not.
 
