@@ -197,3 +197,63 @@ func sherpaGPUReport(devices []string) (bool, string) {
 	}
 	return true, msg
 }
+
+// gpuAvailability is what THIS machine can accelerate, resolved once per
+// command rather than once per model: probing whisper.cpp's backends shells
+// out twice, and the answer is the same for all 25 catalog entries.
+//
+// It answers a question the catalog cannot, which is why it lives here and not
+// in internal/models. Whether a model *can* use a GPU is a property of the
+// model; whether it *will* on this machine is a property of the runtimes
+// installed beside it, and only the second one is worth printing.
+type gpuAvailability struct {
+	// whisperBackend is the GPU backend whisper.cpp actually loaded, or ""
+	// when it loaded none. The stock distribution build loads none.
+	whisperBackend string
+	// devices counts the render nodes visible to this process. A backend
+	// with no device still transcribes on the CPU.
+	devices int
+}
+
+func detectGPUAvailability() gpuAvailability {
+	a := gpuAvailability{devices: len(gpuDevices())}
+	if backends := whisperGPUBackends(); len(backends) > 0 {
+		a.whisperBackend = strings.Join(backends, "+")
+	}
+	return a
+}
+
+// forEngine reports how a model of the given catalog engine runs on this
+// machine: the backend's name when the GPU is genuinely used, "no" otherwise.
+//
+// sherpa is always "no", and that is a fact about the build rather than this
+// machine: the sherpa-onnx-go module vendors a CPU-only ONNX Runtime with no
+// provider shared objects, and sherpa-onnx answers a provider it cannot honour
+// by logging "Fallback to cpu!" and continuing. Reporting anything else here
+// would promise acceleration that silently does not happen.
+func (a gpuAvailability) forEngine(engine string) string {
+	if engine == "sherpa" {
+		return "no"
+	}
+	if a.whisperBackend == "" || a.devices == 0 {
+		return "no"
+	}
+	return a.whisperBackend
+}
+
+// gpuFootnote explains a column of "no" — without it a user reads the listing
+// as "mavor cannot use my GPU" when the real answer is "the whisper.cpp you
+// installed was built without one".
+func (a gpuAvailability) footnote() string {
+	switch {
+	case a.whisperBackend == "":
+		return "GPU: whisper-cli loaded no GPU backend, so whisper models run on the CPU " +
+			"(install a whisper.cpp built with -DGGML_VULKAN=ON). sherpa models are CPU-only in this build."
+	case a.devices == 0:
+		return fmt.Sprintf("GPU: whisper-cli loaded the %s backend but no GPU device is visible, "+
+			"so whisper models run on the CPU. sherpa models are CPU-only in this build.", a.whisperBackend)
+	default:
+		return fmt.Sprintf("GPU: whisper models use the %s backend (%d device(s)). "+
+			"sherpa models are CPU-only in this build.", a.whisperBackend, a.devices)
+	}
+}

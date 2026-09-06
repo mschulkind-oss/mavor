@@ -292,9 +292,12 @@ func listCatalog(w io.Writer, cfg config.Config, installedOnly bool) error {
 	active := activeModelName(cfg)
 
 	type row struct {
-		name, engine, size, langs, stream, status string
+		name, engine, size, langs, stream, gpu, status string
 	}
 	var rows []row
+
+	// Probed once, not per row: it shells out to whisper-cli and ldd.
+	gpu := detectGPUAvailability()
 
 	for _, m := range models.Catalog {
 		got := installedEntry(installed, m)
@@ -320,6 +323,7 @@ func listCatalog(w io.Writer, cfg config.Config, installedOnly bool) error {
 			size:   formatFileSize(m.DownloadSize),
 			langs:  m.Languages,
 			stream: stream,
+			gpu:    gpu.forEngine(m.Engine),
 			status: status,
 		})
 	}
@@ -336,29 +340,31 @@ func listCatalog(w io.Writer, cfg config.Config, installedOnly bool) error {
 
 	// Column widths sized to content so the table stays readable as the
 	// catalog grows.
-	wName, wEngine, wSize, wLangs, wStream, wStatus := len("NAME"), len("ENGINE"), len("SIZE"), len("LANGUAGES"), len("STREAM"), len("STATUS")
+	wName, wEngine, wSize, wLangs, wStream, wGPU, wStatus := len("NAME"), len("ENGINE"), len("SIZE"), len("LANGUAGES"), len("STREAM"), len("GPU"), len("STATUS")
 	for _, r := range rows {
 		wName = max(wName, len(r.name))
 		wEngine = max(wEngine, len(r.engine))
 		wSize = max(wSize, len(r.size))
 		wLangs = max(wLangs, len(r.langs))
 		wStream = max(wStream, len(r.stream))
+		wGPU = max(wGPU, len(r.gpu))
 		wStatus = max(wStatus, runeLen(r.status))
 	}
 
-	line := func(name, engine, size, langs, stream, status string) {
+	line := func(name, engine, size, langs, stream, gpu, status string) {
 		fmt.Fprintln(w, strings.TrimRight(strings.Join([]string{
 			padRight(name, wName), padRight(engine, wEngine), padLeft(size, wSize),
-			padRight(langs, wLangs), padRight(stream, wStream), status,
+			padRight(langs, wLangs), padRight(stream, wStream), padRight(gpu, wGPU), status,
 		}, "  "), " "))
 	}
 
-	line("NAME", "ENGINE", "SIZE", "LANGUAGES", "STREAM", "STATUS")
+	line("NAME", "ENGINE", "SIZE", "LANGUAGES", "STREAM", "GPU", "STATUS")
 	for _, r := range rows {
-		line(r.name, r.engine, r.size, r.langs, r.stream, r.status)
+		line(r.name, r.engine, r.size, r.langs, r.stream, r.gpu, r.status)
 	}
 
 	fmt.Fprintf(w, "\n%s active   %s downloaded   %s not downloaded\n", markerActive, markerDownloaded, markerAbsent)
+	fmt.Fprintln(w, gpu.footnote())
 	if !installedOnly {
 		fmt.Fprintln(w, "SIZE is the download; sherpa archives expand to roughly twice that on disk.")
 		fmt.Fprintln(w, "Download one with `mavor models pull <name>`.")
@@ -387,6 +393,7 @@ func listCatalogVerbose(w io.Writer, cfg config.Config, installedOnly bool) erro
 
 	fmt.Fprintf(w, "Model cache: %s\n", cfg.Paths.Models)
 
+	gpu := detectGPUAvailability()
 	shown := 0
 	for _, m := range models.Catalog {
 		got := installedEntry(installed, m)
@@ -411,7 +418,7 @@ func listCatalogVerbose(w io.Writer, cfg config.Config, installedOnly bool) erro
 		field(w, "streaming", streamingDetail(m.Streaming))
 		field(w, "speed", speedDetail(m))
 		field(w, "vocabulary", m.Vocabulary)
-		field(w, "gpu", gpuDetail(m.Engine))
+		field(w, "gpu", gpuDetail(gpu, m.Engine))
 		field(w, "status", state)
 		field(w, "source", m.URL)
 	}
@@ -448,8 +455,11 @@ type catalogModelJSON struct {
 	DownloadS   int64  `json:"download_size"`
 	Languages   string `json:"languages"`
 	Streaming   bool   `json:"streaming"`
-	Transducer  bool   `json:"transducer"`
-	Vocabulary  string `json:"vocabulary"`
+	// GPU is how this model runs on THIS machine — the backend's name, or
+	// "no". Machine-dependent like `installed`, not a property of the model.
+	GPU        string `json:"gpu"`
+	Transducer bool   `json:"transducer"`
+	Vocabulary string `json:"vocabulary"`
 
 	// Speed is the relative tier and MeasuredRTF the benchmark, kept as
 	// separate fields so a consumer cannot mistake one for the other. The
@@ -475,6 +485,7 @@ func listCatalogJSON(w io.Writer, cfg config.Config, installedOnly bool) error {
 	installed := scanInstalled(cfg)
 	active := activeModelName(cfg)
 
+	gpu := detectGPUAvailability()
 	out := catalogJSON{ModelDir: cfg.Paths.Models, Models: []catalogModelJSON{}}
 	for _, m := range models.Catalog {
 		got := installedEntry(installed, m)
@@ -492,6 +503,7 @@ func listCatalogJSON(w io.Writer, cfg config.Config, installedOnly bool) error {
 			DownloadS:   m.DownloadSize,
 			Languages:   m.Languages,
 			Streaming:   m.Streaming,
+			GPU:         gpu.forEngine(m.Engine),
 			Transducer:  m.Transducer,
 			Vocabulary:  m.Vocabulary,
 			Speed:       m.Speed,
@@ -548,13 +560,6 @@ func speedDetail(m models.KnownModel) string {
 			m.Speed, m.MeasuredRTF, 1/m.MeasuredRTF)
 	}
 	return m.Speed + " (relative tier, not measured)"
-}
-
-func gpuDetail(engine string) string {
-	if engine == "sherpa" {
-		return "none in practice — the bundled ONNX Runtime is a CPU-only build"
-	}
-	return "used automatically when the whisper.cpp build has a GPU backend"
 }
 
 // The status markers are multi-byte, so columns are padded by rune count.
@@ -743,4 +748,20 @@ func downloadFile(url, dest string) error {
 		return err
 	}
 	return os.Rename(tmp, dest)
+}
+
+// gpuDetail renders the verbose listing's gpu line: the backend name reads as
+// an answer on its own, but a bare "no" does not say whose fault it is.
+func gpuDetail(a gpuAvailability, engine string) string {
+	got := a.forEngine(engine)
+	if got != "no" {
+		return got + " — whisper.cpp loaded this backend and a device is visible"
+	}
+	if engine == "sherpa" {
+		return "no — the vendored ONNX Runtime is CPU-only, whatever the hardware"
+	}
+	if a.whisperBackend == "" {
+		return "no — this whisper.cpp was built without a GPU backend"
+	}
+	return fmt.Sprintf("no — whisper.cpp loaded %s but no GPU device is visible", a.whisperBackend)
 }
