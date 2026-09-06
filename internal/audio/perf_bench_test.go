@@ -197,31 +197,3 @@ func BenchmarkReadChunkSteadyState(b *testing.B) {
 // every 30ms tick allocates a fresh []int16 for the chunk, then appends it
 // onto a slice that keeps growing until a silence gap resets it. This
 // benchmarks the cost of N ticks' worth of that pattern for a phrase as long
-// as a whole recording (i.e. continuous speech with no pause).
-func BenchmarkPhrasePreviewAccumulation(b *testing.B) {
-	chunkBytes := 960 // 30ms @ 16kHz s16le
-	chunk := make([]byte, chunkBytes)
-	for i := range chunk {
-		chunk[i] = byte(i)
-	}
-	for _, secs := range recordingDurations {
-		ticks := secs * 1000 / 30
-		b.Run(fmt.Sprintf("%ds_%dticks", secs, ticks), func(b *testing.B) {
-			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
-				var accumulated []int16
-				for t := 0; t < ticks; t++ {
-					sampleCount := len(chunk) / 2
-					frameSamples := make([]int16, sampleCount) // per-tick alloc, as in daemon.go
-					for j := 0; j < sampleCount; j++ {
-						frameSamples[j] = int16(binary.LittleEndian.Uint16(chunk[j*2 : j*2+2]))
-					}
-					accumulated = append(accumulated, frameSamples...)
-				}
-				if len(accumulated) == 0 {
-					b.Fatal("expected accumulation")
-				}
-			}
-		})
-	}
-}

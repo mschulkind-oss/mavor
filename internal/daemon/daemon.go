@@ -11,7 +11,6 @@ package daemon
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -446,7 +445,7 @@ func (d *Daemon) runPhrasePreview(ctx context.Context, gen uint64) {
 		ticker := time.NewTicker(30 * time.Millisecond)
 		defer ticker.Stop()
 
-		var accumulatedSamples []int16
+		phrase := newPhraseBuffer()
 		var speechFrames int
 		var silenceFrames int
 
@@ -464,14 +463,7 @@ func (d *Daemon) runPhrasePreview(ctx context.Context, gen uint64) {
 					continue
 				}
 
-				sampleCount := len(chunk) / 2
-				frameSamples := make([]int16, sampleCount)
-				for i := 0; i < sampleCount; i++ {
-					frameSamples[i] = int16(binary.LittleEndian.Uint16(chunk[i*2 : i*2+2]))
-				}
-				accumulatedSamples = append(accumulatedSamples, frameSamples...)
-
-				rms := audio.CalculateRMS(frameSamples)
+				rms := audio.CalculateRMS(phrase.add(chunk))
 				if rms >= audio.SpeechRMSThreshold {
 					speechFrames++
 					silenceFrames = 0
@@ -485,11 +477,9 @@ func (d *Daemon) runPhrasePreview(ctx context.Context, gen uint64) {
 					continue
 				}
 
-				phrase := accumulatedSamples
-				accumulatedSamples = nil
 				speechFrames = 0
 				silenceFrames = 0
-				go d.transcribePhrase(ctx, gen, phrase)
+				go d.transcribePhrase(ctx, gen, phrase.take())
 			}
 		}
 	}()

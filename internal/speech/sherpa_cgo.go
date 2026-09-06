@@ -82,6 +82,14 @@ type cgoOnlineRecognizer struct {
 	impl         *sherpa_onnx.OnlineRecognizer
 	activeStream *sherpa_onnx.OnlineStream
 	mu           sync.Mutex
+
+	// samples is the int16-to-float32 conversion buffer, reused across
+	// chunks. FeedChunk runs every 30ms for as long as anyone is speaking,
+	// and AcceptWaveform copies what it is given into the stream's own
+	// feature extractor before returning — the C API takes a const pointer
+	// and consumes it synchronously — so the buffer is free to be refilled
+	// on the next chunk. Guarded by mu, like everything else here.
+	samples []float32
 }
 
 func (r *cgoOnlineRecognizer) DecodeAudio(ctx context.Context, sampleRate int, samples []float32) (string, error) {
@@ -159,7 +167,10 @@ func (r *cgoOnlineRecognizer) FeedChunk(ctx context.Context, chunk []byte) (stri
 	}
 
 	numSamples := len(chunk) / 2
-	samples := make([]float32, numSamples)
+	if cap(r.samples) < numSamples {
+		r.samples = make([]float32, numSamples)
+	}
+	samples := r.samples[:numSamples]
 	for i := 0; i < numSamples; i++ {
 		val := int16(binary.LittleEndian.Uint16(chunk[i*2 : i*2+2]))
 		samples[i] = float32(val) / 32768.0
