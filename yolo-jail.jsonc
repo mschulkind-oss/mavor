@@ -99,9 +99,24 @@
   // Each entry is a host path (mounted at /ctx/<basename>) or "host:container".
   // Pass --mount/-m on `yolo init` to populate this automatically, e.g.
   //   yolo init -m ~/code/shared-lib -m ~/notes
+  //
+  // Read-only views of the developer's own mavor installation, so an agent
+  // can diagnose a live daemon instead of guessing at it. Logs need no mount:
+  // mavor runs as a systemd user service, and the `journal` loophole above
+  // already reaches them with `yolo-journalctl --user -u mavor`.
+  //
+  // Explicit host:container form on both, because the basename is taken after
+  // symlink resolution and these paths are ones we quote back to people.
   "mounts": [
-    //   "~/code/other-repo",
-    //   "~/code/shared-lib:/ctx/shared-lib"
+    // The active config, plus any vocabulary file beside it. This is the file
+    // `mavor config show` resolves, and the thing to compare against
+    // `defaultConfigTemplate()` when a user's behaviour disagrees with a
+    // default.
+    "~/.config/mavor:/ctx/mavor-config",
+    // The model cache. Needed to tell "the companion is not installed" apart
+    // from "it is installed but its ONNX files are truncated" — the two look
+    // identical from the outside and only the second is a download bug.
+    "~/.cache/mavor/models:/ctx/mavor-models"
   ],
   // Extra environment variables set inside the jail.
   // Keys are variable names, values are strings.
