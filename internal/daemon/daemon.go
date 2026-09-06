@@ -62,6 +62,12 @@ type Daemon struct {
 	streamHistory string
 	streamGen     uint64
 	streamSource  speech.StreamTranscriber
+
+	// streamDrain is closed when the previous recording's StopStream has
+	// returned. That call is made off the critical path because its result is
+	// discarded, but the recognizer it drains is the same object the next
+	// recording restarts, so the next StartStream waits on this.
+	streamDrain chan struct{}
 }
 
 type Config struct {
@@ -296,6 +302,9 @@ func (d *Daemon) startStreamingMonitoring(ctx context.Context) {
 		return
 	}
 	src := d.previewStreamSource()
+	// The previous recording's final decode may still be running; it holds
+	// the same recognizer this is about to restart.
+	d.awaitStreamDrain(ctx)
 
 	d.streamMu.Lock()
 	if d.streamCancel != nil {
@@ -571,16 +580,49 @@ func (d *Daemon) stopStreamingMonitoring() {
 	if d.overlay != nil {
 		_ = d.overlay.SetText("")
 	}
+	drain := make(chan struct{})
+	if src != nil {
+		d.streamDrain = drain
+	}
 	d.streamMu.Unlock()
 
-	if src != nil {
-		if finalText, err := src.StopStream(context.Background()); err == nil && finalText != "" {
-			// Logged and dropped. The preview never contributes to the
-			// transcript, and a companion never influences it at all — the
-			// text the user gets comes from the main model, once, in
-			// runTranscription.
-			d.logger.Info("streaming: final preview text discarded", "text", finalText)
+	if src == nil {
+		return
+	}
+
+	// StopStream makes the recognizer decode whatever audio it still holds,
+	// and the answer is thrown away — the preview never contributes to the
+	// transcript. Waiting for it here charged the user twice for nothing:
+	// this runs on the FSM listener, which state.Machine.Apply calls before
+	// returning, so a slow final decode delayed BOTH the `mavor stop` /
+	// `toggle` command's own reply AND the spawn of runTranscription, the
+	// call that produces the text the user is waiting for.
+	go func() {
+		defer close(drain)
+		started := time.Now()
+		finalText, err := src.StopStream(context.Background())
+		if err == nil && finalText != "" {
+			d.logger.Info("streaming: final preview text discarded",
+				"text", finalText, "drain_took", time.Since(started))
 		}
+	}()
+}
+
+// awaitStreamDrain blocks until the previous recording's StopStream has
+// returned, so a recognizer is never fed a new stream while it is still
+// finishing the last one. It is normally already closed by the time a user
+// starts speaking again.
+func (d *Daemon) awaitStreamDrain(ctx context.Context) {
+	d.streamMu.Lock()
+	drain := d.streamDrain
+	d.streamMu.Unlock()
+	if drain == nil {
+		return
+	}
+	select {
+	case <-drain:
+	case <-ctx.Done():
+		return
 	}
 }
 

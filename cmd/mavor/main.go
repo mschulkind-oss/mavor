@@ -203,8 +203,15 @@ func runDaemon(args []string) error {
 	// companion model is loaded now rather than at the first recording, so
 	// the first dictation is not the slow one; a model NAMED in the config
 	// and missing is the one preview failure that stops the daemon.
+	// The main model's engine comes up concurrently with the companion's:
+	// nothing about either load depends on the other, and doing them in
+	// series doubled the wait before the daemon was usable.
+	startedAt := time.Now()
+	waitForEngine := beginStart(ctx, transcriber)
+
 	preview, err := speech.LoadPreview(ctx, cfg, logger)
 	if err != nil {
+		waitOrLog(waitForEngine, logger.Warn)
 		return err
 	}
 	defer preview.Close()
@@ -262,11 +269,10 @@ func runDaemon(args []string) error {
 		MinPhraseDuration: time.Duration(cfg.Preview.MinPhraseMS) * time.Millisecond,
 	})
 
-	if starter, ok := transcriber.(interface{ Start(context.Context) error }); ok {
-		if err := starter.Start(ctx); err != nil {
-			return fmt.Errorf("start transcriber engine: %w", err)
-		}
+	if err := waitForEngine(); err != nil {
+		return err
 	}
+	logger.Info("models: ready", "took", time.Since(startedAt))
 
 	logger.Info("daemon starting",
 		"socket", cfg.Paths.Socket,
