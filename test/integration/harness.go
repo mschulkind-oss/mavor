@@ -3,9 +3,11 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"image/png"
 	"io"
 	"os"
 	"os/exec"
@@ -209,6 +211,44 @@ func (h *Harness) configureOutput(w, hpx int) {
 	// inline `output HEADLESS-1 ...` directive applies when the output is
 	// first discovered; for headless backends we sometimes need to re-issue.
 	h.swaymsg(fmt.Sprintf("output HEADLESS-1 mode %dx%d", w, hpx))
+
+	// Pin the backdrop to black.
+	//
+	// Every screenshot assertion here works by counting lit pixels against
+	// the desktop behind them, and sway's DEFAULT backdrop is a light grey.
+	// On a machine where it happens to be black the tests pass; on GitHub's
+	// runner the same screenshot came back with 2,012,676 of 2,073,600 pixels
+	// "lit" and every one of those assertions was meaningless.
+	//
+	// Fixing the background is better than teaching each test to subtract
+	// one: it makes the two environments produce the same pixels, which is
+	// the only reason to trust a screenshot taken in either.
+	h.swaymsg("output HEADLESS-1 bg #000000 solid_color")
+	h.requireDarkBackdrop()
+}
+
+// requireDarkBackdrop proves the backdrop really is dark before any test
+// counts pixels against it.
+//
+// Without this the failure is silent and awful: a light desktop makes every
+// screenshot assertion pass or fail on the wallpaper rather than on the
+// overlay, and the test names still claim to be about the overlay. Better to
+// refuse to run than to report a green suite that checked nothing.
+func (h *Harness) requireDarkBackdrop() {
+	img, err := png.Decode(bytes.NewReader(h.Grim()))
+	if err != nil {
+		h.t.Fatalf("integration: screenshot the backdrop: %v", err)
+	}
+	b := img.Bounds()
+	// Bottom-left, which no test draws in: the overlay is top-anchored and
+	// the bar spans the top.
+	r, g, bl, _ := img.At(b.Min.X+2, b.Max.Y-2).RGBA()
+	if r>>8 > 40 || g>>8 > 40 || bl>>8 > 40 {
+		h.t.Fatalf("integration: the desktop backdrop is (%d,%d,%d), not dark — "+
+			"every screenshot assertion in this package counts lit pixels against it "+
+			"and would be measuring the wallpaper. Is swaybg installed?",
+			r>>8, g>>8, bl>>8)
+	}
 }
 
 func (h *Harness) startWaybar() {
