@@ -4,7 +4,9 @@ Tap a hotkey, talk, tap again: the words are transcribed on your own machine
 and typed into whatever window has focus. Your voice never leaves the box —
 no cloud API, no account, nothing to sign up for. The text is copied to the
 clipboard too, and a small "● Recording" pill sits at the top of the screen,
-clear of your bar, showing a live waveform while you speak.
+clear of your bar, showing a live waveform and a running preview of the words
+while you speak. The preview is never what gets typed — the text you keep is
+transcribed once, when you let go.
 
 ```
 $mod + ` ──▶  ● Recording   ▂▃▅▆          (HUD overlay with live audio meter)
@@ -16,9 +18,10 @@ $mod + ` ──▶  ⟳ Transcribing  ● ● ●        (in-process CGO / whisp
 
 CLI subcommands:
 
+- `mavor setup` — one-shot first run: scaffold the config, install missing
+  runtime tools, and download every model the config names.
 - `mavor daemon` — long-lived process. Owns the overlay, audio capture,
-  the speech-to-text (STT) engine, PipeWire audio ducking, and a Unix-socket
-  IPC server.
+  speech-to-text, PipeWire audio ducking, and a Unix-socket IPC server.
 - `mavor start` / `mavor stop` — push-to-talk keybind controls (hold to speak).
 - `mavor toggle` — toggle mode control (press once to start, press again to stop).
 - `mavor doctor` — self-diagnostic health check for Wayland, audio, and tools.
@@ -49,22 +52,24 @@ an API is.
 `mavor` is the boring layer under that. Three goals, in order:
 
 **One interface in front of every model.** A single `Transcriber` contract with
-an out-of-process `whisper-cli`, a warm HTTP or Unix-socket server, and
-in-process sherpa-onnx behind it, so switching engines is a line in a config
-file rather than a different program. `mavor models list` shows the whole
-catalog — size, languages, whether it streams — and `mavor models pull` puts it
-where the engine will find it. Trying a new model should cost a minute, not an
-afternoon.
+a supervised warm `whisper-server`, a one-shot `whisper-cli`, and in-process
+sherpa-onnx behind it. You do not choose between them: switching models is the
+one line `model = "…"` in a config file, and the model decides the rest — a
+whisper model runs on whisper.cpp, everything else on ONNX Runtime through
+sherpa-onnx. `mavor models list` shows the whole catalog — size, languages,
+whether it streams — and `mavor models pull` puts it where mavor will find it.
+Trying a new model should cost a minute, not an afternoon.
 
 **Everything runs on your machine.** Your voice never leaves it. Transcription
 is whisper.cpp or sherpa-onnx running locally against a model on your own disk
 — there is no cloud API behind it, no account, no API key, and nothing to sign
 up for. The only network call in the program is `mavor models pull`, which you
-invoke, to fetch a model from Hugging Face or a GitHub release. The `server`
-engine posts to an endpoint you configure, and that endpoint defaults to a Unix
-socket: it is a `whisper-server` you run yourself to keep a model warm, not a
-vendor. No telemetry, no analytics, no crash reporting. Unplug the network
-after `mavor setup` and dictation still works.
+invoke, to fetch a model from Hugging Face or a GitHub release. Whisper models
+do go over HTTP, and it is loopback: mavor starts and supervises its own
+`whisper-server` child to keep the model warm. `advanced.server` can point that
+at a server you run yourself instead — still yours, still not a vendor. No
+telemetry, no analytics, no crash reporting. Unplug the network after
+`mavor setup` and dictation still works.
 
 **Minimal and unintrusive.** No tray icon, no window, no background service
 listening for a wake word. A daemon that idles until you press a
@@ -126,21 +131,15 @@ step does not land, is [`docs/quickstart.md`](docs/quickstart.md). The short
 form:
 
 ```bash
-mavor setup      # config, missing tools, default model, systemd unit
+mavor setup      # config, missing tools, every model the config names, systemd unit
+mavor doctor     # what this machine will actually do with that config
 ```
 
-Or do it by hand. Run the built-in diagnostic tool to verify your Wayland and
-audio environment:
-
-```bash
-mavor doctor
-```
-
-Initialize your configuration file:
-
-```bash
-mavor config init
-```
+`mavor setup` makes the current config runnable: it downloads the main model
+*and* the small streaming model the live preview runs alongside it, skips
+whatever is already in the cache, and is safe to re-run after you edit
+`config.toml`. `mavor config init` scaffolds the file on its own if you would
+rather start there.
 
 ## Compositor integration
 
@@ -164,9 +163,9 @@ bindsym $mod+grave exec mavor toggle
 The overlay is a `wlr-layer-shell` surface on the `top` layer and does **not** request
 an exclusive zone, which means two things: it floats over your content without
 resizing windows, and the compositor places it *inside* the space other bars
-have reserved. `top_margin` is therefore a gap below Waybar, not an offset from
-the screen edge — a bar of any height, or no bar at all, works without
-configuring anything.
+have reserved. `overlay.top_margin` is therefore a gap below Waybar, not an
+offset from the screen edge — a bar of any height, or no bar at all, works
+without configuring anything.
 
 ## Systemd User Service
 
@@ -180,18 +179,48 @@ mavor service status
 ## Configuration
 
 `$XDG_CONFIG_HOME/mavor/config.toml` (defaults to `~/.config/mavor/config.toml`).
-All paths support `~` and `$ENVIRONMENT_VARIABLES`. Run `mavor config show` to inspect.
+All paths support `~` and `$ENVIRONMENT_VARIABLES`. Run `mavor config show` to
+inspect the resolved values, and `mavor config init` to scaffold the commented
+file with every default in it.
+
+One top-level key and six tables. The first line is the one a first-time user
+touches; everything below it has a working default, and deleting a line gets
+that default back.
 
 ```toml
-top_margin   = 8                             # px between screen top and overlay
-engine       = "cli"                         # "cli" (whisper.cpp) or "sherpa" (CGO ONNX)
-model        = "base.en"                     # whisper ggml model name
-model_dir    = "~/.cache/mavor/models"       # where downloaded models live
-duck_audio   = true                          # duck music/browser audio while recording
-duck_volume  = "0%"                          # level while recording ("0%" mutes; raise to merely lower)
-duck_streams = ["spotify", "firefox"]        # target specific media apps
-socket       = "$XDG_RUNTIME_DIR/mavor.sock" # daemon IPC socket
+model = "whisper-base.en"   # `mavor models list` shows every choice
+
+[preview]
+enabled = true              # live text in the overlay while you speak
+source = "auto"             # "auto" | "phrases" | a model name
+
+[ducking]
+enabled = false             # lower other audio while recording
+volume = "0%"               # "0%" mutes; "25%" merely lowers
+# apps = ["spotify", "firefox"]
+
+[overlay]
+top_margin = 8              # px below the top of the usable area
+
+[vocabulary]
+# words = ["mavor", "wlroots", "Schulkind"]
+
+# Chosen for you. Override only if `mavor doctor` gives you a reason to.
+[advanced]
+# threads = 6               # default: this machine's physical core count
+# gpu = "auto"              # "auto" or "off"; whisper only
+
+[paths]
+# models = "~/.cache/mavor/models"
 ```
+
+There is no `engine` key. The model decides its runtime, and where that runtime
+runs is derived too — a warm supervised `whisper-server` for whisper models,
+in-process sherpa-onnx for the rest. `mavor doctor` prints what it picked and
+why.
+
+Every key, with its units and failure modes, is in the
+[User Guide](docs/user-guide.md).
 
 ## Models
 
@@ -203,48 +232,57 @@ multi-gigabyte fetch.
 cache marked:
 
 ```
-NAME                 ENGINE       SIZE  LANGUAGES            STREAM  STATUS         ALIASES
-tiny.en              whisper   74.1 MB  en                   no      –              whisper-tiny.en
-base.en              whisper  141.1 MB  en                   no      ✓ 141.1 MB  ★  whisper-base.en
-large-v3-turbo       whisper   1.51 GB  multi (99)           no      –              whisper-large-v3-turbo
-parakeet             sherpa   429.4 MB  en                   yes     –              parakeet-tdt
-sensevoice-small     sherpa   999.3 MB  zh, en, ja, ko, yue  no      –              sensevoice
-zipformer-streaming  sherpa   296.0 MB  en                   yes     –              zipformer
+Model cache: /home/you/.cache/mavor/models
+
+NAME                     ENGINE       SIZE  LANGUAGES            STREAM  STATUS
+whisper-tiny.en          whisper   74.1 MB  en                   no      –
+whisper-base.en          whisper  141.1 MB  en                   no      ✓ 141.1 MB  ★
+whisper-large-v3-turbo   whisper   1.51 GB  multi (99)           no      –
+fastconformer-streaming  sherpa   429.4 MB  en                   yes     –
+parakeet-tdt-0.6b        sherpa   464.6 MB  multi (25)           no      –
+sensevoice-small         sherpa   999.3 MB  zh, en, ja, ko, yue  no      –
+zipformer-streaming-20m  sherpa   122.0 MB  en                   yes     ✓ 130.1 MB
+…
 
 ★ active   ✓ downloaded   – not downloaded
+SIZE is the download; sherpa archives expand to roughly twice that on disk.
+Download one with `mavor models pull <name>`.
 ```
 
+That is seven of twenty-five rows; `mavor models list` prints them all.
+
+- **Every name carries its model family**, and there are no aliases — one name
+  per model. `whisper-base.en`, not `base.en`; a name that is not in the
+  catalog is an error naming the closest entries, never a silent fallback.
 - **STREAM** marks models that decode incrementally as you speak. Whisper is
   encoder-decoder over 30-second windows, so it always transcribes after you
   stop; the streaming sherpa transducers do not.
 - **SIZE** is the download. The sherpa archives expand to roughly twice that
   on disk.
-- **ALIASES** are alternate names accepted by `mavor models pull` and by
-  `model` / `sherpa_model` in `config.toml`.
 
 ```bash
-mavor models list                # the catalog above
-mavor models list --installed    # only what is downloaded
-mavor models list --verbose      # a block per model, with the detail below
-mavor models pull base.en        # production default
-mavor models pull tiny.en        # smallest; what the test suite uses
+mavor models list                          # the catalog above
+mavor models list --installed              # only what is downloaded
+mavor models list --verbose                # a block per model, with the detail below
+mavor models pull whisper-base.en          # production default
+mavor models pull whisper-tiny.en          # smallest; what the test suite uses
+mavor models pull zipformer-streaming-20m  # the live-preview companion
 ```
 
 `--verbose` adds the properties that do not fit a column:
 
 ```
-parakeet
-  NeMo FastConformer transducer, 80ms chunk — decodes while you speak
+zipformer-streaming-20m
+  Streaming Zipformer transducer, 20M parameters — small enough to run alongside another model as the live-preview source
   engine      sherpa (in-process sherpa-onnx, CGO)
-  download    429.4 MB
+  download    122.0 MB
   languages   en
   streaming   yes — decodes incrementally while you speak
   speed       fast (relative tier, not measured)
-  vocabulary  hotwords via sherpa_hotwords_file
+  vocabulary  hotwords supported (transducer)
   gpu         none in practice — the bundled ONNX Runtime is a CPU-only build
-  aliases     parakeet-tdt
-  status      ✓ downloaded (850.7 MB)
-  source      https://github.com/k2-fsa/sherpa-onnx/releases/...
+  status      ✓ downloaded (130.1 MB)
+  source      https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2
 ```
 
 - **speed** is a relative tier across the catalog, estimated from architecture
@@ -254,17 +292,20 @@ parakeet
   [`docs/choosing-a-model.md`](docs/choosing-a-model.md) says which to use, and
   [`docs/reports/model-benchmarks.md`](docs/reports/model-benchmarks.md) has the
   numbers. Rerun them on your hardware with `just bench`.
-- **vocabulary** is what biasing the model can take. sherpa-onnx implements it
-  by boosting paths during transducer beam search, so only the transducers can
-  use a `sherpa_hotwords_file`; the CTC and encoder-decoder models cannot.
-  Whisper models take none today — mavor does not pass an initial prompt.
+- **vocabulary** is what biasing the model can take from the `[vocabulary]`
+  table. Whisper models take it as an initial prompt; transducers (parakeet,
+  zipformer) get it as hotwords boosted while decoding, because that is the
+  only place sherpa-onnx implements biasing. The CTC, paraformer, moonshine
+  and sensevoice models can use none of it, and `mavor doctor` says so rather
+  than failing.
 - **gpu** depends on the build you are running, not on the model. Run
   `mavor doctor`, which reports what your whisper.cpp and ONNX Runtime can
   actually use rather than what the config asks for.
 
 Whisper models are fetched from the whisper.cpp GGML repository and land in
-`model_dir` as `ggml-<name>.bin`. Sherpa models come from the sherpa-onnx
-release assets and unpack into `model_dir/sherpa/<name>/`.
+`paths.models` under the name upstream serves them by — `whisper-base.en`
+becomes `ggml-base.en.bin`. Sherpa models come from the sherpa-onnx release
+assets and unpack into `paths.models/sherpa/<name>/`.
 
 ## Documentation
 
@@ -284,7 +325,7 @@ proposals rather than descriptions.
 
 ### Dev container
 
-`yolo-jail.jsonc` is a committed [yolo-jail](https://github.com/mschulkind-oss/yolo-jail)
+[`yolo-jail.jsonc`](./yolo-jail.jsonc) is a committed [yolo-jail](https://github.com/mschulkind-oss/yolo-jail)
 definition: `yolo` from the repo root drops you in a container with the whole
 toolchain already present — sway and waybar for the headless integration tests,
 grim for the screenshot assertions, PipeWire and `pulseaudio` utilities for
@@ -299,7 +340,7 @@ in the build depends on it.
 | `just check-ci` | read-only CI / pre-commit verification                        |
 | `just test`     | unit tests only — fast, no Wayland required                   |
 | `just test-int` | integration tests: spawns headless sway + waybar + daemon     |
-| `just test-e2e` | e2e: real whisper transcription with the `tiny.en` model      |
+| `just test-e2e` | e2e: real whisper transcription with `whisper-tiny.en`        |
 | `just storybook`| runs UI storybook test and produces HTML screenshot report    |
 | `just install`  | installs to `~/.local/bin/mavor`, libraries to `~/.local/lib` |
 | `just deploy`   | installs binary and sets up systemd user service              |
@@ -318,7 +359,8 @@ in the build depends on it.
 - **End-to-end test** (`go test -tags=e2e ./...`): real whisper-cli plus
   a downloaded model.
 
-The integration test rig lives in `test/integration/harness.go`. Each
+The integration test rig lives in
+[`test/integration/harness.go`](./test/integration/harness.go). Each
 test gets its own `XDG_RUNTIME_DIR`, dbus session, headless sway, and
 optionally waybar + null-sink. Cleanup happens in `t.Cleanup`.
 
@@ -328,7 +370,7 @@ optionally waybar + null-sink. Cleanup happens in `t.Cleanup`.
 cmd/mavor/                   # CLI entrypoint & subcommands (daemon, doctor, config, service, models)
 internal/state/              # Idle ⇄ Recording ⇄ Transcribing FSM
 internal/audio/              # Recorder interface + parec impl + VAD + PipeWire ducking
-internal/speech/             # Pluggable STT engines (whisper-cli, sherpa-onnx CGO, HTTP server)
+internal/speech/             # STT runtimes: whisper.cpp (server/cli) and in-process sherpa-onnx
 internal/overlay/            # Layer-shell HUD: paint.go renders, overlay_wl.go presents
 internal/wayland/            # Minimal hand-written Wayland client (wire protocol, layer-shell, shm)
 internal/ipc/                # JSON-over-Unix-socket protocol
@@ -359,12 +401,13 @@ much of the heavy lifting they do:
 
 **Speech recognition**
 
-- [whisper.cpp](https://github.com/ggml-org/whisper.cpp) — the `whisper-cli`
-  and `whisper-server` binaries behind the `cli` and `server` engines, and the
-  GGML model format the catalog pulls.
+- [whisper.cpp](https://github.com/ggml-org/whisper.cpp) — the `whisper-server`
+  binary mavor supervises for every whisper model, the `whisper-cli` it falls
+  back to, and the GGML model format the catalog pulls.
 - [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) and its Go bindings,
   [sherpa-onnx-go](https://github.com/k2-fsa/sherpa-onnx-go) — the in-process
-  `sherpa` engine, including the streaming transducers.
+  runtime behind every non-whisper model, including the streaming transducers
+  the live preview uses.
   ([ONNX Runtime](https://github.com/microsoft/onnxruntime) rides along inside
   the platform modules, and is the 26 MB `libonnxruntime.so` that every mavor
   release ships beside the binary.)

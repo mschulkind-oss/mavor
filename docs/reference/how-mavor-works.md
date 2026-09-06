@@ -4,13 +4,15 @@ author: "Matthew Schulkind"
 date: 2026-09-05
 status: accepted
 verified: 2026-09-05
-verified_commit: dbe6592
+verified_commit: 7e52f94
 covers:
   - internal/state/
   - internal/daemon/
   - internal/ipc/
   - internal/audio/
   - internal/speech/
+  - internal/models/
+  - internal/config/
   - internal/output/
   - internal/overlay/
   - internal/history/
@@ -22,13 +24,13 @@ summary: "As-built reference for the mavor daemon: the three-state machine, the 
 
 # How `mavor` works
 
-**Status:** CURRENT as of 2026-09-05, verified against `dbe6592`.
+**Status:** CURRENT as of 2026-09-05, verified against `7e52f94`.
 
 `mavor` is one long-lived daemon whose entire shared mutable state is a
 three-value enum. A hotkey-launched CLI pokes it over a Unix socket; the enum
 advances; a listener fires the side effects. Audio capture, speech recognition,
 typing and the on-screen indicator each sit behind an interface, so the daemon's
-own tests run in milliseconds with no compositor, no audio server and no cgo.
+own tests run in milliseconds with no compositor and no audio server.
 
 | Component | Lives in |
 | :--- | :--- |
@@ -36,10 +38,12 @@ own tests run in milliseconds with no compositor, no audio server and no cgo.
 | Side-effect dispatch, the whole pipeline | `internal/daemon` (`Daemon.onTransition`, `Daemon.runTranscription`) |
 | Wire protocol between CLI and daemon | `internal/ipc` (`Request`, `Response`, `Send`) |
 | Capture, level metering, VAD, ducking | `internal/audio` (`Recorder`, `ParecRecorder`, `Ducker`, `DetectSpeech`) |
-| Speech recognition, all engines | `internal/speech` (`Transcriber`, `StreamTranscriber`, `Factory`) |
+| Speech recognition, every runtime | `internal/speech` (`Transcriber`, `StreamTranscriber`, `Resolve`, `Factory`) |
+| The model catalog, and the runtime and placement it implies | `internal/models` (`Catalog`, `RuntimeFor`, `Select`) |
+| The config file, and the defaults `config init` scaffolds | `internal/config` (`Config`, `Default`, `Resolve`) |
 | Typing and clipboard | `internal/output` (`Dispatcher`, `Wayland`) |
 | The HUD | `internal/overlay` (`Overlay`, `Visual`, `Scene`) — `paint.go` is pixels, `overlay_wl.go` is the compositor |
-| Wayland wire protocol, layer-shell, shm | `internal/wayland` — hand-written, no cgo |
+| Wayland wire protocol, layer-shell, shm | `internal/wayland` — hand-written, no cgo in this package |
 | Transcript recovery log | `internal/history` (`Store`, `Entry`) |
 | Process wiring, every subcommand | `cmd/mavor` (`runDaemon` builds the daemon) |
 
@@ -225,26 +229,49 @@ Recording starts two monitor goroutines, both cancelled on the way out of
   to `Overlay.SetLevel`, which is what animates the waveform.
 - **The preview** feeds the overlay's subtitle line via `Overlay.SetText`.
 
-The preview takes whichever of two routes the engine supports, decided by a type
-assertion rather than by config:
+Two mechanisms can produce that text, and which one runs is decided **once, at
+daemon start**, by `speech.ResolvePreview` — not per recording and not by a type
+assertion on the main transcriber:
 
-1. **A `speech.StreamTranscriber`** (the sherpa transducers) gets a real
-   streaming session: `StartStream`, then raw PCM chunks through `FeedChunk`,
-   each returning the accumulated partial text.
-2. **Everything else** — whisper-cli, whisper-server — is segmented by the
-   energy VAD instead. Frames are accumulated, `audio.CalculateRMS` classifies
-   each as speech or silence, and a silence run long enough after a phrase long
-   enough cuts a slice, writes it to a temporary WAV, and transcribes that slice
-   in the background as a preview.
+- **Companion model** — a small streaming recognizer loaded *alongside* the main
+  model, fed the same PCM through `StartStream` and then `FeedChunk`, each call
+  returning the accumulated partial text. The designated companion is
+  `zipformer-streaming-20m`, which is in the catalog for this job: 20M
+  parameters, small enough that painting an overlay with it is a fair trade.
+- **Phrase mode** — no second model. Frames are accumulated,
+  `audio.CalculateRMS` classifies each as speech or silence, and a silence run
+  of `preview.pause_ms` following at least `preview.min_phrase_ms` of speech
+  cuts a slice, writes it to a temporary WAV, and transcribes that slice with
+  the **main** model in the background.
+
+`preview.source = "auto"` resolves in this order:
+
+1. **The main model already decodes incrementally** (the catalog's `Streaming`
+   flag — the streaming FastConformer and the streaming zipformers). Its own
+   partials are read directly and no second model is loaded.
+2. **The companion is installed** — load it and run it alongside.
+3. **Otherwise** fall back to phrase mode, warn, and name the model to pull.
+
+An explicit value overrides the order: `"phrases"` forces phrase mode, and a
+model name forces that companion. Step 3 is the only case that ever downgrades
+— a model *named* in the config and not installed is fatal at daemon start, and
+never a quiet substitution. A companion that fails to load for any other reason
+(corrupt files, an unreadable directory) degrades to phrase mode with a warning,
+because a broken preview must never cost the user dictation.
+
+The companion loads at daemon start rather than lazily at the first recording,
+so the first dictation is not the slow one — resident memory traded for
+first-use latency, deliberately.
 
 > [!WARNING]
 > The preview never emits. Partial text is provisional, and the text the user
-> receives always comes from the single final `Transcribe` over the whole
-> recording. Do not wire `SetText` into `Emit` to "save a step" — the two
-> disagree by construction, and the streaming slices are the worse transcript.
+> receives always comes from the single final `Transcribe` by the **main** model
+> over the whole recording. Do not wire `SetText` into `Emit` to "save a step" —
+> the two disagree by construction, and the companion is deliberately the
+> smaller, worse model.
 
-Setting `mode = "batch"` disables the preview entirely; the level meter is
-unaffected.
+Setting `preview.enabled = false` disables the preview entirely; the level meter
+is unaffected.
 
 ## The IPC protocol
 
@@ -281,22 +308,76 @@ cgo.
 
 Two optional interfaces are discovered by type assertion, so an implementation
 opts in by having the methods: `audio.ChunkReader` (a recorder that can hand
-over PCM mid-capture) and `speech.StreamTranscriber` (an engine that decodes
+over PCM mid-capture) and `speech.StreamTranscriber` (a transcriber that decodes
 incrementally). A transcriber that implements `io.Closer` is closed at shutdown,
 and one with a `Start(context.Context) error` method is started before the
 daemon serves — that is how the warm whisper-server child is supervised.
 
-**Only the speech seam is user-selectable.** `speech.Factory` keys on the
-`engine` config value and returns the whisper-cli runner, the warm-server
-client, or the in-process sherpa recognizers. A `server_socket` that names a
-filesystem path means "run one for me": whisper.cpp's server binds a host and
-port and cannot bind a Unix socket, so the supervisor picks a loopback port,
-starts the child there, and `Supervisor.Endpoint` is how the client finds it.
-The client discovers the request path the same way — whisper.cpp serves
-`/inference`, hosted services serve `/v1/audio/transcriptions`, and whichever
-answers is remembered. The other four
-are constructed by name in `runDaemon`; the only runtime choice there is the
-overlay's fallback to `Noop` when the compositor has no layer-shell.
+**Only the speech seam varies, and it is derived rather than chosen.** The
+other four are constructed by name in `runDaemon`; the only decision there is
+the overlay's fallback to `Noop` when the compositor has no layer-shell.
+
+### Runtime and placement
+
+Two terms, and keeping them apart is the whole of this seam. Both are defined in
+[`configuration-surface.md` §3](../design/configuration-surface.md#3-two-axes-welded-into-one-enum),
+which coined them.
+
+**Runtime** — the inference library that executes a model. There are exactly
+two: whisper.cpp, and ONNX Runtime reached through sherpa-onnx. **A runtime is
+never configured.** It is a property of the model, recorded in the catalog and
+read back by `models.RuntimeFor`.
+
+**Placement** — where that runtime executes relative to the daemon process. It
+is an independent question that happens to have a different default answer for
+each runtime.
+
+| Placement | What it means | Model stays warm |
+| :--- | :--- | :--- |
+| `in-process` | The runtime is linked into the daemon; the model is resident. **The sherpa default.** | For the life of the daemon |
+| `local-server` | mavor starts and supervises a `whisper-server` child and posts audio to it over loopback HTTP. **The whisper default.** | For the life of the child |
+| `subprocess` | A fresh `whisper-cli` per utterance. | No |
+| `remote` | An HTTP server someone else runs, named by URL in `advanced.server`. | Not mavor's problem |
+
+`models.Select` derives the pair from the model name plus the two `[advanced]`
+keys that can influence it, and `speech.Resolve` adds the path the model
+occupies on this machine. Only `auto` and `subprocess` can be *asked* for; the
+other two are derived. Naming a placement the model's runtime cannot provide —
+`subprocess` on a sherpa model, `advanced.server` with a sherpa model — is an
+error at daemon start, not something quietly ignored.
+
+One derived placement is then downgraded by the machine it is about to run on.
+`speech.AdjustForEnvironment` turns `local-server` into `subprocess` when
+neither `whisper-server` nor `whisper-cpp-server` is on `$PATH` — some
+distributions package the CLI without the server — and appends a warning saying
+the model will reload for every utterance. That is safe precisely because the
+user did not ask for `local-server`: it was derived, so falling back costs a
+warm model and nothing else. A placement the user *did* write is left alone to
+fail loudly. `mavor doctor` calls the same function, so the placement it prints
+is the one the daemon will use rather than the one `Select` returned.
+
+There is no endpoint to configure for `local-server`: whisper.cpp's server binds
+a host and a port, so the supervisor takes a free loopback port, starts the child
+there, and `Supervisor.Endpoint` is how the client finds it. The client discovers
+the request path the same way — whisper.cpp serves `/inference`, hosted services
+serve `/v1/audio/transcriptions`, and whichever answers first is remembered for
+the daemon's life.
+
+### Vocabulary
+
+The runtime-neutral `[vocabulary]` table is the one place a user states the words
+the model gets wrong. `speech.LoadVocabulary` unions `words` with the lines of
+`file`, and what that list *becomes* is decided by the model:
+
+| Model kind | Mechanism |
+| :--- | :--- |
+| whisper (any placement) | an initial prompt, rendered once at construction and capped at 224 tokens — mavor truncates at a phrase boundary and warns, because whisper.cpp clips silently |
+| transducer (parakeet, zipformer) | a hotwords file, which **forces `modified_beam_search`**: sherpa-onnx ignores hotwords under greedy decoding without complaint |
+| CTC, paraformer, moonshine, sensevoice | nothing at all — biasing lives inside transducer beam search only |
+
+The last row is reported by `mavor doctor` rather than being an error. The user
+never picks a decoding method; beam search is a consequence of configuring a
+vocabulary on a model that can use one.
 
 ### What the interfaces foreclose
 
@@ -307,9 +388,10 @@ Real constraints, stated so nobody rediscovers them the hard way:
 - **`Transcribe` returns one string** — no segments, no timestamps, no
   confidence. `whisper-cli` is invoked with `-nt`, which strips timestamps at
   the source.
-- **Per-call recognition parameters do not exist.** Model, GPU layers and thread
-  count are fixed when the transcriber is constructed; language, initial prompt
-  and temperature are unreachable without changing the interface.
+- **Per-call recognition parameters do not exist.** Model, thread count, GPU
+  on/off and the vocabulary prompt are fixed when the transcriber is
+  constructed; language and temperature are unreachable without changing the
+  interface.
 - **`Visual` is a closed enum carrying no data.** Elapsed time, an error
   message, or "which model is loading" cannot be expressed; the live text and
   level ride separate methods precisely because `Show` could not carry them.
@@ -328,14 +410,19 @@ Every row was traced through the code.
 | Capture fails to start (`parec` missing, no audio server) | `reportError`: the error visual, a pause, then `EventTranscribeFailed` → `Idle` | The error pill, then nothing typed |
 | Capture starts but records nothing | `Stop` rejects a zero-length WAV; same error path | The error pill |
 | A WAV with a header and no samples | Passes the size check, reaches the VAD pre-filter, ends the cycle as silence | Pill vanishes, nothing typed |
-| VAD finds no speech | `EventTranscribeDone` without calling the engine | Pill vanishes, nothing typed |
-| The engine errors | `reportError` → `Idle` | The error pill |
+| VAD finds no speech | `EventTranscribeDone` without calling the transcriber | Pill vanishes, nothing typed |
+| The transcriber errors | `reportError` → `Idle` | The error pill |
 | Empty transcript | Logged at Warn, `Emit` never called | Pill vanishes, nothing typed |
 | `wtype` fails | `wl-copy` still runs; the joined error is logged at Warn and the cycle completes | Nothing typed — **but the text is on the clipboard and in the history log** |
 | Both `wtype` and `wl-copy` fail | Identical to the above from the FSM's side | Nothing typed; recover with `mavor history --copy` |
+| No whisper server on `$PATH` under a derived `local-server` placement | `AdjustForEnvironment` downgrades to `subprocess` and warns | The model reloads per utterance — slower, otherwise identical |
+| The model named in the config is not installed | `speech.Resolve` fails; the daemon never starts | An error naming the model, the directory searched, and the `models pull` to run |
+| `preview.source` names a model that is not installed | `speech.ResolvePreview` fails; the daemon never starts | The same shape of error. A *named* model is a request, never a hint |
+| The companion is missing under `source = "auto"` | Warn, fall back to phrase mode, daemon starts | A worse preview, and a `doctor` line naming the model to pull |
+| The companion fails to load for any other reason | Warn, fall back to phrase mode, daemon starts | A worse preview; dictation is unaffected |
 | A second daemon starts | The live socket is detected, `Serve` errors, the process exits non-zero | An error on stderr |
 | Shutdown while recording | The context goroutine SIGINTs `parec` so the WAV is flushed, but `Stop` never runs | An orphaned recording, never transcribed |
-| Shutdown while transcribing | The root context kills the engine mid-run | **The transcript is lost** — it is written to history only after a successful `Transcribe` |
+| Shutdown while transcribing | The root context kills the transcriber mid-run | **The transcript is lost** — it is written to history only after a successful `Transcribe` |
 
 > [!WARNING]
 > Several of these are indistinguishable from success in the moment: the pill
@@ -406,9 +493,11 @@ The empty space, verified by search rather than assumed:
 
 ## Testing surfaces
 
-- **Unit** (`just test`): every package, mocks throughout, no Wayland, no audio,
-  no cgo. The daemon tests drive the whole pipeline and assert the exact overlay
-  call sequence.
+- **Unit** (`just test`): every package, mocks throughout, no Wayland and no
+  audio. They do need a C toolchain — `internal/speech` links sherpa-onnx
+  unconditionally, so `CGO_ENABLED=0 go test ./internal/daemon/` does not build.
+  The daemon tests drive the whole pipeline and assert the exact overlay call
+  sequence.
 - **Integration** (`just test-int`, `-tags=integration`): a headless wlroots Sway
   with a private D-Bus, optional Waybar, an optional PipeWire null sink, and a
   whisper shim on a prepended PATH. Assertions are pixel bands from `grim`
@@ -422,7 +511,7 @@ The empty space, verified by search rather than assumed:
 
 ## Current values
 
-Verified at `dbe6592`. The prose above says what each of these is for; this
+Verified at `7e52f94`. The prose above says what each of these is for; this
 table is the only place the values themselves are stated.
 
 | Value | Setting | Defined in |
@@ -433,8 +522,8 @@ table is the only place the values themselves are stated.
 | Liveness dial before binding | 100ms | `ipc.prepareSocket` |
 | Error pill duration | 1.5s | `daemon.New` default |
 | Level meter and preview tick | 30ms | `daemon.startLevelMonitoring`, `startStreamingMonitoring` |
-| VAD silence threshold | 450ms | `daemon.New` default, `silence_threshold_ms` |
-| VAD minimum phrase | 600ms | `daemon.New` default, `min_phrase_ms` |
+| Phrase-mode silence threshold | 450ms | `config.DefaultPauseMS`, `preview.pause_ms` |
+| Phrase-mode minimum phrase | 600ms | `config.DefaultMinPhraseMS`, `preview.min_phrase_ms` |
 | Speech RMS threshold | 0.012 normalized | `audio.SpeechRMSThreshold` |
 | Pre-filter minimum speech | 150ms | `daemon.runTranscription` |
 | Capture format | 16 kHz mono s16le | `audio.DefaultCommand`, `audio.DefaultSampleRate` |
@@ -442,11 +531,30 @@ table is the only place the values themselves are stated.
 | Recording directory | `$TMPDIR/mavor-recordings` | `cmd/mavor.runDaemon` |
 | History log | `$XDG_STATE_HOME/mavor/history.jsonl` | `history.DefaultPath` |
 | History retention | 500 entries | `history.DefaultMax` |
-| Default mode / preset / model | `streaming` / `balanced` / `base.en` | `config.Config.Resolve` |
-| Default engine | `cli` | `speech.Factory` |
+| Default model | `whisper-base.en` | `config.DefaultModel` |
+| Default preview | enabled, `source = "auto"` | `config.Default` |
+| Default preview companion | `zipformer-streaming-20m` | `speech.DefaultCompanionModel` |
+| Default placement | derived: `local-server` for whisper, `in-process` for sherpa | `models.Select` |
+| Default threads | this machine's physical core count | `config.PhysicalCores` |
+| Default GPU | `auto` (whisper only; sherpa is CPU-only on this build) | `config.Default`, `config.GPUOff` |
+| Vocabulary boost | 1.5 | `config.DefaultBoost` |
+| whisper prompt cap | 224 tokens | `speech.WhisperPromptTokenCap` |
+| Overlay top margin | 8px | `config.DefaultTopMargin` |
 
-The full config surface is the `toml`-tagged fields of `config.Config` and the
-scaffold `mavor config init` writes; neither is reproduced here.
+The full config surface is the `toml`-tagged fields of `config.Config` — one
+top-level `model` key and the `[preview]`, `[ducking]`, `[vocabulary]`,
+`[overlay]`, `[advanced]` and `[paths]` tables. It is not reproduced here, and
+neither is the scaffold `mavor config init` writes, because the scaffold is
+generated from `config.Default()` and a test asserts the two parse to the same
+value.
+
+> [!WARNING]
+> The schema was rewritten in place with **no compatibility aliases**. A config
+> file written before `6eed074` parses to zero known keys and contributes
+> nothing; `config.File.SchemaLooksStale` detects exactly that shape and
+> `mavor doctor` says so, pointing at `mavor config init --force`. The same
+> applies to model names: `base.en` and the other bare aliases were deleted, not
+> redirected.
 
 ## Why it's this way
 
@@ -455,9 +563,9 @@ this replaces used.
 
 | ID | Ruling | Why it stays |
 | :--- | :--- | :--- |
-| OQ-1 | The core contract stays batch: one recording, one `Transcribe`, one string | Streaming arrived as an *optional* interface and a preview channel instead. Whisper is meaningfully worse on short chunks, and keeping the emitted text on the batch path is what lets both engine families share one pipeline |
+| OQ-1 | The core contract stays batch: one recording, one `Transcribe`, one string | Streaming arrived as an *optional* interface and a preview channel instead. Whisper is meaningfully worse on short chunks, and keeping the emitted text on the batch path is what lets both runtime families share one pipeline |
 | OQ-2 | The error channel is a fourth `Visual`, held briefly, and not a message | `Show` stays data-free, so no failure path can block on rendering text. The detail lives in the log and the history file |
 | OQ-3 | Zero audio retention: both temporary files are deleted at the end of every cycle | The directory was an unbounded, personal archive nobody had decided to keep. Recovery is the transcript in the history log, not the audio |
 | OQ-4 | The FSM grew `Recording × TranscribeFailed → Idle`, and nothing else | That edge was a real bug — a failed capture start left the overlay claiming RECORDING until two more keypresses cleared it. A cancel event is still deliberately absent |
-| OQ-5 | No implementation registry. Only `engine` selects an implementation | A plugin architecture for a single-user tool is the wrong trade; specific config fields parameterising the existing implementations is the right one |
+| OQ-5 | No implementation registry. The model name selects the implementation, by way of the catalog | A plugin architecture for a single-user tool is the wrong trade. The `engine` key this ruling originally referred to is itself gone: it welded *which model* to *where its runtime runs*, and those are now derived separately |
 | OQ-6 | Side effects stay synchronous on the handler goroutine | The response then reports the state after side effects were attempted, which is what makes the integration tests deterministic. The cost is a fork/exec inside the client's 2s budget — revisit if a recorder ever grows a slow start |

@@ -9,7 +9,7 @@ summary: "Living roadmap for the mavor dictation daemon: open decisions, the rea
 
 # Ongoing Work: `mavor` Voice-to-Text Utility
 
-**Status:** 1 Needs Attention (💬), 5 Ready to Implement (📦), 4 Open Threads (🏗️ 1, 🔒 1, 🛑 1, 🧊 1)
+**Status:** 2 Needs Attention (💬), 4 Ready to Implement (📦), 4 Open Threads (🏗️ 1, 🔒 1, 🛑 1, 🧊 1)
 
 ---
 
@@ -46,6 +46,33 @@ CPU-only regardless — see the workstream below.
 
 **Still deferring to you**, but the trade is now priced.
 
+### 💬 arm64 releases: a native runner, or a cross toolchain?
+
+Opened by the cgo ruling below. mavor links sherpa-onnx through cgo, and cgo
+cannot cross-compile to arm64 from the amd64 GitHub runner:
+
+```console
+$ GOOS=linux GOARCH=arm64 CGO_ENABLED=1 go build ./cmd/mavor
+# runtime/cgo
+gcc_arm64.S:30: Error: no such instruction: `stp x29,x30,[sp,'
+```
+
+`.goreleaser.yaml` is therefore **amd64-only**, with a comment saying so rather
+than leaving the gap to be rediscovered. An arm64 user builds from source, and
+the PyPI wrapper says as much.
+
+This is a packaging question, not a portability wall — the `sherpa-onnx-go-linux`
+module vendors prebuilt shared objects for arm64 as well as amd64, so the arch
+is reachable. What is missing is a decision about *where* to build it:
+
+| Route | What it costs | Trade |
+|---|---|---|
+| **A native arm64 runner** | A second `goreleaser` build matrix entry pinned to an arm64 runner. GitHub's `ubuntu-24.04-arm` runners are free for public repositories. | Simplest, and the binary is built by the toolchain that will run it. Adds a second runner to every release. |
+| **An `aarch64-linux-gnu` cross toolchain** | Install the cross gcc in `release.yml` and set `CC`/`CXX` per target. One runner, one job. | Cheaper per release, and one more thing that can silently produce a binary nobody has run. |
+
+**Deferring to you:** which of the two, or whether amd64-only is fine until
+somebody asks for arm64. Nothing else is blocked on it.
+
 ### ✅ Should whisper get vocabulary biasing? — RESOLVED (2026-09-05)
 
 `--verbose` currently reports `vocabulary: none` for all 11 whisper models,
@@ -58,14 +85,21 @@ There is a full design for the ambitious version —
 still `in-review` — which derives vocabulary from the focused window via
 `swaymsg -t get_tree`.
 
-**Yes, the static half, and it is designed.**
-[`design/configuration-surface.md`](design/configuration-surface.md) §7 specifies
-a runtime-neutral `[vocabulary]` table — a prompt on whisper, a hotwords file on
-the transducers, and nothing on the models that cannot use one, which `doctor`
-reports rather than failing on. Its OQ-4 settled that this lands now rather than
-waiting: the window-context design derives the word list at runtime and still
-needs a static one to sit beside, so it adopts this key shape instead of
-replacing it.
+**Yes, the static half, and it is built** (`7e52f94`).
+[`configuration-surface.md` §7](design/configuration-surface.md#7-vocabulary-and-decoding)
+specified a runtime-neutral `[vocabulary]` table — `words`, `file`, `boost` —
+and `internal/speech/vocabulary.go` is the one place it becomes something a
+runtime understands: whisper's `--prompt` (truncated at a phrase boundary
+against the 224-token cap, with a warning, because whisper.cpp clips silently),
+a hotwords file plus `modified_beam_search` on the transducers, and nothing at
+all on the CTC and encoder-decoder models — which `mavor doctor` now reports
+rather than failing on. The user never picks a decoding method; beam search
+follows from configuring a vocabulary on a model that can use one.
+
+[`OQ-4`](design/configuration-surface.md#decision-ledger) settled that this
+landed now rather than waiting: the window-context design derives the word list
+at runtime and still needs a static one to sit beside, so it adopts this key
+shape instead of replacing it.
 
 The window-context half stays where it is, in
 [`design/active-window-context-and-vocabulary-prompting.md`](design/active-window-context-and-vocabulary-prompting.md),
@@ -78,6 +112,9 @@ still `in-review` and unbuilt.
 Ordered by what unblocks other work first, then by cost.
 
 ### ✅ 1. All 24 models load (was: ten could not)
+
+The catalog is 25 entries now — `zipformer-streaming-20m` joined it as the
+preview companion (item 7) and has not been through a benchmark run yet.
 
 Fixed. The catalog-wide benchmark
 ([`model-benchmarks.md`](reports/model-benchmarks.md)) now reports **48
@@ -130,6 +167,14 @@ every loadable one, so the field can stop being a placeholder — and
 `--verbose` can stop saying "relative tier, not measured" for models that
 have been measured.
 
+> [!NOTE]
+> [`model-benchmarks.md`](reports/model-benchmarks.md) was generated before the
+> catalog rename, so its model column still says `base.en` where the catalog
+> now says `whisper-base.en`, and `parakeet` where it says
+> `fastconformer-streaming`. Every table on this page quoting it uses the names
+> as the report prints them, so the citation resolves. `just bench` regenerates
+> the report with current names; do not hand-edit it.
+
 ### 📦 1c. The accurate whisper models return worse text than `base.en`
 
 Unexpected, and it inverts the usual advice. From the same run, on the same
@@ -151,11 +196,13 @@ have to re-punctuate by hand.
 This is why the benchmark scores punctuation and capitalization separately
 from WER rather than normalizing them away.
 
-**Next step:** find out whether this is fixable from mavor's side. whisper.cpp
-takes an initial `--prompt`, and a prompt containing punctuated prose is the
-standard way to coax formatted output out of these models — which is the same
-mechanism the vocabulary-biasing item above wants. If it works, one change
-closes both.
+**Next step:** find out whether this is fixable from mavor's side. **The
+mechanism now exists** — `[vocabulary]` became whisper's `--prompt` in
+`7e52f94`, so a prompt reaches the model on every placement — and what is
+untested is whether *punctuated prose* in that prompt coaxes formatted output
+out of `large-v3`. That is a benchmark run, not a code change: put a punctuated
+sentence in `vocabulary.words`, rerun `just bench`, and compare the punctuation
+and capitalization columns.
 
 There is now also a way around it rather than through it. With every sherpa
 model loading, `canary-180m` scores 1.8% WER with **punctuation 0.18 and
@@ -166,18 +213,25 @@ preset that `large-v3` currently cannot fill.
 
 ### 📦 2. `mavor doctor` — the checks it still does not do
 
-The GPU check landed. These are the remaining silent-failure modes:
+The GPU check landed, and the config rewrite added five more: runtime and
+placement with the reason, the thread count and where it came from, an
+all-unknown-keys config reported as the stale schema it is, where the preview
+text will come from, and whether the `[vocabulary]` table can reach this model
+at all. **Config coherence is therefore closed** — the two examples this item
+used to name (`sherpa_hotwords_file` on a CTC model, `engine = "sherpa"` with a
+whisper model) are keys that no longer exist, and the coherence errors that
+replaced them are refused at daemon start rather than merely reported.
 
-- **Model integrity.** `checkModel` stats the file. A truncated or partial
-  download passes and then fails at transcription time. Verify the size against
-  the catalog's `DownloadSize` — the field already exists and is exact.
+These are the remaining silent-failure modes:
+
+- **Model integrity.** `checkModel` resolves the path and stats it. A truncated
+  or partial download passes and then fails at transcription time. Verify the
+  size against the catalog's `DownloadSize` — the field already exists and is
+  exact.
 - **whisper-cli capability.** Report the whisper.cpp version and which
   `load_backend:` lines it emits; `cmd/mavor/gpu.go` already parses them.
-- **Config coherence.** Flag combinations that cannot work: a
-  `sherpa_hotwords_file` set on a CTC or encoder-decoder model, which
-  sherpa-onnx cannot apply; `engine = "sherpa"` with a whisper model name.
-- **Disk headroom.** `models pull large-v3` wants 2.9 GB and fails partway with
-  a confusing error when the cache filesystem is full.
+- **Disk headroom.** `models pull whisper-large-v3` wants 2.9 GB and fails
+  partway with a confusing error when the cache filesystem is full.
 - **Machine-readable output.** `--json` so the checks can run in CI and in the
   integration harness rather than only being read by a human.
 
@@ -204,12 +258,16 @@ same assumption as the code. It now behaves like the real binary, and an
 `e2e`-tagged test in [`internal/speech`](../internal/speech/server_e2e_test.go)
 runs a real `whisper-server` through the scaffolded config.
 
-**Left undone:** nothing measures the engine in CI, and `mavor doctor` still
-does not check it — a user whose `whisper-server` is missing finds out at the
-first dictation. That belongs with the doctor checks in item 2.
+**Left undone:** nothing measures this path in CI. The `doctor` half is closed
+— `checkRuntime` prints the runtime, the placement and the reason, and
+`speech.AdjustForEnvironment` downgrades a derived `local-server` placement to
+`subprocess` with a warning when no whisper server is on `$PATH`, so a missing
+server costs a warm model instead of a failed dictation. But a whisper server is
+still only ever exercised by hand or by the `e2e`-tagged test.
 
 ### 📦 5. `formatFileSize` labels MiB as "MB"
 
+Still true after the config rewrite.
 [`cmd/mavor/models_cmd.go`](../cmd/mavor/models_cmd.go) divides by 1024² and prints
 "MB", so the catalog shows `74.1 MB` where Hugging Face shows `77.7 MB` for the
 same file. Harmless in isolation, confusing when a user compares the two.
@@ -233,35 +291,63 @@ What is left in `docs/design/`: `active-window-context-and-vocabulary-prompting.
 which is `in-review` and unbuilt, and `next-gen-runtimes-executorch-iree.md`,
 which is frozen. Both are proposals, which is what that tree is for.
 
-### 📦 7. The config file has 29 keys and three of them are wrong
+Two more are there and should not be: `configuration-surface.md` and
+`configuration-surface-plan.md` shipped on 2026-09-05 and are now describing a
+system rather than proposing one. Item 7 below carries the graduation.
 
-[`design/configuration-surface.md`](design/configuration-surface.md) — DECIDED
-2026-09-05, all five questions settled, nothing built.
+### ✅ 7. The config file had 29 keys and three of them were wrong — RESOLVED (2026-09-05)
 
-Three findings worth reading even if the redesign is rejected. `gpu_layers`
-passes `-ngl` to whisper.cpp, which does not accept it, so **any non-zero value
-breaks every transcription** — and `doctor` currently recommends setting it.
-`device` is written into a struct field nothing reads. And `mavor config init`
-scaffolds a file that disagrees with the compiled defaults on `mode` and
-`duck_audio`, so a user who runs it gets different behavior from one who does
-not.
+Built across six commits, `adb0760`..`7e52f94`, in the order
+[`configuration-surface.md` §14](design/configuration-surface.md#14-what-i-would-build-in-order)
+laid out. The three broken keys are gone: `gpu_layers` passed `-ngl` to
+whisper.cpp, which does not accept it, so any non-zero value broke every
+transcription and `doctor` recommended setting it; `device` was written into a
+struct field nothing read; and `mavor config init` scaffolded a file that
+disagreed with the compiled defaults on `mode` and `duck_audio`.
 
-The design proposes 20 keys grouped into tables, separates *which model* from
-*where its runtime runs* (the `engine` enum welds them together today), prefixes
-every whisper catalog name with its family, and makes a small streaming model
-the default source of the live preview instead of re-running the main model at
-every pause.
+What landed:
 
-One ruling already settled, and it reaches past the config file: **mavor becomes
-a cgo-only program.** The pure-Go build and the `sherpa` build tag are deleted
-rather than demoted, `build-sherpa` folds into `build`, and the release ships a
-42 MB directory instead of an 11.8 MB static binary. That buys the thirteen
-sherpa models out of the box and costs cross-compilation without a cross
-toolchain. The release recipe must set `$ORIGIN` in its rpath or it will ship a
-binary that runs only on the build host.
+- **No `engine` key, and nothing reads one.** The two axes it welded together
+  are derived separately now: the model name decides the **runtime**
+  (whisper.cpp, or ONNX Runtime through sherpa-onnx) because the catalog
+  records it, and the runtime plus `[advanced]` decides the **placement**
+  (`in-process`, `local-server`, `subprocess`, `remote`). `internal/models` is
+  a new package holding both, extracted from `cmd/mavor` so `internal/speech`
+  could import it.
+- **20 keys in six tables** — `model` at the top, then `[preview]`,
+  `[ducking]`, `[vocabulary]`, `[overlay]`, `[advanced]`, `[paths]`.
+  `config.Default()` is the single source of the defaults and the scaffold is
+  generated from it, with a test asserting the two parse to the same value, so
+  the drift that produced the third bug cannot recur.
+- **Every catalog name begins with its model family.** `whisper-base.en`, not
+  `base.en`; the bare aliases were deleted rather than kept resolving, and a
+  stale name errors with the nearest entries named. On-disk filenames stay
+  upstream's, and `speech.WhisperModelPath` is the only place the two
+  vocabularies meet.
+- **A companion model drives the preview.** A 20M streaming zipformer runs
+  alongside a main model that cannot decode incrementally, replacing the
+  re-transcribe-at-every-pause behaviour — which survives as the named
+  fallback, "phrase mode". The preview still never emits.
+- **The build is cgo, always.** The pure-Go build and the `sherpa` tag were
+  deleted rather than demoted; `build-sherpa` and `bench-sherpa` folded into
+  `build` and `bench`; `scripts/sherpa-libs.sh` stages the two shared objects
+  and the `$ORIGIN` rpath makes the artifact relocatable. That buys the
+  thirteen sherpa models out of the box and costs cross-compilation — see the
+  arm64 question above, which is the one loose end.
+- **A stale config is detected, not silently ignored.** There are no
+  compatibility aliases, so a pre-rewrite file parses to zero known keys;
+  `config.File.SchemaLooksStale` catches exactly that and `doctor` names
+  `mavor config init --force`.
 
-The first two steps — fixing `gpu_layers`, and the catalog rename — are
-self-contained and worth landing on their own.
+**Next step: retire the design docs.** The feature has shipped, so
+[`design/configuration-surface.md`](design/configuration-surface.md) and
+[`design/configuration-surface-plan.md`](design/configuration-surface-plan.md)
+should graduate into the reference tree — the runtime/placement model, the
+preview resolution rule and the vocabulary mapping belong in
+[`how-mavor-works.md`](reference/how-mavor-works.md), which already carries the
+first pass of all three — and then be deleted, the same lifecycle item 6
+describes. Until that happens the design doc is the only statement of the
+`[advanced]` semantics, so do not delete it early.
 
 ---
 
@@ -309,9 +395,11 @@ generated by `just bench` and regenerable on any machine.
 so it should work — but it has never executed. Treat the workflow as unverified
 until a run goes green.
 
-**Next step:** watch the first Actions run. The workflow no longer installs any
-system packages — the build is pure Go — so the remaining risk is the mise
-toolchain step rather than anything distro-specific.
+**Next step:** watch the first Actions run. The workflow installs no system
+packages, which is now a bet rather than a fact: since `f3f8fd9` the build is
+cgo and needs a C toolchain, which `ubuntu-latest` happens to preinstall. So the
+risks are the mise toolchain step and that preinstalled gcc, and a runner image
+that drops it would break the build with no warning.
 
 Same caveat for `.github/workflows/release.yml`, which additionally has never
 built a release artifact.
@@ -376,12 +464,10 @@ The three routes, worst to best:
 
 > [!NOTE]
 > Zipformer has no ggml port that I could find — the third route covers
-> Parakeet and, with more work, Moonshine, but not Zipformer. If the streaming
-> Zipformer becomes the preview companion
-> ([`design/configuration-surface.md`](design/configuration-surface.md) settled
-> a 20M-parameter streaming zipformer as that companion), it stays on the CPU
-> regardless. That is fine: the preview model is small by
-> design and costs about one core.
+> Parakeet and, with more work, Moonshine, but not Zipformer. The streaming
+> Zipformer **is** the preview companion as of `7e52f94` (the 20M variant), so
+> it stays on the CPU regardless of how this workstream lands. That is fine:
+> the companion is small by design and costs about one core.
 
 **Next step:** measure before building. Run the ggml Parakeet against the
 catalog's ONNX Parakeet on this machine, CPU and Vulkan, through `just bench`.
