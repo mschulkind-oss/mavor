@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 )
 
 // firstClientID is where client-allocated object IDs start. 1 is always
@@ -177,6 +178,40 @@ func (c *Conn) Dispatch() error {
 		return c.errEvent
 	}
 	return nil
+}
+
+// DispatchPending handles whatever has already arrived and returns at once.
+//
+// A Wayland client MUST read. Events it never reads pile up in the kernel
+// buffer, and wl_buffer.release is one of them — without it a client cannot
+// know when a buffer is free to reuse, and reusing a held buffer is a protocol
+// violation the compositor answers by closing the connection with no error.
+// pendingReadWindow is how long a drain waits for data already in flight. Long
+// enough that the kernel reports what it has, short enough to be invisible
+// against a 37 ms frame.
+const pendingReadWindow = time.Millisecond
+
+func (c *Conn) DispatchPending() error {
+	for {
+		// A deadline of exactly now is already past by the time the read
+		// runs, and the read then reports a timeout WITHOUT looking at data
+		// that is sitting there waiting. That silently drains nothing —
+		// wl_buffer.release never arrives, every buffer stays marked busy,
+		// and the overlay stops painting. A small positive window actually
+		// reads what is queued.
+		if err := c.sock.SetReadDeadline(time.Now().Add(pendingReadWindow)); err != nil {
+			return err
+		}
+		err := c.Dispatch()
+		_ = c.sock.SetReadDeadline(time.Time{})
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			return nil
+		}
+		return err
+	}
 }
 
 // Roundtrip blocks until the compositor has processed every request sent so

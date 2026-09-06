@@ -70,7 +70,11 @@ type desired struct {
 type wlState struct {
 	display *wayland.Display
 	surface *wayland.Surface
-	buf     *wayland.Buffer
+	// bufs is a small pool. A committed wl_buffer belongs to the compositor
+	// until it releases it, so one buffer cannot be redrawn every frame —
+	// three gives it room to hold one while another is being painted.
+	bufs   [3]*wayland.Buffer
+	bufIdx int
 
 	scene Scene
 	// maxPreview is the pixel cap applied to every scene before painting,
@@ -171,8 +175,10 @@ func NewWL(topMargin int, previewFraction float64, log *slog.Logger) (*WL, error
 // run owns the connection until Close.
 func (o *WL) run(st *wlState) {
 	defer func() {
-		if st.buf != nil {
-			st.buf.Close()
+		for _, b := range st.bufs {
+			if b != nil {
+				b.Close()
+			}
 		}
 		_ = st.surface.Destroy()
 		_ = st.display.Close()
@@ -211,6 +217,12 @@ func (o *WL) run(st *wlState) {
 		case <-o.quit:
 			return
 		case <-tick.C:
+			// Read first. Releases arrive here, and a client that never
+			// reads is disconnected once the buffer fills.
+			if err := st.display.DispatchPending(); err != nil {
+				o.fail(err)
+				return
+			}
 			// A change is reason to paint even when nothing is animating:
 			// it is how a state the producer asked for reaches the screen.
 			changed := apply()
@@ -235,18 +247,24 @@ func (o *WL) fail(err error) {
 
 // paint renders the current scene and puts it on screen.
 func (o *WL) paint(st *wlState, start time.Time) error {
+	// Hidden is drawn, not unmapped.
+	//
+	// Unmapping (attaching a null buffer) looks like the natural way to hide,
+	// and it is a trap: a compositor holding buffers for an unmapped surface
+	// has no reason to release them, so every buffer stays busy and every
+	// frame of the NEXT dictation is skipped. Destroying them instead is
+	// worse — the compositor closes the connection. Re-mapping needs a fresh
+	// configure handshake that is easy to get subtly wrong.
+	//
+	// None of that is necessary. The surface is a fixed size and its input
+	// region is empty, so a fully transparent frame is invisible and
+	// click-through, and the buffer cycle keeps turning. The surface simply
+	// stays mapped for the life of the daemon.
 	if st.scene.Visual == Hidden {
-		if st.mapped {
-			// Attaching no buffer is how a surface is unmapped.
-			if err := st.surface.AttachNothing(); err != nil {
-				return err
-			}
-			st.mapped = false
-		}
 		st.animate = false
-		return nil
+	} else {
+		st.animate = true
 	}
-	st.animate = true
 
 	// Phase runs 0..1 and back, matching an alternating CSS animation.
 	elapsed := time.Since(start).Seconds()
@@ -274,16 +292,36 @@ func (o *WL) paint(st *wlState, start time.Time) error {
 	// Allocate against the size the compositor assigned, which is what the
 	// buffer must match, rather than the size that was asked for.
 	sw, sh := st.surface.Width, st.surface.Height
-	if st.buf == nil || sw != st.bufW || sh != st.bufH {
-		if st.buf != nil {
-			st.buf.Close()
-			st.buf = nil
+	if st.bufs[0] == nil || sw != st.bufW || sh != st.bufH {
+		for i := range st.bufs {
+			if st.bufs[i] != nil {
+				st.bufs[i].Close()
+				st.bufs[i] = nil
+			}
 		}
-		b, err := st.display.NewBuffer(sw, sh)
-		if err != nil {
-			return err
+		for i := range st.bufs {
+			b, err := st.display.NewBuffer(sw, sh)
+			if err != nil {
+				return err
+			}
+			st.bufs[i] = b
 		}
-		st.buf, st.bufW, st.bufH = b, sw, sh
+		st.bufW, st.bufH = sw, sh
+	}
+
+	// Take one the compositor has given back. Skipping a frame is a frame
+	// nobody misses; committing a buffer still in use loses the connection.
+	var buf *wayland.Buffer
+	for range st.bufs {
+		st.bufIdx = (st.bufIdx + 1) % len(st.bufs)
+		if !st.bufs[st.bufIdx].Busy() {
+			buf = st.bufs[st.bufIdx]
+			break
+		}
+	}
+	if buf == nil {
+		o.debug("overlay: no free buffer this frame — every one still held by the compositor")
+		return nil
 	}
 
 	renderStart := time.Now()
@@ -306,7 +344,7 @@ func (o *WL) paint(st *wlState, start time.Time) error {
 		o.debug("overlay: frame skipped", "err", err)
 		return nil
 	}
-	blit(st.img, st.buf)
+	blit(st.img, buf)
 	// Render measures and draws every glyph of the preview, so its cost
 	// grows with the text. This is the number to look at when the overlay
 	// feels like it has lost frames.
@@ -323,7 +361,7 @@ func (o *WL) paint(st *wlState, start time.Time) error {
 		"update_age_ms", ageMS,
 		"visual", st.scene.Visual)
 
-	if err := st.surface.Attach(st.buf); err != nil {
+	if err := st.surface.Attach(buf); err != nil {
 		return err
 	}
 	st.mapped = true

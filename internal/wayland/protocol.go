@@ -207,6 +207,10 @@ func (d *Display) Close() error { return d.conn.Close() }
 // Dispatch runs one round of event handling.
 func (d *Display) Dispatch() error { return d.conn.Dispatch() }
 
+// DispatchPending handles what has already arrived and returns immediately.
+// Any loop that owns a connection must call it. See Conn.DispatchPending.
+func (d *Display) DispatchPending() error { return d.conn.DispatchPending() }
+
 // Roundtrip blocks until the compositor has caught up.
 func (d *Display) Roundtrip() error { return d.conn.Roundtrip() }
 
@@ -380,6 +384,7 @@ func (s *Surface) WaitConfigure() error {
 // Attach binds a buffer to the surface, marks the whole surface damaged and
 // commits, which is the three-step sequence that puts pixels on screen.
 func (s *Surface) Attach(buf *Buffer) error {
+	buf.busy = true
 	// wl_surface.attach(buffer:object, x:int, y:int)
 	b := newBuilder(s.surface, 1)
 	b.putObject(buf.id)
@@ -427,6 +432,9 @@ type Buffer struct {
 
 	pool ObjectID
 	file *os.File
+	// busy: committed and not yet released. Touched only by the goroutine
+	// that owns the connection.
+	busy bool
 }
 
 // NewBuffer allocates a shared-memory buffer of the given size and hands the
@@ -453,7 +461,16 @@ func (d *Display) NewBuffer(width, height int) (*Buffer, error) {
 		return nil, err
 	}
 
-	buf.id = d.conn.newID(nil)
+	// wl_buffer.release (event 0): the compositor is done with this buffer
+	// and it may be drawn into and committed again. Committing one it still
+	// holds is a protocol violation, and the answer is a closed connection
+	// with no error event — which is exactly how this presented.
+	buf.id = d.conn.newID(func(opcode uint16, r *reader) error {
+		if opcode == 0 {
+			buf.busy = false
+		}
+		return nil
+	})
 	// wl_shm_pool.create_buffer(id, offset:int, width:int, height:int, stride:int, format:uint)
 	b = newBuilder(buf.pool, 0)
 	b.putObject(buf.id)
@@ -558,3 +575,6 @@ func (s *Surface) AttachNothing() error {
 	}
 	return s.Commit()
 }
+
+// Busy reports whether the compositor still holds this buffer.
+func (b *Buffer) Busy() bool { return b.busy }

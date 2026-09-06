@@ -9,8 +9,7 @@ import (
 	"github.com/mschulkind-oss/mavor/internal/ipc"
 )
 
-// KNOWN FAILING, for the same cause as hide_show_test.go — see that file's
-// note. This is the end-to-end shape of it: the real daemon binary, a real
+// The end-to-end shape of hide_show_test.go: the real daemon binary, a real
 // compositor, and a state cycle.
 //
 // The overlay tests elsewhere in this package drive overlay.NewDefault

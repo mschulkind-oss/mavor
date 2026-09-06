@@ -11,23 +11,20 @@ import (
 	"github.com/mschulkind-oss/mavor/internal/overlay"
 )
 
-// KNOWN FAILING. This reproduces, in about two seconds and with no daemon and
-// no audio, the bug behind "the overlay isn't showing up": the render loop
-// dies on the SECOND hide-and-show cycle with a broken pipe, and the
-// compositor logs no protocol error to say why.
+// The regression test for "the overlay isn't showing up". It reproduced that
+// in about two seconds with no daemon and no audio, and it is what found the
+// cause: the render loop died on the SECOND hide-and-show cycle with a broken
+// pipe and no protocol error to say why.
 //
 // Every dictation hides and shows the overlay, so every dictation after the
 // first has been running on a dead loop. The other overlay tests all show one
 // state, assert, and stop — which is why this went unnoticed through several
 // rounds of overlay changes.
 //
-// It is committed failing on purpose. A reproducer that runs in two seconds is
-// worth more than the same bug found again from a screenshot, and marking it
-// skipped would hide exactly the thing that needs fixing.
-//
-// Confirmed present at dd5cef7 and 0b6f0d8 as well, so it is not a regression
-// from the fixed-surface work or from in-process typing — it is older than
-// both and was simply never exercised.
+// It asserts both halves, because each was broken in turn: that showing puts
+// the overlay on screen, and that hiding takes it off. The first fix made the
+// surface survive by never unmapping, which left it permanently visible — a
+// test that only checked survival would have called that a pass.
 func TestOverlaySurvivesHideAndShowAgain(t *testing.T) {
 	h := sharedCompositor(t)
 	t.Setenv("XDG_RUNTIME_DIR", h.XDGRuntime)
@@ -53,7 +50,8 @@ func TestOverlaySurvivesHideAndShowAgain(t *testing.T) {
 			t.Fatalf("cycle %d Show(Recording): %v", cycle, err)
 		}
 		time.Sleep(300 * time.Millisecond)
-		if lit() == 0 {
+		shown := lit()
+		if shown == 0 {
 			t.Fatalf("cycle %d: nothing on screen while recording", cycle)
 		}
 
@@ -61,6 +59,13 @@ func TestOverlaySurvivesHideAndShowAgain(t *testing.T) {
 			t.Fatalf("cycle %d Show(Hidden): %v", cycle, err)
 		}
 		time.Sleep(300 * time.Millisecond)
-		t.Logf("cycle %d: hidden lit=%d", cycle, lit())
+		hidden := lit()
+		t.Logf("cycle %d: recording lit=%d, hidden lit=%d", cycle, shown, hidden)
+		// Hiding has to actually hide. Drawing a transparent frame instead
+		// of unmapping is only correct if nothing shows through it.
+		if hidden >= shown {
+			t.Errorf("cycle %d: hidden shows %d lit rows against %d while recording — it is not hidden",
+				cycle, hidden, shown)
+		}
 	}
 }
