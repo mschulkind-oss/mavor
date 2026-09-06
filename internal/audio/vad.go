@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"bufio"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -26,17 +27,70 @@ const (
 // it contains at least minSpeech duration of active voice. If the total
 // speech duration is below minSpeech, it returns false (indicating silence
 // or non-vocal background noise).
+//
+// It streams the file a frame at a time rather than reading it whole. The
+// answer is a running count of loud frames, so nothing here needs two copies
+// of the recording in memory — which is what materializing it cost: a 120s
+// dictation allocated 7.7 MB (the PCM bytes, then the same samples again as
+// int16) to produce one bool, on the critical path between the user releasing
+// the key and Transcribe being called.
 func DetectSpeech(wavPath string, minSpeech time.Duration) (bool, error) {
-	samples, err := ReadWAVSamples(wavPath)
+	f, err := os.Open(wavPath)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("vad: open %s: %w", wavPath, err)
 	}
-	if len(samples) == 0 {
-		return false, nil
+	defer f.Close()
+
+	dataAt, err := WAVDataOffset(f)
+	if err != nil {
+		// A file too short to hold a header yet is not an error: parec has
+		// simply not written one. A file that is not RIFF/WAVE at all is.
+		if stat, statErr := f.Stat(); statErr == nil && stat.Size() < 44 {
+			return false, nil
+		}
+		return false, fmt.Errorf("vad: %s: %w", wavPath, err)
+	}
+	if _, err := f.Seek(dataAt, io.SeekStart); err != nil {
+		return false, fmt.Errorf("vad: seek to samples: %w", err)
 	}
 
-	speechDuration := SpeechDuration(samples, DefaultSampleRate, SpeechRMSThreshold)
-	return speechDuration >= minSpeech, nil
+	// One frame-sized buffer, reused for the whole file. io.ReadFull fills it
+	// or reports that the tail is short — and a partial trailing frame is
+	// dropped, exactly as the whole-slice loop in SpeechDuration does.
+	r := bufio.NewReaderSize(f, 64*1024)
+	buf := make([]byte, FrameSamples*2)
+	speech := time.Duration(0)
+	for {
+		if _, err := io.ReadFull(r, buf); err != nil {
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+				break
+			}
+			return false, fmt.Errorf("vad: read pcm: %w", err)
+		}
+		if rmsOfPCM(buf) >= SpeechRMSThreshold {
+			speech += FrameDuration
+			if speech >= minSpeech {
+				// Nothing later can lower the count, so the rest of the file
+				// cannot change the answer.
+				return true, nil
+			}
+		}
+	}
+	return speech >= minSpeech, nil
+}
+
+// rmsOfPCM is CalculateRMS over little-endian s16 bytes, so a caller that has
+// the raw frame need not convert it to []int16 first.
+func rmsOfPCM(frame []byte) float64 {
+	if len(frame) < 2 {
+		return 0.0
+	}
+	var sum float64
+	for i := 0; i+1 < len(frame); i += 2 {
+		norm := float64(int16(binary.LittleEndian.Uint16(frame[i:i+2]))) / 32768.0
+		sum += norm * norm
+	}
+	return math.Sqrt(sum / float64(len(frame)/2))
 }
 
 // ReadWAVSamples parses a 16-bit mono PCM WAV file and returns its raw audio samples.
