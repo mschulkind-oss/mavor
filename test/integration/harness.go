@@ -479,9 +479,16 @@ func (h *Harness) RunDaemon(ctx context.Context, binary, modelName string, extra
 }
 
 func findDBusSessionConf() (string, error) {
-	// nix store path is fastest; fall back to FHS locations.
+	// The nix store path is fastest here; the FHS locations are what a CI
+	// runner and most distributions have.
+	//
+	// /usr/share/dbus-1/session.conf is where Debian and Ubuntu keep it —
+	// /etc/dbus-1 holds only drop-ins there, so searching /etc alone finds
+	// nothing and the whole suite fails before the compositor starts. That is
+	// exactly how this first ran on GitHub.
 	candidates := []string{
 		"/etc/dbus-1/session.conf",
+		"/usr/share/dbus-1/session.conf",
 	}
 	// Globbing /nix/store/*-dbus-*/share/dbus-1/session.conf
 	if matches, _ := filepath.Glob("/nix/store/*-dbus-*/share/dbus-1/session.conf"); len(matches) > 0 {

@@ -44,7 +44,7 @@ jobs:
             sway grim slurp wtype wl-clipboard \
             libwayland-client0 xkb-data \
             pipewire pipewire-pulse wireplumber pulseaudio-utils \
-            dbus-x11
+            dbus dbus-x11
 
       - name: Integration tests (headless sway)
         env:

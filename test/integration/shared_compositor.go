@@ -50,6 +50,14 @@ func sharedCompositor(t *testing.T) *Harness {
 	if sharedStartFail != nil {
 		t.Fatal(sharedStartFail)
 	}
+	if sharedHarness == nil {
+		// start() calls t.Fatal on the FIRST test to reach it, which stops
+		// only that test — every later one then dereferences a nil harness
+		// and the package dies with a segfault instead of a message. A
+		// segfault is a much worse first impression of a broken environment
+		// than "the compositor did not start".
+		t.Fatal("integration: the shared compositor did not start; see the first failure above")
+	}
 	sharedHarness.adopt(t)
 	return sharedHarness
 }
