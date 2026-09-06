@@ -385,6 +385,7 @@ func TestWhisperWithNoVocabularyGetsNoPromptFlag(t *testing.T) {
 // The supervised whisper-server takes the same prompt as a flag, so the warm
 // path and the per-utterance path bias identically.
 func TestSupervisedServerCarriesThePrompt(t *testing.T) {
+	pathWith(t, "whisper-server") // "auto" only reaches the warm server where one exists
 	cfg := whisperVocabConfig(t, "mavor", "wlroots")
 	cfg.Advanced.Placement = "auto"
 

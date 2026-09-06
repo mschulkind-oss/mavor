@@ -32,6 +32,12 @@ func whisperConfig(t *testing.T, name string) config.Config {
 // the model each time. Nothing in the config says so — it follows from the
 // model.
 func TestWhisperModelDefaultsToASupervisedWarmServer(t *testing.T) {
+	// The warm placement is only available where the binary that holds the
+	// model is: with no whisper-server on PATH the daemon deliberately
+	// downgrades to a subprocess (see AdjustForEnvironment). This test is
+	// about the derivation, so it guarantees the environment rather than
+	// inheriting whatever the host happens to have installed.
+	pathWith(t, "whisper-server")
 	cfg := whisperConfig(t, "whisper-base.en")
 
 	res, err := Resolve(cfg)
@@ -192,6 +198,7 @@ func TestServerURLMakesThePlacementRemote(t *testing.T) {
 }
 
 func TestGPUOffReachesBothWhisperPlacements(t *testing.T) {
+	pathWith(t, "whisper-server")
 	cfg := whisperConfig(t, "whisper-base.en")
 	cfg.Advanced.GPU = "off"
 

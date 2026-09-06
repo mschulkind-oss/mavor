@@ -86,3 +86,24 @@ func TestSherpaInProcessIsNeverAdjusted(t *testing.T) {
 		t.Errorf("sherpa selection was adjusted: %+v", got)
 	}
 }
+
+// The regression test for a break CI caught and the jail hid: this container
+// ships whisper-server, GitHub's runner does not, so every test that asserted
+// the warm-server default passed here and failed there. Resolve is the seam
+// where the downgrade actually reaches the daemon, so it is asserted here and
+// not only on AdjustForEnvironment in isolation.
+func TestResolveDowngradesAWhisperModelWithNoServerOnPath(t *testing.T) {
+	pathWithout(t)
+	cfg := whisperConfig(t, "whisper-base.en")
+
+	res, err := Resolve(cfg)
+	if err != nil {
+		t.Fatalf("Resolve: %v — a missing server must degrade, never fail", err)
+	}
+	if res.Placement != models.PlacementSubprocess {
+		t.Fatalf("Placement = %q, want %q", res.Placement, models.PlacementSubprocess)
+	}
+	if len(res.Warnings) == 0 {
+		t.Error("the downgrade must be visible: no warning for doctor or the log to print")
+	}
+}
