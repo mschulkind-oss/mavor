@@ -9,7 +9,7 @@ summary: "Living roadmap for the mavor dictation daemon: open decisions, the rea
 
 # Ongoing Work: `mavor` Voice-to-Text Utility
 
-**Status:** 2 Needs Attention (💬), 5 Ready to Implement (📦), 4 Open Threads (🏗️ 1, 🔒 1, 🛑 1, 🧊 1)
+**Status:** 1 Needs Attention (💬), 5 Ready to Implement (📦), 4 Open Threads (🏗️ 1, 🔒 1, 🛑 1, 🧊 1)
 
 ---
 
@@ -46,7 +46,7 @@ CPU-only regardless — see the workstream below.
 
 **Still deferring to you**, but the trade is now priced.
 
-### 💬 Should whisper get vocabulary biasing?
+### ✅ Should whisper get vocabulary biasing? — RESOLVED (2026-09-05)
 
 `--verbose` currently reports `vocabulary: none` for all 11 whisper models,
 because mavor passes no initial prompt to `whisper-cli`. whisper.cpp supports
@@ -58,16 +58,18 @@ There is a full design for the ambitious version —
 still `in-review` — which derives vocabulary from the focused window via
 `swaymsg -t get_tree`.
 
-**My leaning:** ship the static half first. A `vocabulary = ["kubernetes", ...]`
-config key wired to `--prompt` is a small change that closes the gap for every
-whisper model. The window-context half is a much bigger build and can follow if
-the static version proves useful.
+**Yes, the static half, and it is designed.**
+[`design/configuration-surface.md`](design/configuration-surface.md) §7 specifies
+a runtime-neutral `[vocabulary]` table — a prompt on whisper, a hotwords file on
+the transducers, and nothing on the models that cannot use one, which `doctor`
+reports rather than failing on. Its OQ-4 settled that this lands now rather than
+waiting: the window-context design derives the word list at runtime and still
+needs a static one to sit beside, so it adopts this key shape instead of
+replacing it.
 
-[`design/configuration-surface.md`](design/configuration-surface.md) §7 designs
-that key as a runtime-neutral `[vocabulary]` table — a prompt on whisper, a
-hotwords file on the transducers, and nothing on the models that cannot use one
-— and asks in its OQ-4 whether to land it before the window-context design
-settles.
+The window-context half stays where it is, in
+[`design/active-window-context-and-vocabulary-prompting.md`](design/active-window-context-and-vocabulary-prompting.md),
+still `in-review` and unbuilt.
 
 ---
 
@@ -233,8 +235,8 @@ which is frozen. Both are proposals, which is what that tree is for.
 
 ### 📦 7. The config file has 29 keys and three of them are wrong
 
-[`design/configuration-surface.md`](design/configuration-surface.md) — DESIGN,
-2026-09-05, five open questions.
+[`design/configuration-surface.md`](design/configuration-surface.md) — DECIDED
+2026-09-05, all five questions settled, nothing built.
 
 Three findings worth reading even if the redesign is rejected. `gpu_layers`
 passes `-ngl` to whisper.cpp, which does not accept it, so **any non-zero value
@@ -376,8 +378,9 @@ The three routes, worst to best:
 > Zipformer has no ggml port that I could find — the third route covers
 > Parakeet and, with more work, Moonshine, but not Zipformer. If the streaming
 > Zipformer becomes the preview companion
-> ([`design/configuration-surface.md`](design/configuration-surface.md) OQ-2),
-> it stays on the CPU regardless. That is fine: the preview model is small by
+> ([`design/configuration-surface.md`](design/configuration-surface.md) settled
+> a 20M-parameter streaming zipformer as that companion), it stays on the CPU
+> regardless. That is fine: the preview model is small by
 > design and costs about one core.
 
 **Next step:** measure before building. Run the ggml Parakeet against the

@@ -2,7 +2,7 @@
 title: "Twenty-nine keys, and the three that lie"
 author: "Matthew Schulkind"
 date: 2026-09-05
-status: in-review
+status: accepted
 tags: [design, config, cli, models, sherpa, whisper, preview, streaming, cgo, gpu]
 summary: "Redesign of mavor's config.toml: separate the model from where it runs, delete the keys that do nothing or actively break transcription, prefix every model name with its family, and make a dedicated streaming model the default source of the live preview."
 vantage:
@@ -11,7 +11,8 @@ vantage:
 
 # Twenty-nine keys, and the three that lie
 
-**Status:** DESIGN, 2026-09-05. Nothing built. Evidence in §2 verified against
+**Status:** DECIDED (2026-09-05). Nothing built; every open question is settled
+and the Decision Ledger carries the five rulings. Evidence in §2 verified against
 the tree at `62db92c` on 2026-09-05.
 
 **The short version.** `config.toml` exposes 29 keys. Three of them are wrong
@@ -380,15 +381,28 @@ real-time factor and keeps up on one to two cores, alongside the main model.
 3. **Otherwise**, fall back to phrase mode, and have `doctor` say which model to
    pull for a better preview.
 
-Step 3 is what keeps this from ambushing anyone with a download.
-`zipformer-streaming` is a 310 MB artifact, and a default that silently pulls it
-during `mavor setup` would be a worse trade than the preview is worth. The
-resident cost is far smaller than the download — the int8 encoder is roughly
-40 MB — which argues for adding the 20M-parameter streaming zipformer upstream
-publishes as the designated companion. See [OQ-2](#open-questions).
+**The designated companion is the 20M-parameter streaming zipformer**, added to
+the catalog for this purpose (OQ-2). The catalogued `zipformer-streaming` is a
+310 MB artifact for a resident int8 encoder of roughly 40 MB, which is a poor
+trade for something that only paints an overlay; the 20M model upstream
+publishes is the right size for the job. It stays selectable by name for anyone
+who wants the larger one.
+
+**`mavor setup` always pulls it** (OQ-3), which makes step 3 a safety net rather
+than the normal path — it catches a model deleted after setup, or a config
+edited by hand. That follows from a broader rule worth stating on its own:
+
+> [!IMPORTANT]
+> **`mavor setup` makes the current config fully runnable, and is idempotent.**
+> It pulls every model the config names — the main model and the preview
+> companion — skips what is already present, and can be re-run at any time
+> after an edit. "Fully runnable" is the contract: after `setup` exits zero,
+> `mavor daemon` starts with that config and needs no further downloads.
 
 Explicit values override the resolution: a model name forces that companion,
-and `"phrases"` forces phrase mode even when a companion is available.
+and `"phrases"` forces phrase mode even when a companion is available. **A model
+named explicitly and not found is fatal**, never a silent downgrade — see
+§10.2.
 
 ---
 
@@ -434,6 +448,14 @@ extends a listed phrase. Upstream's default is 1.5; the vocabulary design doc
 puts the useful range at 1.5–3.0. Too high inserts listed words where they were
 not said, which is why the comment in the file states the range rather than just
 the default (P4).
+
+This table lands now rather than waiting for
+[`active-window-context-and-vocabulary-prompting.md`](active-window-context-and-vocabulary-prompting.md)
+to leave review (OQ-4). It is the smaller half of that design rather than a
+competing one: the window-context work derives the word list at runtime and
+still needs somewhere to put a static list, so it adopts this key shape rather
+than replacing it. It also closes a gap the roadmap already flags — whisper
+receives no prompt at all today.
 
 **Language model fusion is deliberately not exposed.** sherpa-onnx supports
 RNN-LM shallow fusion, but only for zipformer and conformer transducers — not
@@ -572,15 +594,24 @@ a plausible wrong answer that would compile.
 | `threads` ≤ 0 | Autodetect, as if unset |
 | `top_margin` < 0 | Clamp to 0 |
 | `pause_ms` or `min_phrase_ms` ≤ 0 | Use the default (450 ms / 600 ms) |
-| `model` not in the catalog | Look up as a directory under the sherpa model dir; if absent, error naming the closest catalog entries |
+| `model` not in the catalog | Look up as a directory under the sherpa model dir; if absent, **fatal**, naming the closest catalog entries |
+| `preview.source` names a model that is not installed | **Fatal.** A named model is a request, not a hint (§10.2) |
+| `preview.source = "auto"` and the companion is not installed | Warn, fall back to phrase mode, name the model to pull. The only case that downgrades |
 | `preview.source` equal to `model` | Treated as case 1 of §6.2. Never load the same model twice |
 | Unknown key in the file | Warn at load, listing the key; `doctor` reports it as an error. Never fatal at load |
 | Config file absent | Every default applies. Not an error, as today |
 
 ### 10.2 Failure paths
 
-- **Companion model fails to load** → log a warning, fall back to phrase mode,
-  daemon starts normally. Never fatal: the preview is a convenience.
+- **A model named in the config cannot be found** → **fatal at daemon start**,
+  naming the model and the directory searched. This holds for the main model and
+  for an explicitly named `preview.source` alike. A user who writes a model name
+  gets that model or an error, never a quiet substitution — and since `mavor
+  setup` makes the current config fully runnable (§6.2), reaching this state
+  means the config changed after setup, which the message should say.
+- **The companion model fails to load for any other reason** (corrupt files, an
+  unreadable directory) → log a warning, fall back to phrase mode, daemon starts.
+  The preview is a convenience; a broken one must not cost the user dictation.
 - **`whisper-server` child dies** → the supervisor restarts it
   ([`internal/speech/supervisor.go#L351`](../../internal/speech/supervisor.go#L351)).
   If it dies again within 30 s of a restart, stop restarting, log, and fail the
@@ -635,8 +666,14 @@ catalog-name change, and on-disk names stay upstream's.
 
 ### 10.6 What done looks like
 
-- `mavor config init` on a clean machine, followed by `mavor daemon`, dictates
-  correctly with no edits.
+- `mavor config init` on a clean machine, followed by `mavor setup` and then
+  `mavor daemon`, dictates correctly with no edits and with a live preview.
+- `mavor setup` run twice in a row downloads nothing the second time and exits
+  zero both times. Run again after `preview.source` is edited to name a model
+  that is not installed, it pulls that model; `mavor daemon` then starts.
+- A config naming a model that is not installed fails to start with a message
+  naming the model and the directory searched — never a downgrade to a
+  different model or to phrase mode.
 - A file containing only `model = "whisper-small.en"` runs `whisper-small.en`
   through a warm supervised server, on the physical core count, with a preview.
 - `mavor config show` output, saved and reloaded, produces an identical resolved
@@ -731,7 +768,9 @@ autodetection, runtime and placement derivation, and a test asserting that the
 scaffolded template parses to exactly `Default()`.
 
 **Fifth, the preview.** The companion model, the resolution rule, and phrase
-mode as the named fallback. The largest piece.
+mode as the named fallback. This is also where `mavor setup` becomes idempotent
+and config-driven (§6.2), and where a named-but-missing model becomes fatal
+(§10.2). The largest piece.
 
 **Sixth, vocabulary.** The `[vocabulary]` table mapped to a whisper prompt and to
 sherpa hotwords, with the decoding method following from it.
@@ -744,67 +783,12 @@ rejected.
 
 ---
 
-## Open Questions
-
-1. 💬 **OQ-2: Which model is the designated preview companion?**
-
-   <!-- vantage: oq id=OQ-2 leaning="Add the 20M-parameter streaming zipformer to the catalog as the designated companion; zipformer-streaming's 310 MB download is too large for a default." -->
-
-   `zipformer-streaming` is a 310 MB artifact, though its resident int8 encoder
-   is roughly 40 MB. Upstream publishes a 20M-parameter streaming zipformer that
-   is far smaller. This decides what `preview.source = "auto"` looks for.
-
-   _Leaning:_ Add the 20M model to the catalog and designate it. Keep
-   `zipformer-streaming` selectable by name.
-
-   **Answer:**
-   > _(empty — fill in when decided)_
-
-2. 💬 **OQ-3: Does `mavor setup` pull the companion model?**
-
-   <!-- vantage: oq id=OQ-3 leaning="Only if OQ-2 lands a model under about 100 MB; otherwise setup offers it and doctor recommends it, but nothing downloads without being asked." -->
-
-   §6.2 falls back to phrase mode when no companion is installed, so nothing
-   breaks either way. The question is whether a new user gets the good preview
-   without knowing to ask.
-
-   _Leaning:_ Depends on OQ-2. Pull it automatically only if it is small.
-
-   **Answer:**
-   > _(empty — fill in when decided)_
-
-3. 💬 **OQ-4: Does the `[vocabulary]` table land now, or wait for the window-context design?**
-
-   <!-- vantage: oq id=OQ-4 leaning="Land it now — the static table is the config surface that design needs anyway, and it closes the whisper prompt gap the roadmap already flags." -->
-
-   [`active-window-context-and-vocabulary-prompting.md`](active-window-context-and-vocabulary-prompting.md)
-   is still in review and covers the same ground more ambitiously. Landing the
-   static table first commits to a key shape that doc would have to adopt.
-
-   _Leaning:_ Land it now. The roadmap already flags that whisper gets no prompt
-   at all today, and the static table is the smaller half of that design rather
-   than a competing one.
-
-   **Answer:**
-   > _(empty — fill in when decided)_
-
-4. 💬 🤷 **OQ-5: `[preview]` as a table, or one scalar `preview` key?**
-
-   <!-- vantage: oq id=OQ-5 leaning="Keep the table — pause_ms and min_phrase_ms need a home, and preview is where they belong." -->
-
-   A single `preview = "auto" | "off" | "phrases" | <model>` key would be tighter,
-   at the cost of exiling the two phrase-mode tuning knobs to `[advanced]` where
-   they have nothing to do with their neighbours.
-
-   _Leaning:_ Keep the table. Subjective, though, so it is yours.
-
-   **Answer:**
-   > _(empty — fill in when decided)_
-
----
-
 ## Decision Ledger
 
 | ID | Ruling / Decision | Date | Settled in |
 | :--- | :--- | :--- | :--- |
 | OQ-1 | cgo only. The pure-Go build and the `sherpa` tag are deleted, not demoted — one build, one artifact | 2026-09-05 | §4 The build is cgo, always |
+| OQ-2 | The 20M-parameter streaming zipformer is the designated companion; `zipformer-streaming` stays selectable by name | 2026-09-05 | §6.2 The resolution rule |
+| OQ-3 | `mavor setup` always pulls the companion, is idempotent, and makes the current config fully runnable. A named model that is missing is fatal, never a downgrade | 2026-09-05 | §6.2, §10.2 Failure paths |
+| OQ-4 | The `[vocabulary]` table lands now; the window-context design adopts its key shape rather than replacing it | 2026-09-05 | §7 Vocabulary and decoding |
+| OQ-5 | `[preview]` stays a table — `pause_ms` and `min_phrase_ms` belong with the thing they tune | 2026-09-05 | §8 The proposed file |
