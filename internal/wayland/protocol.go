@@ -1,9 +1,11 @@
 package wayland
 
 import (
+	"errors"
 	"fmt"
 	"image"
 	"os"
+	"time"
 )
 
 // Opcodes and signatures below were taken from wayland.xml and
@@ -376,6 +378,23 @@ func (s *Surface) Commit() error {
 func (s *Surface) WaitConfigure() error {
 	for !s.configured && !s.Closed {
 		if err := s.d.conn.Dispatch(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// WaitConfigureFor is WaitConfigure with a deadline, for callers that cannot
+// afford to block forever. A surface rebuilt after its output went away is the
+// case that needs it: the compositor may have no output to put it on yet, and
+// a render loop stuck in a read is one that never notices the next one either.
+func (s *Surface) WaitConfigureFor(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for !s.configured && !s.Closed {
+		if err := s.d.conn.DispatchDeadline(deadline); err != nil {
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				return fmt.Errorf("wayland: compositor did not configure the surface within %s", timeout)
+			}
 			return err
 		}
 	}

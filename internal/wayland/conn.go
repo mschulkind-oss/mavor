@@ -225,6 +225,19 @@ func (c *Conn) DispatchPending() error {
 	}
 }
 
+// DispatchDeadline is Dispatch with a bound on how long it will wait for the
+// compositor to say something. Dispatch itself blocks in a read until an event
+// arrives, which is the right behaviour at startup and the wrong one for a
+// recovery path: a compositor that never answers would hang the render loop
+// for the life of the daemon, and Close with it.
+func (c *Conn) DispatchDeadline(t time.Time) error {
+	if err := c.sock.SetReadDeadline(t); err != nil {
+		return err
+	}
+	defer func() { _ = c.sock.SetReadDeadline(time.Time{}) }()
+	return c.Dispatch()
+}
+
 // Roundtrip blocks until the compositor has processed every request sent so
 // far, which is how a client knows the registry has finished advertising.
 func (c *Conn) Roundtrip() error {

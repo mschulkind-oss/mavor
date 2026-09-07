@@ -20,6 +20,11 @@ import (
 type WL struct {
 	log *slog.Logger
 
+	// topMargin and previewFraction are kept because the surface may have to
+	// be built more than once — see rebuild.
+	topMargin       int
+	previewFraction float64
+
 	// quit is closed by Close. It carries no values: producers write state
 	// rather than queueing edits, so the only thing the loop needs from the
 	// outside is the signal to stop.
@@ -137,6 +142,21 @@ const (
 	// fills — and while hidden the only events are the last frame's buffer
 	// releases. Half a second is far more often than that needs.
 	idleInterval = 500 * time.Millisecond
+
+	// waitConfigureAtStartup bounds the first handshake. Generous: a
+	// compositor still bringing up its outputs is normal at login, and the
+	// daemon has nothing else to do until the overlay exists.
+	waitConfigureAtStartup = 5 * time.Second
+
+	// waitConfigureOnRebuild bounds the same handshake when it runs inside
+	// the render loop, where blocking costs frames. Short, because failing is
+	// cheap: rebuildRetry comes back around.
+	waitConfigureOnRebuild = 500 * time.Millisecond
+
+	// rebuildRetry is how long to wait before trying again after a failed
+	// rebuild. A monitor that has gone away may not be replaced for hours,
+	// and there is nothing to draw on until it is.
+	rebuildRetry = 2 * time.Second
 )
 
 // NewWL connects to the compositor and starts the render loop.
@@ -155,6 +175,28 @@ func NewWL(topMargin int, previewFraction float64, log *slog.Logger) (*WL, error
 	if log == nil {
 		log = slog.Default()
 	}
+	o := &WL{
+		log:             log,
+		topMargin:       topMargin,
+		previewFraction: previewFraction,
+		quit:            make(chan struct{}),
+		done:            make(chan struct{}),
+		err:             make(chan error, 1),
+		wake:            make(chan struct{}, 1),
+	}
+	st, err := o.connect(waitConfigureAtStartup)
+	if err != nil {
+		return nil, err
+	}
+	go o.run(st)
+	return o, nil
+}
+
+// connect dials the compositor and brings up a layer surface sized for the
+// output it lands on. It is called at startup and again by rebuild, which is
+// why it takes the configure timeout: startup can afford to wait, and a
+// recovery running inside the render loop cannot.
+func (o *WL) connect(configureTimeout time.Duration) (*wlState, error) {
 	d, err := wayland.Connect()
 	if err != nil {
 		return nil, err
@@ -162,10 +204,10 @@ func NewWL(topMargin int, previewFraction float64, log *slog.Logger) (*WL, error
 
 	maxPreview := fallbackPreviewWidth
 	if d.OutputWidth > 0 {
-		maxPreview = int(float64(d.OutputWidth) * previewFraction)
+		maxPreview = int(float64(d.OutputWidth) * o.previewFraction)
 	}
-	log.Info("overlay: preview width cap",
-		"px", maxPreview, "output_width", d.OutputWidth, "fraction", previewFraction)
+	o.log.Info("overlay: preview width cap",
+		"px", maxPreview, "output_width", d.OutputWidth, "fraction", o.previewFraction)
 
 	// The size, once and for good. Wide enough for the preview cap and tall
 	// enough for the strip whether or not one is showing, so no frame ever
@@ -175,13 +217,13 @@ func NewWL(topMargin int, previewFraction float64, log *slog.Logger) (*WL, error
 		d.Close()
 		return nil, err
 	}
-	log.Info("overlay: fixed surface", "w", w, "h", h, "preview_cap_px", maxPreview)
+	o.log.Info("overlay: fixed surface", "w", w, "h", h, "preview_cap_px", maxPreview)
 	s, err := d.NewSurface("mavor", wayland.LayerTop, wayland.AnchorTop, w, h)
 	if err != nil {
 		d.Close()
 		return nil, err
 	}
-	if err := s.SetMargin(topMargin, 0, 0, 0); err != nil {
+	if err := s.SetMargin(o.topMargin, 0, 0, 0); err != nil {
 		d.Close()
 		return nil, err
 	}
@@ -189,27 +231,69 @@ func NewWL(topMargin int, previewFraction float64, log *slog.Logger) (*WL, error
 		d.Close()
 		return nil, err
 	}
-	if err := s.WaitConfigure(); err != nil {
+	if err := s.WaitConfigureFor(configureTimeout); err != nil {
 		d.Close()
 		return nil, err
 	}
-
-	o := &WL{
-		log:  log,
-		quit: make(chan struct{}),
-		done: make(chan struct{}),
-		err:  make(chan error, 1),
-		wake: make(chan struct{}, 1),
+	if s.Closed {
+		d.Close()
+		return nil, errors.New("overlay: compositor closed the layer surface as soon as it was created")
 	}
-	go o.run(&wlState{
+	return &wlState{
 		display:    d,
 		surface:    s,
 		levels:     make([]float64, waveCols),
 		reqW:       w,
 		reqH:       h,
 		maxPreview: maxPreview,
-	})
-	return o, nil
+	}, nil
+}
+
+// rebuild replaces a layer surface the compositor has closed.
+//
+// A layer surface belongs to an output. mavor asks for a null one so the
+// compositor can choose, and the choice is made once, when the surface is
+// created — which is at startup, since the surface then stays mapped for the
+// life of the daemon. When that output goes away the compositor sends
+// zwlr_layer_surface_v1.closed and the surface is gone for good.
+//
+// Nothing in the render loop noticed. Every frame after it was drawn,
+// committed and dropped on the floor, and the log said "overlay: painted" at
+// the frame rate the whole time while the screen stayed empty. Recording,
+// ducking and typing all went on working, which is what made it read as the
+// overlay alone having broken. It never recovered short of restarting the
+// daemon. A monitor unplugged, a DisplayPort link that drops and re-trains, a
+// KVM switch, a display waking from DPMS — any of them does this, and the
+// last three need nobody to touch a cable.
+//
+// The whole connection is rebuilt rather than only the surface, because the
+// output the overlay lands on may be a different size and Display.OutputWidth
+// is read once, during Connect, to size the preview.
+func (o *WL) rebuild(st *wlState) error {
+	for i, b := range st.bufs {
+		if b != nil {
+			b.Close()
+			st.bufs[i] = nil
+		}
+	}
+	_ = st.surface.Destroy()
+	_ = st.display.Close()
+
+	fresh, err := o.connect(waitConfigureOnRebuild)
+	if err != nil {
+		return err
+	}
+	// Carry the dictation across. The user did not stop talking because their
+	// monitor blinked, so the scene and its waveform history come along; only
+	// the compositor-side state — buffers, damage, assigned size — is new.
+	fresh.scene = st.scene
+	copy(fresh.levels, st.levels)
+	fresh.scene.Levels = fresh.levels
+	fresh.lastLevel = st.lastLevel
+	fresh.sceneSetAt = st.sceneSetAt
+	fresh.animate = st.animate
+	*st = *fresh
+	return nil
 }
 
 // run owns the connection until Close.
@@ -237,6 +321,9 @@ func (o *WL) run(st *wlState) {
 	interval := frameInterval
 	start := time.Now()
 	var seen uint64
+	// rebuildAfter throttles recovery attempts so a compositor with no output
+	// to give is not asked at the frame rate.
+	var rebuildAfter time.Time
 
 	// apply folds the latest state the producers asked for into the scene
 	// this goroutine owns. Producers never touch the scene themselves.
@@ -295,9 +382,35 @@ func (o *WL) run(st *wlState) {
 			o.fail(err)
 			return
 		}
+
+		// A closed surface cannot be painted back to life, so check before
+		// drawing anything. See rebuild for why this happens.
+		rebuilt := false
+		if st.surface.Closed {
+			if !time.Now().Before(rebuildAfter) {
+				if err := o.rebuild(st); err != nil {
+					o.log.Warn("overlay: layer surface was closed and could not be rebuilt yet",
+						"err", err, "retry_in", rebuildRetry)
+					rebuildAfter = time.Now().Add(rebuildRetry)
+				} else {
+					o.log.Info("overlay: layer surface was closed by the compositor and has been rebuilt",
+						"w", st.reqW, "h", st.reqH, "preview_cap_px", st.maxPreview)
+					rebuilt = true
+					// The pulse phase is derived from `start`, so the
+					// rebuilt surface picks the animation up where the old
+					// one left off.
+				}
+			}
+			if !rebuilt {
+				continue
+			}
+		}
+
 		// A change is reason to paint even when nothing is animating:
 		// it is how a state the producer asked for reaches the screen.
-		changed := apply()
+		// A rebuild is such a change: the new surface has never been
+		// painted, whatever the producers have or have not asked for since.
+		changed := apply() || rebuilt
 
 		// Scroll here rather than in apply: apply returns early when
 		// nothing arrived, and a frame with no new sample must still
