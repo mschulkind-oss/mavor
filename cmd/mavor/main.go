@@ -255,22 +255,22 @@ func runDaemon(args []string) error {
 		d.SetLogger(logger)
 		duckers = append(duckers, d)
 	}
-	if cfg.XR18.Enabled {
-		x, err := audio.NewXR18Ducker(cfg.XR18.Address, cfg.XR18.Port, cfg.XR18.Channels,
-			time.Duration(cfg.XR18.TimeoutMS)*time.Millisecond)
+	if o := cfg.Ducking.OSC; o.Enabled {
+		x, err := audio.NewOSCDucker(o.Address, o.Port, o.Paths, o.MutedValue,
+			time.Duration(o.TimeoutMS)*time.Millisecond)
 		if err != nil {
-			// Misconfiguration, not a missing mixer: the address or the
-			// channel list is unusable, and no amount of retrying fixes it.
-			// Refusing to start would take dictation down with it, so say so
-			// loudly and carry on without the mixer.
-			logger.Error("xr18: ducking disabled — the [xr18] config is not usable", "err", err)
+			// Misconfiguration, not a missing device: the address or the path
+			// list is unusable, and no amount of retrying fixes it. Refusing
+			// to start would take dictation down with it, so say so loudly
+			// and carry on without it.
+			logger.Error("osc: ducking disabled — the [ducking.osc] config is not usable", "err", err)
 		} else {
 			x.SetLogger(logger)
 			defer func() { _ = x.Close() }()
 			duckers = append(duckers, x)
-			logger.Info("xr18: mixer ducking enabled",
-				"addr", x.Addr(), "channels", x.Channels(),
-				"timeout_ms", cfg.XR18.TimeoutMS)
+			logger.Info("osc: device ducking enabled",
+				"addr", x.Addr(), "paths", x.Paths(),
+				"muted_value", x.MutedValue(), "timeout_ms", o.TimeoutMS)
 		}
 	}
 	var ducker audio.Ducker = &audio.NoopDucker{}
@@ -321,10 +321,10 @@ func runDaemon(args []string) error {
 		"duck_volume", cfg.Ducking.Volume,
 		"duck_sink", cfg.Ducking.Sink,
 		"duck_apps", cfg.Ducking.Apps,
-		"xr18_enabled", cfg.XR18.Enabled,
-		"xr18_address", cfg.XR18.Address,
-		"xr18_port", cfg.XR18.Port,
-		"xr18_channels", cfg.XR18.Channels,
+		"duck_osc_enabled", cfg.Ducking.OSC.Enabled,
+		"duck_osc_address", cfg.Ducking.OSC.Address,
+		"duck_osc_port", cfg.Ducking.OSC.Port,
+		"duck_osc_paths", cfg.Ducking.OSC.Paths,
 		"pause_ms", cfg.Preview.PauseMS,
 		"min_phrase_ms", cfg.Preview.MinPhraseMS,
 		"pulse_source", os.Getenv("PULSE_SOURCE"),

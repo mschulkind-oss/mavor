@@ -39,13 +39,13 @@ const (
 	DefaultPreviewWidth = 0.5
 	DefaultDuckVolume   = "0%"
 
-	// DefaultXR18Port and DefaultXR18TimeoutMS mirror the constants in
+	// DefaultOSCPort and DefaultOSCTimeoutMS mirror the constants in
 	// internal/audio, which is where they are explained. Restated rather than
 	// imported: internal/config imports nothing of mavor's, so that a config
 	// file can be read without pulling in the audio stack.
-	DefaultXR18Port      = 10024
-	DefaultXR18TimeoutMS = 200
-	DefaultBoost         = 1.5
+	DefaultOSCPort      = 10024
+	DefaultOSCTimeoutMS = 200
+	DefaultBoost        = 1.5
 )
 
 // Config is the whole configuration. Field order follows the scaffolded file.
@@ -62,7 +62,6 @@ type Config struct {
 
 	Preview    Preview    `toml:"preview"`
 	Ducking    Ducking    `toml:"ducking"`
-	XR18       XR18       `toml:"xr18"`
 	Vocabulary Vocabulary `toml:"vocabulary"`
 	Logging    Logging    `toml:"logging"`
 	Output     Output     `toml:"output"`
@@ -164,35 +163,47 @@ type Ducking struct {
 
 	// Sink is a specific output to act on instead of the default one.
 	Sink string `toml:"sink"`
+
+	// OSC mutes a network device over OSC. Independent of Enabled above,
+	// which governs only the sound server.
+	OSC OSCDucking `toml:"osc"`
 }
 
-// XR18 mutes channels on a Behringer X Air digital mixer while mavor is
-// recording, over OSC — Open Sound Control, the UDP message format X Air
-// firmware speaks.
+// OSCDucking mutes parameters on a network audio device over OSC — Open
+// Sound Control, a UDP message format of an address string and typed
+// arguments — while mavor is recording.
 //
-// It is separate from [Ducking] because a mixer is not the sound server: an
-// XR18 is a box on the network with its own inputs and its own monitor mix,
-// so what plays through it never passes through PipeWire and `pactl` cannot
-// touch it. The two tables are independent — either, both or neither.
-type XR18 struct {
+// It sits beside the sound-server ducking rather than under its `enabled`
+// key, because the two reach different places and each governs its own: a
+// mixer like a Behringer XR18 is a box on the network with its own monitor
+// mix, so what plays through it never passes through PipeWire and `pactl`
+// cannot turn it down. Either, both or neither.
+//
+// Nothing here is mixer-specific. Paths and MutedValue are whatever the
+// device uses; the X Air family happens to spell a channel's mute switch
+// `/ch/NN/mix/on` with 1 for on and 0 for muted.
+type OSCDucking struct {
 	Enabled bool `toml:"enabled"`
 
-	// Address is the mixer's IP or hostname. Required when enabled; X Air
-	// mixers are usually given a static address, since the daemon has no way
-	// to discover one that moved.
+	// Address is the device's IP or hostname. Required when enabled; give the
+	// device a static address, since the daemon has no way to find one that
+	// moved.
 	Address string `toml:"address"`
 
-	// Port is the mixer's OSC port. 10024 for the X Air family (XR12, XR16,
+	// Port is the device's OSC port. 10024 for the X Air family (XR12, XR16,
 	// XR18); an X32 or M32 uses 10023.
 	Port int `toml:"port"`
 
-	// Channels are the input channels to mute, numbered as they are on the
-	// front of the mixer: 1-16 on an XR18.
-	Channels []int `toml:"channels"`
+	// Paths are the OSC addresses to mute, e.g. ["/ch/15/mix/on"].
+	Paths []string `toml:"paths"`
 
-	// TimeoutMS is how long to wait for the mixer to report what the channels
-	// are currently set to before muting them anyway. It is paid on the way
-	// into recording, so it is short by default.
+	// MutedValue is the integer written to each path to mute it. 0 on an
+	// X Air, where `mix/on` means exactly what it says.
+	MutedValue int32 `toml:"muted_value"`
+
+	// TimeoutMS is how long to wait for the device to report what the paths
+	// are currently set to. It is paid on the way into recording, so it is
+	// short by default; a path that does not answer in time is left alone.
 	TimeoutMS int `toml:"timeout_ms"`
 }
 
@@ -292,12 +303,13 @@ func Default() Config {
 		Ducking: Ducking{
 			Enabled: false,
 			Volume:  DefaultDuckVolume,
+			OSC: OSCDucking{
+				Enabled:   false,
+				Port:      DefaultOSCPort,
+				TimeoutMS: DefaultOSCTimeoutMS,
+			},
 		},
-		XR18: XR18{
-			Enabled:   false,
-			Port:      DefaultXR18Port,
-			TimeoutMS: DefaultXR18TimeoutMS,
-		},
+
 		Vocabulary: Vocabulary{
 			Boost: DefaultBoost,
 		},
@@ -360,14 +372,14 @@ func (c *Config) Resolve() {
 		c.Ducking.Apps = nil
 	}
 
-	if c.XR18.Port <= 0 {
-		c.XR18.Port = DefaultXR18Port
+	if c.Ducking.OSC.Port <= 0 {
+		c.Ducking.OSC.Port = DefaultOSCPort
 	}
-	if c.XR18.TimeoutMS <= 0 {
-		c.XR18.TimeoutMS = DefaultXR18TimeoutMS
+	if c.Ducking.OSC.TimeoutMS <= 0 {
+		c.Ducking.OSC.TimeoutMS = DefaultOSCTimeoutMS
 	}
-	if len(c.XR18.Channels) == 0 {
-		c.XR18.Channels = nil
+	if len(c.Ducking.OSC.Paths) == 0 {
+		c.Ducking.OSC.Paths = nil
 	}
 
 	if len(c.Vocabulary.Words) == 0 {

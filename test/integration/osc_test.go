@@ -13,20 +13,22 @@ import (
 	"github.com/mschulkind-oss/mavor/internal/ipc"
 )
 
-// TestXR18ChannelsMuteWhileRecording drives the real daemon binary against a
+// TestOSCDuckingMutesWhileRecording drives the real daemon binary against a
 // stand-in mixer and watches the OSC traffic.
 //
 // The parts either side of this are covered elsewhere: internal/audio tests
-// XR18Ducker against a fake mixer, and internal/daemon tests that the FSM
+// OSCDucker against a fake device, and internal/daemon tests that the FSM
 // ducks on the way into Recording and restores on the way out. What only this
-// covers is the wiring in cmd/mavor — that an [xr18] table in config.toml
-// reaches the daemon as a ducker at all, and that adding it does not displace
-// the PipeWire ducking that was already there.
-func TestXR18ChannelsMuteWhileRecording(t *testing.T) {
+// covers is the wiring in cmd/mavor — that a [ducking.osc] table in
+// config.toml reaches the daemon as a ducker at all, and that adding it does
+// not displace the sound-server ducking that was already there.
+func TestOSCDuckingMutesWhileRecording(t *testing.T) {
 	mixer := startStubMixer(t, map[int]int32{15: 1, 16: 1})
 
 	h := Start(t, Options{Width: testWidth, Height: testHeight})
-	h.ExtraConfig = fmt.Sprintf("[xr18]\nenabled = true\naddress = \"127.0.0.1\"\nport = %d\nchannels = [15, 16]\n",
+	h.ExtraConfig = fmt.Sprintf(
+		"[ducking.osc]\nenabled = true\naddress = \"127.0.0.1\"\nport = %d\n"+
+			"paths = [\"/ch/15/mix/on\", \"/ch/16/mix/on\"]\n",
 		mixer.port())
 	socket, _ := h.RunDaemon(t.Context(), MavorBinary, "whisper-tiny.en")
 

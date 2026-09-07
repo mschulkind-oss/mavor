@@ -60,11 +60,13 @@ Two facts about that tree are easy to get wrong:
 - `internal/state/` — Thread-safe FSM tracking daemon lifecycle state.
 - `internal/audio/` — Audio capture via `parec` / PipeWire stream, volume
   meter, VAD gating, and audio ducking. Ducking has two independent backends:
-  `ducking.go` turns the sound server down with `pactl`/`wpctl`, and `xr18.go`
-  mutes channels on a Behringer X Air mixer over OSC (a UDP control protocol)
-  because a mixer is a box on the network that PipeWire cannot reach.
-  `duckers.go` composes them, and `audio.Ducker` is the interface the daemon
-  sees either way.
+  `ducking.go` turns the sound server down with `pactl`/`wpctl`, and `osc.go`
+  mutes parameters on a network device over OSC (Open Sound Control, a UDP
+  control protocol) because a mixer like a Behringer XR18 is a box on the
+  network that PipeWire cannot reach. `osc.go` knows nothing about mixers —
+  it is given OSC addresses and the integer that mutes them. `duckers.go`
+  composes the two, and `audio.Ducker` is the interface the daemon sees
+  either way.
 - `internal/speech/` — Speech-to-text. `modelpath.go` is the single resolver
   from a catalog name to a file on disk, `factory.go` turns a resolved model
   into a transcriber, `companion.go` decides where the preview text comes from,
@@ -77,8 +79,9 @@ Two facts about that tree are easy to get wrong:
 - `internal/output/` — Synthetic keystroke typing (`wtype`) and clipboard synchronization (`wl-copy`).
 - `internal/history/` — Append-only JSONL log of completed transcripts, for recovery when typing does not land.
 - `internal/config/` — Configuration loader (`~/.config/mavor/config.toml`):
-  one top-level `model` key plus the `[preview]`, `[ducking]`, `[xr18]`,
-  `[vocabulary]`, `[overlay]`, `[advanced]` and `[paths]` tables, with `~` and `$VAR`
+  one top-level `model` key plus the `[preview]`, `[ducking]` (and its
+  `[ducking.osc]` subtable), `[vocabulary]`, `[overlay]`, `[advanced]` and
+  `[paths]` tables, with `~` and `$VAR`
   expansion. `Default()` is the single source of the defaults — `mavor config
   init` scaffolds its file from it, and a test asserts the two agree.
 - `internal/daemon/` — Main daemon event loop wiring all subsystems.
@@ -156,7 +159,7 @@ Two build tags remain, and both are test-only:
   and where it came from, whether a GPU backend actually loaded, where the
   preview text will come from, and whether this model can use the
   `[vocabulary]` table at all, and — since OSC is UDP and the daemon never
-  waits for an acknowledgement — whether the X Air mixer named in `[xr18]`
+  waits for an acknowledgement — whether the device named in `[ducking.osc]`
   actually answers. A file written against the pre-rewrite schema
   is reported as entirely stale rather than as a list of unknown keys.
 - `mavor config init` — Scaffold default `~/.config/mavor/config.toml`.
@@ -203,6 +206,18 @@ Two build tags remain, and both are test-only:
 - `just test` — Run fast unit tests (`go test ./...`).
 - `just test-int` — Run headless Wayland integration tests (`go test -tags=integration ./test/integration/...`).
 - `just test-e2e` — Run real whisper transcription test.
+- Live OSC hardware check (opt-in, no build tag — it skips unless the env var
+  is set, so `go test ./...` is unaffected):
+  `MAVOR_LIVE_OSC=<device-ip> go test ./internal/audio/ -run TestLiveOSCDevice -v -count=1`.
+  It ducks and restores the real device, leaving it as it found it. A fake can
+  only prove the encoder agrees with the decoder; the port, the bare-address
+  query and the `,i` reply are all claims about firmware.
+- Live OSC hardware check (opt-in, no build tag — it skips unless the env var
+  is set, so `go test ./...` is unaffected):
+  `MAVOR_LIVE_OSC=<device-ip> go test ./internal/audio/ -run TestLiveOSCDevice -v -count=1`.
+  It ducks and restores the real device, leaving it as it found it. A fake can
+  only prove the encoder agrees with the decoder; the port, the bare-address
+  query and the `,i` reply are all claims about firmware.
 - `just storybook` — Generate UI Storybook HTML report with real headless screenshots ([`test/reports/ui-storybook.html`](./test/reports/ui-storybook.html)).
 - `just bench` — Benchmark every installed model on every backend, whisper.cpp and the in-process sherpa engines alike: speed, peak memory, accuracy, CPU and GPU, plus thread scaling and warm-server-versus-cold-CLI sweeps. Regenerates [`docs/reports/model-benchmarks.md`](./docs/reports/model-benchmarks.md).
 - `just bench-models` — Download the whole catalog so there is something to benchmark (~16 GB).

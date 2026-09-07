@@ -44,7 +44,7 @@ func runDoctor(args []string) error {
 		{"Voice model availability", checkModel},
 		{"Live preview source", checkPreview},
 		{"Vocabulary biasing", checkVocabulary},
-		{"XR18 mixer ducking", checkXR18},
+		{"OSC device ducking", checkOSCDucking},
 		{"Daemon socket status", checkDaemon},
 		{"Systemd user service", checkServiceUnit},
 	}
@@ -589,57 +589,55 @@ func checkPreview() (bool, string) {
 	return true, msg
 }
 
-// checkXR18 reports whether the mixer is actually reachable, and what it says
-// the configured channels are set to.
+// checkOSCDucking reports whether the OSC device is actually reachable, and
+// what it says the configured parameters are set to.
 //
 // It is the check this feature most needs. OSC is UDP and mavor never waits
-// for an acknowledgement when it mutes, so a wrong address, a mixer on
+// for an acknowledgement when it mutes, so a wrong address, a device on
 // another subnet or one that is simply powered off all look exactly like a
-// working setup from the daemon's side: it sends two packets into the void,
-// logs nothing, and dictates on. This is the one place that asks the mixer a
-// question and waits for the answer.
-func checkXR18() (bool, string) {
+// working setup from the daemon's side. This is the one place that asks the
+// device a question and waits for the answer.
+func checkOSCDucking() (bool, string) {
 	cfg, _ := config.Load("")
-	if !cfg.XR18.Enabled {
-		return true, "not enabled (set xr18.enabled = true to mute mixer channels while recording)"
+	o := cfg.Ducking.OSC
+	if !o.Enabled {
+		return true, "not enabled (set ducking.osc.enabled = true to mute a networked mixer while recording)"
 	}
-	d, err := audio.NewXR18Ducker(cfg.XR18.Address, cfg.XR18.Port, cfg.XR18.Channels,
-		time.Duration(cfg.XR18.TimeoutMS)*time.Millisecond)
+	d, err := audio.NewOSCDucker(o.Address, o.Port, o.Paths, o.MutedValue,
+		time.Duration(o.TimeoutMS)*time.Millisecond)
 	if err != nil {
 		return false, err.Error()
 	}
 	defer func() { _ = d.Close() }()
 
-	// A doctor check is not on the dictation hot path, so it can afford to
-	// wait longer than the daemon does before calling a mixer absent.
-	on, missing, err := d.Probe()
+	values, missing, err := d.Probe()
 	if err != nil {
 		return false, fmt.Sprintf("%s: %v", d.Addr(), err)
 	}
-	if len(missing) == len(d.Channels()) {
+	if len(missing) == len(d.Paths()) {
 		return false, fmt.Sprintf(
-			"no answer from %s for channel(s) %v — check the mixer is powered on and reachable "+
-				"(`ping %s`), and that xr18.port is 10024 for an X Air (10023 for an X32)",
-			d.Addr(), d.Channels(), cfg.XR18.Address)
+			"no answer from %s for %v — check the device is powered on and reachable "+
+				"(`ping %s`), and that ducking.osc.port is right (10024 for an X Air, 10023 for an X32)",
+			d.Addr(), d.Paths(), o.Address)
 	}
 
 	var parts []string
-	for _, ch := range d.Channels() {
-		v, ok := on[ch]
+	for _, p := range d.Paths() {
+		v, ok := values[p]
 		switch {
 		case !ok:
-			parts = append(parts, fmt.Sprintf("ch%02d no answer", ch))
-		case v == 0:
-			parts = append(parts, fmt.Sprintf("ch%02d muted", ch))
+			parts = append(parts, p+" no answer")
+		case v == d.MutedValue():
+			parts = append(parts, fmt.Sprintf("%s = %d (muted)", p, v))
 		default:
-			parts = append(parts, fmt.Sprintf("ch%02d on", ch))
+			parts = append(parts, fmt.Sprintf("%s = %d", p, v))
 		}
 	}
-	msg := fmt.Sprintf("%s answered (%s) — muted while recording", d.Addr(), strings.Join(parts, ", "))
+	msg := fmt.Sprintf("%s answered — %s", d.Addr(), strings.Join(parts, ", "))
 	if len(missing) > 0 {
-		return false, msg + fmt.Sprintf("; %v did not answer", missing)
+		return false, msg + fmt.Sprintf("; %v did not answer and will be left alone", missing)
 	}
-	return true, msg
+	return true, msg + fmt.Sprintf("; muted with %d while recording", d.MutedValue())
 }
 
 func checkDaemon() (bool, string) {

@@ -62,17 +62,22 @@ volume = %-25q# "0%%" mutes; "25%%" merely lowers
 # apps = ["spotify", "firefox"]   # only these; the default is every stream
 # sink = ""                       # a specific output, not the default one
 
-[xr18]
-# Mute channels on a Behringer X Air mixer (XR12/16/18) while recording.
-# Separate from [ducking] because the mixer is a box on the network with its
-# own monitor mix: what plays through it never reaches PipeWire, so `+"`pactl`"+`
-# cannot turn it down. Either table, both, or neither.
+# Mute a network device over OSC while recording. Separate from the volume
+# ducking above because it reaches somewhere pactl cannot: a mixer like a
+# Behringer XR18 is a box on the network with its own monitor mix, so what
+# plays through it never touches PipeWire. Either, both, or neither.
+[ducking.osc]
 enabled = %t
-# address    = "192.168.1.6"   # the mixer's IP. Required; give it a static one
-# port       = %-6d        # X Air's OSC port; an X32 or M32 uses 10023
-# channels   = [15, 16]        # as numbered on the mixer: 1-16 on an XR18
-# timeout_ms = %-6d        # how long to wait for the mixer to report what
-#                              # the channels were, before muting them anyway
+# address     = "192.168.1.6"          # the device's IP. Required; make it static
+# port        = %-6d               # X Air's OSC port; an X32 or M32 uses 10023
+# paths       = ["/ch/15/mix/on"]      # the parameters to mute. A linked
+#                                      # stereo pair moves together, so one
+#                                      # path mutes both — list both anyway
+#                                      # and it still works if you unlink them.
+# muted_value = %-6d               # what to write to them; 1 restores on an X Air
+# timeout_ms  = %-6d               # how long to wait for the device to report
+#                                      # what they were. A path that does not
+#                                      # answer is left alone rather than guessed at.
 
 [vocabulary]
 # Words the model gets wrong: names, jargon, commands. whisper models take
@@ -135,9 +140,10 @@ preview_width = %v
 		d.Preview.MinPhraseMS,
 		d.Ducking.Enabled,
 		d.Ducking.Volume,
-		d.XR18.Enabled,
-		d.XR18.Port,
-		d.XR18.TimeoutMS,
+		d.Ducking.OSC.Enabled,
+		d.Ducking.OSC.Port,
+		d.Ducking.OSC.MutedValue,
+		d.Ducking.OSC.TimeoutMS,
 		strconv.FormatFloat(float64(d.Vocabulary.Boost), 'f', -1, 32),
 		d.Logging.Verbose,
 		d.Output.Clipboard,
