@@ -38,7 +38,14 @@ const (
 	// DefaultPreviewWidth caps the preview at half the screen.
 	DefaultPreviewWidth = 0.5
 	DefaultDuckVolume   = "0%"
-	DefaultBoost        = 1.5
+
+	// DefaultXR18Port and DefaultXR18TimeoutMS mirror the constants in
+	// internal/audio, which is where they are explained. Restated rather than
+	// imported: internal/config imports nothing of mavor's, so that a config
+	// file can be read without pulling in the audio stack.
+	DefaultXR18Port      = 10024
+	DefaultXR18TimeoutMS = 200
+	DefaultBoost         = 1.5
 )
 
 // Config is the whole configuration. Field order follows the scaffolded file.
@@ -55,6 +62,7 @@ type Config struct {
 
 	Preview    Preview    `toml:"preview"`
 	Ducking    Ducking    `toml:"ducking"`
+	XR18       XR18       `toml:"xr18"`
 	Vocabulary Vocabulary `toml:"vocabulary"`
 	Logging    Logging    `toml:"logging"`
 	Output     Output     `toml:"output"`
@@ -158,6 +166,36 @@ type Ducking struct {
 	Sink string `toml:"sink"`
 }
 
+// XR18 mutes channels on a Behringer X Air digital mixer while mavor is
+// recording, over OSC — Open Sound Control, the UDP message format X Air
+// firmware speaks.
+//
+// It is separate from [Ducking] because a mixer is not the sound server: an
+// XR18 is a box on the network with its own inputs and its own monitor mix,
+// so what plays through it never passes through PipeWire and `pactl` cannot
+// touch it. The two tables are independent — either, both or neither.
+type XR18 struct {
+	Enabled bool `toml:"enabled"`
+
+	// Address is the mixer's IP or hostname. Required when enabled; X Air
+	// mixers are usually given a static address, since the daemon has no way
+	// to discover one that moved.
+	Address string `toml:"address"`
+
+	// Port is the mixer's OSC port. 10024 for the X Air family (XR12, XR16,
+	// XR18); an X32 or M32 uses 10023.
+	Port int `toml:"port"`
+
+	// Channels are the input channels to mute, numbered as they are on the
+	// front of the mixer: 1-16 on an XR18.
+	Channels []int `toml:"channels"`
+
+	// TimeoutMS is how long to wait for the mixer to report what the channels
+	// are currently set to before muting them anyway. It is paid on the way
+	// into recording, so it is short by default.
+	TimeoutMS int `toml:"timeout_ms"`
+}
+
 // Vocabulary is the words the model gets wrong: names, jargon, commands.
 // How it reaches a model depends on the model — a prompt for whisper, a
 // hotwords file for a transducer, nothing at all for the rest — which is why
@@ -255,6 +293,11 @@ func Default() Config {
 			Enabled: false,
 			Volume:  DefaultDuckVolume,
 		},
+		XR18: XR18{
+			Enabled:   false,
+			Port:      DefaultXR18Port,
+			TimeoutMS: DefaultXR18TimeoutMS,
+		},
 		Vocabulary: Vocabulary{
 			Boost: DefaultBoost,
 		},
@@ -315,6 +358,16 @@ func (c *Config) Resolve() {
 	}
 	if len(c.Ducking.Apps) == 0 {
 		c.Ducking.Apps = nil
+	}
+
+	if c.XR18.Port <= 0 {
+		c.XR18.Port = DefaultXR18Port
+	}
+	if c.XR18.TimeoutMS <= 0 {
+		c.XR18.TimeoutMS = DefaultXR18TimeoutMS
+	}
+	if len(c.XR18.Channels) == 0 {
+		c.XR18.Channels = nil
 	}
 
 	if len(c.Vocabulary.Words) == 0 {

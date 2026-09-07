@@ -183,7 +183,7 @@ All paths support `~` and `$ENVIRONMENT_VARIABLES`. Run `mavor config show` to
 inspect the resolved values, and `mavor config init` to scaffold the commented
 file with every default in it.
 
-One top-level key and six tables. The first line is the one a first-time user
+One top-level key and seven tables. The first line is the one a first-time user
 touches; everything below it has a working default, and deleting a line gets
 that default back.
 
@@ -198,6 +198,11 @@ source = "auto"             # "auto" | "phrases" | a model name
 enabled = false             # lower other audio while recording
 volume = "0%"               # "0%" mutes; "25%" merely lowers
 # apps = ["spotify", "firefox"]
+
+[xr18]
+enabled = false             # mute Behringer X Air channels while recording
+# address  = "192.168.1.6"  # the mixer's IP; give it a static one
+# channels = [15, 16]       # as numbered on the mixer
 
 [overlay]
 top_margin = 8              # px below the top of the usable area
@@ -369,7 +374,7 @@ optionally waybar + null-sink. Cleanup happens in `t.Cleanup`.
 ```
 cmd/mavor/                   # CLI entrypoint & subcommands (daemon, doctor, config, service, models)
 internal/state/              # Idle ⇄ Recording ⇄ Transcribing FSM
-internal/audio/              # Recorder interface + parec impl + VAD + PipeWire ducking
+internal/audio/              # Recorder interface + parec impl + VAD + PipeWire and X Air ducking
 internal/speech/             # STT runtimes: whisper.cpp (server/cli) and in-process sherpa-onnx
 internal/overlay/            # Layer-shell HUD: paint.go renders, overlay_wl.go presents
 internal/wayland/            # Minimal hand-written Wayland client (wire protocol, layer-shell, shm)

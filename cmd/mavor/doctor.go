@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mschulkind-oss/mavor/internal/audio"
 	"github.com/mschulkind-oss/mavor/internal/config"
 	"github.com/mschulkind-oss/mavor/internal/ipc"
 	"github.com/mschulkind-oss/mavor/internal/models"
@@ -43,6 +44,7 @@ func runDoctor(args []string) error {
 		{"Voice model availability", checkModel},
 		{"Live preview source", checkPreview},
 		{"Vocabulary biasing", checkVocabulary},
+		{"XR18 mixer ducking", checkXR18},
 		{"Daemon socket status", checkDaemon},
 		{"Systemd user service", checkServiceUnit},
 	}
@@ -584,6 +586,59 @@ func checkPreview() (bool, string) {
 	}
 	// A missing companion is a worse preview and nothing more, so it stays a
 	// passing check that says what to pull.
+	return true, msg
+}
+
+// checkXR18 reports whether the mixer is actually reachable, and what it says
+// the configured channels are set to.
+//
+// It is the check this feature most needs. OSC is UDP and mavor never waits
+// for an acknowledgement when it mutes, so a wrong address, a mixer on
+// another subnet or one that is simply powered off all look exactly like a
+// working setup from the daemon's side: it sends two packets into the void,
+// logs nothing, and dictates on. This is the one place that asks the mixer a
+// question and waits for the answer.
+func checkXR18() (bool, string) {
+	cfg, _ := config.Load("")
+	if !cfg.XR18.Enabled {
+		return true, "not enabled (set xr18.enabled = true to mute mixer channels while recording)"
+	}
+	d, err := audio.NewXR18Ducker(cfg.XR18.Address, cfg.XR18.Port, cfg.XR18.Channels,
+		time.Duration(cfg.XR18.TimeoutMS)*time.Millisecond)
+	if err != nil {
+		return false, err.Error()
+	}
+	defer func() { _ = d.Close() }()
+
+	// A doctor check is not on the dictation hot path, so it can afford to
+	// wait longer than the daemon does before calling a mixer absent.
+	on, missing, err := d.Probe()
+	if err != nil {
+		return false, fmt.Sprintf("%s: %v", d.Addr(), err)
+	}
+	if len(missing) == len(d.Channels()) {
+		return false, fmt.Sprintf(
+			"no answer from %s for channel(s) %v — check the mixer is powered on and reachable "+
+				"(`ping %s`), and that xr18.port is 10024 for an X Air (10023 for an X32)",
+			d.Addr(), d.Channels(), cfg.XR18.Address)
+	}
+
+	var parts []string
+	for _, ch := range d.Channels() {
+		v, ok := on[ch]
+		switch {
+		case !ok:
+			parts = append(parts, fmt.Sprintf("ch%02d no answer", ch))
+		case v == 0:
+			parts = append(parts, fmt.Sprintf("ch%02d muted", ch))
+		default:
+			parts = append(parts, fmt.Sprintf("ch%02d on", ch))
+		}
+	}
+	msg := fmt.Sprintf("%s answered (%s) — muted while recording", d.Addr(), strings.Join(parts, ", "))
+	if len(missing) > 0 {
+		return false, msg + fmt.Sprintf("; %v did not answer", missing)
+	}
 	return true, msg
 }
 

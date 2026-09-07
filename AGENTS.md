@@ -58,7 +58,13 @@ Two facts about that tree are easy to get wrong:
   runtime owns a model is a fact the daemon needs, and a catalog only `package
   main` could see would have forced that fact to be duplicated.
 - `internal/state/` — Thread-safe FSM tracking daemon lifecycle state.
-- `internal/audio/` — Audio capture via `parec` / PipeWire stream, volume meter, VAD gating, and audio ducking.
+- `internal/audio/` — Audio capture via `parec` / PipeWire stream, volume
+  meter, VAD gating, and audio ducking. Ducking has two independent backends:
+  `ducking.go` turns the sound server down with `pactl`/`wpctl`, and `xr18.go`
+  mutes channels on a Behringer X Air mixer over OSC (a UDP control protocol)
+  because a mixer is a box on the network that PipeWire cannot reach.
+  `duckers.go` composes them, and `audio.Ducker` is the interface the daemon
+  sees either way.
 - `internal/speech/` — Speech-to-text. `modelpath.go` is the single resolver
   from a catalog name to a file on disk, `factory.go` turns a resolved model
   into a transcriber, `companion.go` decides where the preview text comes from,
@@ -71,8 +77,8 @@ Two facts about that tree are easy to get wrong:
 - `internal/output/` — Synthetic keystroke typing (`wtype`) and clipboard synchronization (`wl-copy`).
 - `internal/history/` — Append-only JSONL log of completed transcripts, for recovery when typing does not land.
 - `internal/config/` — Configuration loader (`~/.config/mavor/config.toml`):
-  one top-level `model` key plus the `[preview]`, `[ducking]`, `[vocabulary]`,
-  `[overlay]`, `[advanced]` and `[paths]` tables, with `~` and `$VAR`
+  one top-level `model` key plus the `[preview]`, `[ducking]`, `[xr18]`,
+  `[vocabulary]`, `[overlay]`, `[advanced]` and `[paths]` tables, with `~` and `$VAR`
   expansion. `Default()` is the single source of the defaults — `mavor config
   init` scaffolds its file from it, and a test asserts the two agree.
 - `internal/daemon/` — Main daemon event loop wiring all subsystems.
@@ -149,7 +155,9 @@ Two build tags remain, and both are test-only:
   `config.toml` — which runtime and placement the model got, the thread count
   and where it came from, whether a GPU backend actually loaded, where the
   preview text will come from, and whether this model can use the
-  `[vocabulary]` table at all. A file written against the pre-rewrite schema
+  `[vocabulary]` table at all, and — since OSC is UDP and the daemon never
+  waits for an acknowledgement — whether the X Air mixer named in `[xr18]`
+  actually answers. A file written against the pre-rewrite schema
   is reported as entirely stale rather than as a list of unknown keys.
 - `mavor config init` — Scaffold default `~/.config/mavor/config.toml`.
 - `mavor config show` — Print active resolved configuration.

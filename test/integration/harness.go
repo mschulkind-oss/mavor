@@ -54,6 +54,11 @@ type Harness struct {
 	ShimDir     string // PATH-prepended dir holding fake whisper-cli, if any
 	sinkModule  string
 
+	// ExtraConfig is appended to the config.toml RunDaemon writes, for tests
+	// of settings the harness has no opinion about. Set it before RunDaemon.
+	// Whole TOML tables, since the base config has already opened several.
+	ExtraConfig string
+
 	dbus     *exec.Cmd
 	sway     *exec.Cmd
 	waybar   *exec.Cmd
@@ -481,6 +486,9 @@ func (h *Harness) RunDaemon(ctx context.Context, binary, modelName string, extra
 	// supervised server, and there is no fake one to supervise.
 	cfg := fmt.Sprintf("model = %q\n\n[overlay]\ntop_margin = %d\n\n[advanced]\nplacement = \"subprocess\"\n\n[paths]\nmodels = %q\nsocket = %q\n",
 		modelName, testTopMargin, modelDir, socket)
+	if h.ExtraConfig != "" {
+		cfg += "\n" + h.ExtraConfig + "\n"
+	}
 	if err := os.WriteFile(filepath.Join(cfgDir, "config.toml"), []byte(cfg), 0o644); err != nil {
 		h.t.Fatal(err)
 	}

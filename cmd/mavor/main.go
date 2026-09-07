@@ -246,11 +246,36 @@ func runDaemon(args []string) error {
 		defer func() { _ = closeOutput() }()
 	}
 
-	var ducker audio.Ducker = &audio.NoopDucker{}
+	// Two places audio comes from, ducked independently: the sound server for
+	// anything playing on this machine, and an X Air mixer for a monitor mix
+	// that never passes through it. A user can have either, both or neither.
+	var duckers audio.Duckers
 	if cfg.Ducking.Enabled {
 		d := audio.NewCommandDucker(audio.BackendAuto, cfg.Ducking.Volume, cfg.Ducking.Sink, cfg.Ducking.Apps)
 		d.SetLogger(logger)
-		ducker = d
+		duckers = append(duckers, d)
+	}
+	if cfg.XR18.Enabled {
+		x, err := audio.NewXR18Ducker(cfg.XR18.Address, cfg.XR18.Port, cfg.XR18.Channels,
+			time.Duration(cfg.XR18.TimeoutMS)*time.Millisecond)
+		if err != nil {
+			// Misconfiguration, not a missing mixer: the address or the
+			// channel list is unusable, and no amount of retrying fixes it.
+			// Refusing to start would take dictation down with it, so say so
+			// loudly and carry on without the mixer.
+			logger.Error("xr18: ducking disabled — the [xr18] config is not usable", "err", err)
+		} else {
+			x.SetLogger(logger)
+			defer func() { _ = x.Close() }()
+			duckers = append(duckers, x)
+			logger.Info("xr18: mixer ducking enabled",
+				"addr", x.Addr(), "channels", x.Channels(),
+				"timeout_ms", cfg.XR18.TimeoutMS)
+		}
+	}
+	var ducker audio.Ducker = &audio.NoopDucker{}
+	if len(duckers) > 0 {
+		ducker = duckers
 	}
 
 	d := daemon.New(daemon.Config{
@@ -296,6 +321,10 @@ func runDaemon(args []string) error {
 		"duck_volume", cfg.Ducking.Volume,
 		"duck_sink", cfg.Ducking.Sink,
 		"duck_apps", cfg.Ducking.Apps,
+		"xr18_enabled", cfg.XR18.Enabled,
+		"xr18_address", cfg.XR18.Address,
+		"xr18_port", cfg.XR18.Port,
+		"xr18_channels", cfg.XR18.Channels,
 		"pause_ms", cfg.Preview.PauseMS,
 		"min_phrase_ms", cfg.Preview.MinPhraseMS,
 		"pulse_source", os.Getenv("PULSE_SOURCE"),

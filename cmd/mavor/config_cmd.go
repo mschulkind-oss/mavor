@@ -62,6 +62,18 @@ volume = %-25q# "0%%" mutes; "25%%" merely lowers
 # apps = ["spotify", "firefox"]   # only these; the default is every stream
 # sink = ""                       # a specific output, not the default one
 
+[xr18]
+# Mute channels on a Behringer X Air mixer (XR12/16/18) while recording.
+# Separate from [ducking] because the mixer is a box on the network with its
+# own monitor mix: what plays through it never reaches PipeWire, so `+"`pactl`"+`
+# cannot turn it down. Either table, both, or neither.
+enabled = %t
+# address    = "192.168.1.6"   # the mixer's IP. Required; give it a static one
+# port       = %-6d        # X Air's OSC port; an X32 or M32 uses 10023
+# channels   = [15, 16]        # as numbered on the mixer: 1-16 on an XR18
+# timeout_ms = %-6d        # how long to wait for the mixer to report what
+#                              # the channels were, before muting them anyway
+
 [vocabulary]
 # Words the model gets wrong: names, jargon, commands. whisper models take
 # these as a prompt; transducer models (parakeet, zipformer) boost them
@@ -123,6 +135,9 @@ preview_width = %v
 		d.Preview.MinPhraseMS,
 		d.Ducking.Enabled,
 		d.Ducking.Volume,
+		d.XR18.Enabled,
+		d.XR18.Port,
+		d.XR18.TimeoutMS,
 		strconv.FormatFloat(float64(d.Vocabulary.Boost), 'f', -1, 32),
 		d.Logging.Verbose,
 		d.Output.Clipboard,
