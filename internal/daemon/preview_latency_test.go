@@ -26,6 +26,7 @@ type slowStopCompanion struct {
 	mu       sync.Mutex
 	stopping bool
 	overlap  bool // a StartStream arrived while StopStream was still running
+	starts   int
 }
 
 func (s *slowStopCompanion) StopStream(ctx context.Context) (string, error) {
@@ -43,6 +44,7 @@ func (s *slowStopCompanion) StopStream(ctx context.Context) (string, error) {
 
 func (s *slowStopCompanion) StartStream(ctx context.Context) error {
 	s.mu.Lock()
+	s.starts++
 	if s.stopping {
 		s.overlap = true
 	}
@@ -54,6 +56,12 @@ func (s *slowStopCompanion) overlapped() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.overlap
+}
+
+func (s *slowStopCompanion) startCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.starts
 }
 
 // timedTranscriber records the wall-clock time Transcribe was actually
@@ -157,9 +165,17 @@ func TestTheNextRecordingWaitsForTheDrain(t *testing.T) {
 		delay:                 120 * time.Millisecond,
 	}
 
+	const (
+		rounds        = 3
+		transcribeFor = 50 * time.Millisecond
+	)
+
 	d, sock := newTestDaemon(t, func(c *Config) {
 		c.Recorder = &audio.MockRecorder{FixturePath: "/tmp/fake.wav", ChunkData: []byte{1, 2, 3, 4}}
-		c.Transcriber = &speech.Mock{Text: "text"}
+		// Slower than an instant mock and far quicker than the 120ms drain,
+		// which is what puts the next recording inside the drain window
+		// every run instead of only on a fast enough machine.
+		c.Transcriber = &speech.Mock{Text: "text", Delay: transcribeFor}
 		c.Output = &output.Mock{}
 		c.Overlay = &overlay.Noop{}
 		c.PreviewMode = speech.PreviewCompanion
@@ -170,7 +186,14 @@ func TestTheNextRecordingWaitsForTheDrain(t *testing.T) {
 
 	// Record, stop, and immediately record again — the drain from the first
 	// stop is still running when the second recording starts.
-	for i := 0; i < 3; i++ {
+	//
+	// Waiting for idle first is not politeness, it is the FSM: a toggle that
+	// arrives while the previous transcription is still running is a no-op by
+	// design, so without this the loop asks for a recording that never
+	// starts and the test times out waiting for a state it prevented itself
+	// from reaching. That is what it did on CI.
+	for i := 0; i < rounds; i++ {
+		waitForState(t, sock, "idle")
 		sendWithRetry(t, sock, "toggle")
 		waitForState(t, sock, "recording")
 		if _, err := ipc.Send(sock, ipc.Request{Action: "toggle"}, 2*time.Second); err != nil {
@@ -181,5 +204,10 @@ func TestTheNextRecordingWaitsForTheDrain(t *testing.T) {
 	if companion.overlapped() {
 		t.Error("StartStream was called while StopStream was still running: " +
 			"the recognizer is being fed a new stream before it finished the last")
+	}
+	// Guards against the assertion above passing because nothing ever
+	// started a stream.
+	if got := companion.startCount(); got != rounds {
+		t.Errorf("StartStream called %d times, want %d", got, rounds)
 	}
 }
