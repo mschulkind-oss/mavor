@@ -107,11 +107,20 @@ Keybinding example (sway; adapt for your compositor):
   bindsym $mod+grave exec mavor toggle`)
 }
 
+// exitUpgraded is what `mavor daemon` returns when it stepped aside for a
+// newly installed binary. It is deliberately a failure code: that is what
+// makes the unit's Restart=on-failure start the new version, and EX_TEMPFAIL
+// is the closest thing sysexits.h has to "nothing is wrong, try again".
+const exitUpgraded = 75
+
 func exit(err error) {
 	if err == nil {
 		return
 	}
 	fmt.Fprintln(os.Stderr, err)
+	if errors.Is(err, daemon.ErrBinaryReplaced) {
+		os.Exit(exitUpgraded)
+	}
 	os.Exit(1)
 }
 
@@ -278,6 +287,15 @@ func runDaemon(args []string) error {
 		ducker = duckers
 	}
 
+	// Watched only under a supervisor that will start the replacement; see
+	// restartOnUpgrade. getBinaryPath is the same path `mavor service
+	// install` writes into ExecStart, which is the one that outlives the
+	// upgrade.
+	upgradeWatch := ""
+	if restartOnUpgrade() {
+		upgradeWatch = getBinaryPath()
+	}
+
 	d := daemon.New(daemon.Config{
 		Socket:            cfg.Paths.Socket,
 		Recorder:          recorder,
@@ -290,6 +308,7 @@ func runDaemon(args []string) error {
 		PreviewMode:       preview.Mode,
 		PreviewCompanion:  preview.Companion,
 		History:           transcriptStore(logger),
+		BinaryPath:        upgradeWatch,
 		SilenceThreshold:  time.Duration(cfg.Preview.PauseMS) * time.Millisecond,
 		MinPhraseDuration: time.Duration(cfg.Preview.MinPhraseMS) * time.Millisecond,
 	})
@@ -331,6 +350,7 @@ func runDaemon(args []string) error {
 		"wayland_display", os.Getenv("WAYLAND_DISPLAY"),
 		"xdg_runtime_dir", os.Getenv("XDG_RUNTIME_DIR"),
 		"log_file", logFile,
+		"upgrade_watch", upgradeWatch,
 	)
 	return d.Run(ctx)
 }

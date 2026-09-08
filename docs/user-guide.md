@@ -298,6 +298,26 @@ $ mavor service stop             # stop background daemon
 $ mavor service uninstall        # disable and remove systemd unit
 ```
 
+### Upgrading
+
+Nothing to do. A running daemon keeps executing the binary it started from,
+so it watches for its own replacement: once `brew upgrade mavor`, `just
+install` or a package upgrade lands a new file, the daemon waits until you
+are not dictating, exits 75, and the unit's `Restart=on-failure` starts the
+new version. Expect it within a minute of the install finishing, and never
+in the middle of a phrase.
+
+Two caveats:
+
+- The watch is on only under systemd, which is the only supervisor that will
+  start the replacement. Run `mavor daemon` in a terminal and it stays on the
+  old binary until you restart it yourself. `MAVOR_RESTART_ON_UPGRADE=1`
+  turns the watch on anyway, for another supervisor that restarts what exits.
+- A unit written by an earlier Homebrew install has the versioned keg path in
+  its `ExecStart`, and `brew cleanup` deletes that directory. Run `mavor
+  service install` once to re-pin it — the command is idempotent — or the
+  service fails at the next login with status 203/EXEC.
+
 ---
 
 ## 6. Sway Keybinding Setup

@@ -16,6 +16,8 @@ After=pipewire.service wireplumber.service
 [Service]
 Type=simple
 ExecStart=%s daemon
+# Also how an upgrade lands: the daemon exits 75 once it is idle and notices
+# its own binary has been replaced, and this line starts the new one.
 Restart=on-failure
 RestartSec=2s
 Environment=PULSE_LATENCY_MSEC=30

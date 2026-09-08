@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -47,6 +48,8 @@ type Daemon struct {
 	history           TranscriptRecorder
 	silenceThreshold  time.Duration
 	minPhraseDuration time.Duration
+	binaryPath        string
+	upgradeInterval   time.Duration
 
 	levelCancel  context.CancelFunc
 	levelMu      sync.Mutex
@@ -99,6 +102,18 @@ type Config struct {
 	History           TranscriptRecorder
 	SilenceThreshold  time.Duration
 	MinPhraseDuration time.Duration
+
+	// BinaryPath is the file the daemon watches for a package upgrade,
+	// exiting when it changes so a supervisor starts the new version. Empty
+	// — the default, and what every test uses — disables the watch.
+	//
+	// It has to be a path that survives the upgrade rather than the running
+	// executable, which is the file being replaced. See ErrBinaryReplaced.
+	BinaryPath string
+
+	// UpgradeCheckInterval is how often BinaryPath is stat'd, defaulting to
+	// defaultUpgradeInterval.
+	UpgradeCheckInterval time.Duration
 }
 
 func New(c Config) *Daemon {
@@ -121,6 +136,10 @@ func New(c Config) *Daemon {
 	if minPhrase == 0 {
 		minPhrase = 600 * time.Millisecond
 	}
+	upgradeInterval := c.UpgradeCheckInterval
+	if upgradeInterval <= 0 {
+		upgradeInterval = defaultUpgradeInterval
+	}
 	return &Daemon{
 		socket:            c.Socket,
 		machine:           state.New(),
@@ -137,12 +156,24 @@ func New(c Config) *Daemon {
 		history:           c.History,
 		silenceThreshold:  silenceThresh,
 		minPhraseDuration: minPhrase,
+		binaryPath:        c.BinaryPath,
+		upgradeInterval:   upgradeInterval,
 	}
 }
 
 // Run blocks serving IPC and reacting to state changes until ctx is
 // cancelled. It is the daemon's main loop.
 func (d *Daemon) Run(ctx context.Context) error {
+	// The daemon's own cancel, so the upgrade watch can end the loop the way
+	// a SIGTERM would rather than needing a second path out of Serve.
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
+
+	var replaced atomic.Bool
+	if d.binaryPath != "" {
+		go d.watchBinary(ctx, &replaced, stop)
+	}
+
 	// Subscribe the side-effect handler BEFORE the IPC server starts so the
 	// first toggle can't race the listener registration.
 	wg := &sync.WaitGroup{}
@@ -166,6 +197,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	if closer, ok := d.companion.(io.Closer); ok {
 		_ = closer.Close()
+	}
+	if err == nil && replaced.Load() {
+		return ErrBinaryReplaced
 	}
 	return err
 }
