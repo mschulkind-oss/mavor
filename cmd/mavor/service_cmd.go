@@ -75,18 +75,6 @@ func getServicePath() string {
 	return filepath.Join(home, ".config", "systemd", "user", "mavor.service")
 }
 
-func getBinaryPath() string {
-	exe, err := os.Executable()
-	if err == nil {
-		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
-			return resolved
-		}
-		return exe
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "bin", "mavor")
-}
-
 func runServiceInstall(start bool) error {
 	unitPath := getServicePath()
 	binPath := getBinaryPath()
