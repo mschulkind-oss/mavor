@@ -314,9 +314,10 @@ Two caveats:
   old binary until you restart it yourself. `MAVOR_RESTART_ON_UPGRADE=1`
   turns the watch on anyway, for another supervisor that restarts what exits.
 - A unit written by an earlier Homebrew install has the versioned keg path in
-  its `ExecStart`, and `brew cleanup` deletes that directory. Run `mavor
-  service install` once to re-pin it — the command is idempotent — or the
-  service fails at the next login with status 203/EXEC.
+  its `ExecStart`, and `brew cleanup` deletes that directory. `mavor doctor`
+  fails its *Systemd user service* check while that is true, and the fix is
+  to run `mavor service install` once — the command is idempotent. Left
+  alone, the service fails at the next login with status 203/EXEC.
 
 ---
 

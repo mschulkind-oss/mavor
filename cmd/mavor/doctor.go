@@ -651,17 +651,72 @@ func checkDaemon() (bool, string) {
 
 func checkServiceUnit() (bool, string) {
 	unitPath := getServicePath()
-	if _, err := os.Stat(unitPath); err == nil {
-		cmd := exec.Command("systemctl", "--user", "is-active", "mavor")
-		out, _ := cmd.Output()
-		status := string(out)
-		if len(status) > 0 && status[len(status)-1] == '\n' {
-			status = status[:len(status)-1]
-		}
-		if status == "active" {
-			return true, fmt.Sprintf("systemd unit installed and active (%s)", status)
-		}
-		return true, fmt.Sprintf("systemd unit installed (%s)", status)
+	unit, err := os.ReadFile(unitPath)
+	if err != nil {
+		return true, "systemd unit not installed (optional; run 'mavor service install' to enable)"
 	}
-	return true, "systemd unit not installed (optional; run 'mavor service install' to enable)"
+
+	cmd := exec.Command("systemctl", "--user", "is-active", "mavor")
+	out, _ := cmd.Output()
+	status := strings.TrimSuffix(string(out), "\n")
+	msg := fmt.Sprintf("systemd unit installed (%s)", status)
+	if status == "active" {
+		msg = fmt.Sprintf("systemd unit installed and active (%s)", status)
+	}
+
+	ok, note := execStartVerdict(string(unit), getBinaryPath(), fileExists)
+	if note != "" {
+		msg += "; " + note
+	}
+	return ok, msg
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// execStartBinary is the program an installed unit runs — the first field of
+// its first ExecStart line, minus systemd's modifier prefixes. It does not
+// handle quoted or escaped paths, which `mavor service install` never writes
+// and which a path holding a space would need.
+func execStartBinary(unit string) string {
+	for line := range strings.Lines(unit) {
+		value, ok := strings.CutPrefix(strings.TrimSpace(line), "ExecStart=")
+		if !ok {
+			continue
+		}
+		value = strings.TrimLeft(value, "@-+!:")
+		fields := strings.Fields(value)
+		if len(fields) == 0 {
+			// `ExecStart=` with nothing after it. systemd reads that as
+			// resetting the list, and it names no binary either way.
+			continue
+		}
+		return fields[0]
+	}
+	return ""
+}
+
+// execStartVerdict reports whether the installed unit still names a working
+// binary, given the path `mavor service install` would write today.
+//
+// The case worth the code is a unit left behind by a Homebrew upgrade. Older
+// installs baked in the versioned keg path, which keeps working right up
+// until `brew cleanup` removes that directory — and then the service fails at
+// the next login, with nothing but 203/EXEC to say why. Doctor is where a
+// user can find that out before their machine reboots.
+func execStartVerdict(unit, want string, exists func(string) bool) (bool, string) {
+	got := execStartBinary(unit)
+	switch {
+	case got == "":
+		return false, "the unit file has no ExecStart line; run 'mavor service install' to rewrite it"
+	case stableBinaryPath(got) != got:
+		return false, fmt.Sprintf("ExecStart names the Homebrew keg %s, which 'brew cleanup' deletes; run 'mavor service install' to re-pin it to %s", got, stableBinaryPath(got))
+	case !exists(got):
+		return false, fmt.Sprintf("ExecStart names %s, which no longer exists; run 'mavor service install' to re-pin it", got)
+	case got != want:
+		return true, fmt.Sprintf("ExecStart runs %s, not this %s", got, want)
+	}
+	return true, ""
 }

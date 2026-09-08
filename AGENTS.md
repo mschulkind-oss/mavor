@@ -158,7 +158,9 @@ Two build tags remain, and both are test-only:
   `config.toml` — which runtime and placement the model got, the thread count
   and where it came from, whether a GPU backend actually loaded, where the
   preview text will come from, and whether this model can use the
-  `[vocabulary]` table at all, and — since OSC is UDP and the daemon never
+  `[vocabulary]` table at all, whether the installed systemd unit still names
+  a binary that exists (a `ExecStart` holding a Homebrew keg path works right
+  up until `brew cleanup`), and — since OSC is UDP and the daemon never
   waits for an acknowledgement — whether the device named in `[ducking.osc]`
   actually answers. A file written against the pre-rewrite schema
   is reported as entirely stale rather than as a list of unknown keys.
