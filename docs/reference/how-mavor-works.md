@@ -250,7 +250,8 @@ assertion on the main transcriber:
    flag — the streaming FastConformer and the streaming zipformers). Its own
    partials are read directly and no second model is loaded.
 2. **The companion is installed** — load it and run it alongside.
-3. **Otherwise** fall back to phrase mode, warn, and name the model to pull.
+3. **Otherwise** fall back to phrase mode, warn, and record the model in
+   `PreviewPlan.Missing` — which the daemon logs and `mavor doctor` fails on.
 
 An explicit value overrides the order: `"phrases"` forces phrase mode, and a
 model name forces that companion. Step 3 is the only case that ever downgrades
@@ -418,7 +419,7 @@ Every row was traced through the code.
 | No whisper server on `$PATH` under a derived `local-server` placement | `AdjustForEnvironment` downgrades to `subprocess` and warns | The model reloads per utterance — slower, otherwise identical |
 | The model named in the config is not installed | `speech.Resolve` fails; the daemon never starts | An error naming the model, the directory searched, and the `models pull` to run |
 | `preview.source` names a model that is not installed | `speech.ResolvePreview` fails; the daemon never starts | The same shape of error. A *named* model is a request, never a hint |
-| The companion is missing under `source = "auto"` | Warn, fall back to phrase mode, daemon starts | A worse preview, and a `doctor` line naming the model to pull |
+| The companion is missing under `source = "auto"` | Warn, fall back to phrase mode, daemon starts | A worse preview, and a **failing** `doctor` check naming the model and the `mavor setup` that downloads it |
 | The companion fails to load for any other reason | Warn, fall back to phrase mode, daemon starts | A worse preview; dictation is unaffected |
 | A second daemon starts | The live socket is detected, `Serve` errors, the process exits non-zero | An error on stderr |
 | Shutdown while recording | The context goroutine SIGINTs `parec` so the WAV is flushed, but `Stop` never runs | An orphaned recording, never transcribed |

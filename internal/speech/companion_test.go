@@ -93,8 +93,8 @@ func TestPreviewAutoLoadsTheInstalledCompanion(t *testing.T) {
 	if plan.Companion != DefaultCompanionModel {
 		t.Fatalf("companion = %q, want %q", plan.Companion, DefaultCompanionModel)
 	}
-	if len(plan.Warnings) != 0 {
-		t.Fatalf("warned about a companion that is installed: %v", plan.Warnings)
+	if len(plan.Missing) != 0 {
+		t.Fatalf("reported a companion that is installed as missing: %v", plan.Missing)
 	}
 }
 
@@ -111,11 +111,10 @@ func TestPreviewAutoFallsBackToPhrasesWithNoCompanion(t *testing.T) {
 	if plan.Mode != PreviewPhrases {
 		t.Fatalf("mode = %q, want %q (%s)", plan.Mode, PreviewPhrases, plan.Reason)
 	}
-	if len(plan.Warnings) == 0 {
-		t.Fatal("downgrading to phrase mode must warn")
-	}
-	if !strings.Contains(strings.Join(plan.Warnings, " "), DefaultCompanionModel) {
-		t.Fatalf("warning does not name the model to pull: %v", plan.Warnings)
+	// Missing is what `mavor doctor` fails on and what tells the user which
+	// model to pull, so the downgrade is never silent.
+	if len(plan.Missing) != 1 || plan.Missing[0] != DefaultCompanionModel {
+		t.Fatalf("missing = %v, want [%s]", plan.Missing, DefaultCompanionModel)
 	}
 }
 

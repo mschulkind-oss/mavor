@@ -568,12 +568,23 @@ func checkModel() (bool, string) {
 // checkPreview reports where the overlay's text will come from, which is a
 // derived fact: `preview.source = "auto"` reads the main model's partials, or
 // loads a companion, or falls back to phrase mode, depending on the catalog
-// and on what is installed. A downgrade names the model to pull; a model named
-// in the config and missing is reported as the failure it will be at daemon
-// start.
+// and on what is installed. A model named in the config and missing is
+// reported as the failure it will be at daemon start.
+//
+// A companion that is merely absent is a failure here too, though the daemon
+// starts anyway. Phrase mode re-transcribes with a model that hallucinates on
+// short clips, so the preview a user gets is materially worse than the one
+// their config asked for, and nothing at runtime says so louder than a line
+// in the log. Doctor is where an install is checked, and `mavor setup` — or
+// `mavor doctor --fix`, which runs it — downloads what is missing.
 func checkPreview() (bool, string) {
 	cfg, _ := config.Load("")
-	plan, err := speech.ResolvePreview(cfg)
+	return previewVerdict(speech.ResolvePreview(cfg))
+}
+
+// previewVerdict is checkPreview minus the config file, so the wording of
+// each outcome can be tested without one.
+func previewVerdict(plan speech.PreviewPlan, err error) (bool, string) {
 	if err != nil {
 		return false, err.Error()
 	}
@@ -581,11 +592,10 @@ func checkPreview() (bool, string) {
 	if plan.Companion != "" {
 		msg = fmt.Sprintf("%s (%s) — %s", plan.Mode, plan.Companion, plan.Reason)
 	}
-	for _, w := range plan.Warnings {
-		msg += "; " + w
+	if len(plan.Missing) > 0 {
+		return false, fmt.Sprintf("%s; run 'mavor setup' to download %s",
+			msg, strings.Join(plan.Missing, " and "))
 	}
-	// A missing companion is a worse preview and nothing more, so it stays a
-	// passing check that says what to pull.
 	return true, msg
 }
 

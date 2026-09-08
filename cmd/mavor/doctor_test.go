@@ -1,8 +1,11 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/mschulkind-oss/mavor/internal/speech"
 )
 
 func unitWith(execStart string) string {
@@ -129,6 +132,71 @@ func TestExecStartVerdict(t *testing.T) {
 			}
 			if tc.wantMsg != "" && !strings.Contains(msg, tc.wantMsg) {
 				t.Errorf("execStartVerdict() msg = %q, want it to mention %q", msg, tc.wantMsg)
+			}
+		})
+	}
+}
+
+func TestPreviewVerdict(t *testing.T) {
+	tests := []struct {
+		name    string
+		plan    speech.PreviewPlan
+		err     error
+		wantOK  bool
+		wantMsg []string
+	}{
+		{
+			name: "a companion that is installed passes and names itself",
+			plan: speech.PreviewPlan{
+				Mode:      speech.PreviewCompanion,
+				Companion: speech.DefaultCompanionModel,
+				Reason:    "does not decode incrementally",
+			},
+			wantOK:  true,
+			wantMsg: []string{"companion", speech.DefaultCompanionModel},
+		},
+		{
+			// The point of this check: the daemon starts anyway, in a worse
+			// mode than the config asked for, and doctor is where a user
+			// finds that out — with the command that fixes it.
+			name: "a missing companion fails and prompts for setup",
+			plan: speech.PreviewPlan{
+				Mode:    speech.PreviewPhrases,
+				Reason:  "the companion is not installed",
+				Missing: []string{speech.DefaultCompanionModel},
+			},
+			wantOK:  false,
+			wantMsg: []string{"run 'mavor setup'", speech.DefaultCompanionModel},
+		},
+		{
+			name: "phrase mode the user asked for is not a failure",
+			plan: speech.PreviewPlan{
+				Mode:   speech.PreviewPhrases,
+				Reason: `preview.source = "phrases" asked for the main model at every pause`,
+			},
+			wantOK:  true,
+			wantMsg: []string{"phrases"},
+		},
+		{
+			name:    "a model named in the config and missing stays fatal",
+			err:     errors.New(`speech: preview.source = "nonesuch": not installed`),
+			wantOK:  false,
+			wantMsg: []string{"nonesuch"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ok, msg := previewVerdict(tc.plan, tc.err)
+			if ok != tc.wantOK {
+				t.Errorf("previewVerdict() ok = %v, want %v (msg %q)", ok, tc.wantOK, msg)
+			}
+			for _, want := range tc.wantMsg {
+				if !strings.Contains(msg, want) {
+					t.Errorf("previewVerdict() msg = %q, want it to mention %q", msg, want)
+				}
+			}
+			if tc.wantOK && strings.Contains(msg, "mavor setup") {
+				t.Errorf("previewVerdict() msg = %q, a passing check must not prompt for setup", msg)
 			}
 		})
 	}

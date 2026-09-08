@@ -269,7 +269,10 @@ mavor doctor — system and environment verification
 ```
 
 That run is from a headless machine with no Wayland session and no daemon
-started, which is what the two ❌ lines say. The five lines in the middle are
+started, which is what the two ❌ lines say. *Live preview source* fails too
+when the companion model the config resolves to is not downloaded: the daemon
+still starts, in the worse phrase mode, and this is the only place that says
+so — the line names the model and the `mavor setup` that fetches it. The five lines in the middle are
 the ones to read after a config edit: which runtime and placement were chosen
 and why, the thread count and where it came from, whether a GPU backend
 actually loaded, where the preview text comes from, and whether the vocabulary

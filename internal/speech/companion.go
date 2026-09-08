@@ -79,10 +79,13 @@ type PreviewPlan struct {
 	// doctor` and the daemon's startup log.
 	Reason string
 
-	// Warnings are things worth saying out loud that are not errors — a
-	// companion that is not installed, which downgrades the preview and
-	// nothing else.
-	Warnings []string
+	// Missing names the models this plan wanted and did not find. It is set
+	// only where a downgrade happened rather than an error: `preview.source
+	// = "auto"` with no companion installed. Callers decide what it costs
+	// them — the daemon logs it and dictates anyway, `mavor doctor` fails on
+	// it, because a preview quietly running in phrase mode is exactly the
+	// kind of thing doctor exists to find.
+	Missing []string
 }
 
 // ResolvePreview decides where the preview text comes from, per §6.2 of the
@@ -158,9 +161,7 @@ func resolveAutoPreview(cfg config.Config) PreviewPlan {
 			// Deliberately not wrapping err: it says the model is not
 			// installed, which Reason has already said, and its full
 			// candidate-path chain turns one doctor line into five.
-			Warnings: []string{fmt.Sprintf(
-				"run `mavor models pull %s` (or `mavor setup`) for a lower-latency preview",
-				DefaultCompanionModel)},
+			Missing: []string{DefaultCompanionModel},
 		}
 	}
 
@@ -283,8 +284,9 @@ func LoadPreview(ctx context.Context, cfg config.Config, logger *slog.Logger) (L
 	if err != nil {
 		return LoadedPreview{}, err
 	}
-	for _, w := range plan.Warnings {
-		logger.Warn("preview: " + w)
+	for _, m := range plan.Missing {
+		logger.Warn("preview: companion not installed, running in phrase mode — dictation is unaffected",
+			"model", m, "fix", "mavor setup")
 	}
 
 	if plan.Mode != PreviewCompanion {
