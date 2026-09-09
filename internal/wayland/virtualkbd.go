@@ -22,14 +22,6 @@ import (
 // is most of the time an overlay spends saying "transcribing". This speaks
 // zwp_virtual_keyboard_v1 directly, on the connection the overlay already has.
 
-// maxKeycodes is how many distinct characters one keymap can carry.
-//
-// xkb keycodes run to 255 and the first 8 are reserved, so 247 is the ceiling.
-// A transcript with more distinct runes than that is uploaded as several
-// keymaps in turn — rare in any language mavor transcribes, and correct in all
-// of them.
-const maxKeycodes = 246
-
 // VirtualKeyboard types text into whatever has focus.
 type VirtualKeyboard struct {
 	d  *Display
@@ -77,7 +69,7 @@ func (vk *VirtualKeyboard) Type(text string) error {
 	if text == "" {
 		return nil
 	}
-	for _, chunk := range chunkByDistinctRunes(text, maxKeycodes) {
+	for _, chunk := range chunkToFit(text) {
 		if err := vk.typeChunk(chunk); err != nil {
 			return err
 		}
@@ -86,7 +78,10 @@ func (vk *VirtualKeyboard) Type(text string) error {
 }
 
 func (vk *VirtualKeyboard) typeChunk(text string) error {
-	codes, keymap := buildKeymap(text)
+	codes, keymap, err := buildKeymap(text)
+	if err != nil {
+		return err
+	}
 	if err := vk.uploadKeymap(keymap); err != nil {
 		return err
 	}
@@ -157,16 +152,18 @@ func (vk *VirtualKeyboard) uploadKeymap(keymap string) error {
 	return vk.d.conn.send(b)
 }
 
-// key presses (state 1) or releases (state 0) one keycode.
+// key presses (state 1) or releases (state 0) one evdev keycode.
 func (vk *VirtualKeyboard) key(keycode uint32, state uint32) error {
 	// zwp_virtual_keyboard_v1.key(time:uint, key:uint, state:uint)
 	//
 	// `key` is an evdev keycode, which is the xkb keycode minus 8. The
 	// protocol takes evdev; the keymap is written in xkb. Conflating the two
-	// types the wrong characters, and does it silently.
+	// types the wrong characters, and does it silently — so keycodes are
+	// evdev everywhere in this file, and buildKeymap adds the 8 in the one
+	// place that writes xkb.
 	b := newBuilder(vk.id, 1)
 	b.putUint(uint32(time.Now().UnixMilli()))
-	b.putUint(keycode - 8)
+	b.putUint(keycode)
 	b.putUint(state)
 	return vk.d.conn.send(b)
 }
@@ -187,33 +184,123 @@ func (vk *VirtualKeyboard) Close() error {
 	return vk.d.conn.send(newBuilder(vk.id, 3))
 }
 
-// chunkByDistinctRunes splits text so no piece needs more keycodes than a
-// keymap holds. Splits are on rune boundaries and preserve order, so the text
-// typed is the text given however many pieces it takes.
-func chunkByDistinctRunes(text string, limit int) []string {
+// Which physical key a character is typed on is not an implementation detail.
+//
+// The keysym on a key says what the character is, and a client that reads only
+// the keysym — GTK, Qt, any native wlroots client — types what mavor put there
+// whatever key it sits under. Chromium is not that client. It resolves ASCII
+// letters and digits from the keysym, and every other character — space,
+// punctuation, anything outside ASCII — from the *physical* key beneath it, by
+// falling through to `DomCodeToUsLayoutKeyboardCode`. A character parked on a
+// key that produces no text in a US layout is silently dropped.
+//
+// Counting keycodes off from 1 put every space on the physical Escape key,
+// because a space is the lowest codepoint left after CleanText and the runes
+// were assigned in sorted order. Chrome swallowed every space of every
+// dictation while every native app typed the same transcript correctly. So
+// keys are handed out from two pools, and never counted off from 1.
+
+// spaceKeycode is the space bar. A space is pinned to it: it is the one rune
+// every transcript contains, and the one whose loss is most visible.
+const spaceKeycode = 57
+
+// characterKeycodes carry a character and nothing else in a US layout — the
+// digit row, the three letter rows, the punctuation around them, and the three
+// international keys. An application that decides what a keystroke means from
+// the physical key still gets text out of every one of these, so any rune may
+// be assigned one.
+var characterKeycodes = []uint32{
+	2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, // 1234567890-=
+	16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, // qwertyuiop[]
+	30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, // asdfghjkl;'`
+	43,                                     // backslash
+	44, 45, 46, 47, 48, 49, 50, 51, 52, 53, // zxcvbnm,./
+	86,  // the 102nd key, <> on an ISO board
+	89,  // RO
+	124, // YEN
+}
+
+// spilloverKeycodes carry no character, but pressing one does nothing on any
+// desktop: F13-F24, which nothing binds, and the numeric keypad. Only ASCII
+// alphanumerics are put here, because those are the runes Chromium reads off
+// the keysym — a letter types correctly on F13 where a comma would not.
+//
+// They exist so that a transcript using the whole ASCII alphabet still fits in
+// a single keymap. Every key deliberately absent from both pools is one an
+// application acts on rather than types: Escape, Backspace, Tab, Enter, the
+// modifiers, F1-F12 (help, reload, fullscreen, devtools) and the navigation
+// cluster.
+var spilloverKeycodes = []uint32{
+	183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, // F13-F24
+	71, 72, 73, 75, 76, 77, 79, 80, 81, 82, 83, // keypad 7894561230.
+	55, 74, 78, 98, 121, // keypad * - + / ,
+}
+
+// assignKeycodes gives every rune a physical key, or reports that this set of
+// runes does not fit in one keymap.
+//
+// Alphanumerics take the spillover pool first. Taking it in one pass instead
+// would let a letter claim a character key and starve a comma, which has
+// nowhere else to go.
+func assignKeycodes(runes []rune) (map[rune]uint32, bool) {
+	codes := make(map[rune]uint32, len(runes))
+	spill := spilloverKeycodes
+	for _, r := range runes {
+		switch {
+		case r == ' ':
+			codes[r] = spaceKeycode
+		case isASCIIAlnum(r) && len(spill) > 0:
+			codes[r], spill = spill[0], spill[1:]
+		}
+	}
+	chars := characterKeycodes
+	for _, r := range runes {
+		if _, done := codes[r]; done {
+			continue
+		}
+		if len(chars) == 0 {
+			return nil, false
+		}
+		codes[r], chars = chars[0], chars[1:]
+	}
+	return codes, true
+}
+
+func isASCIIAlnum(r rune) bool {
+	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+}
+
+// chunkToFit splits text so every piece can be typed from one keymap. Splits
+// are on rune boundaries and preserve order, so the text typed is the text
+// given however many pieces it takes.
+func chunkToFit(text string) []string {
 	var out []string
+	var distinct []rune
 	seen := map[rune]bool{}
 	start := 0
 	for i, r := range text {
-		if !seen[r] {
-			if len(seen) == limit {
-				out = append(out, text[start:i])
-				seen = map[rune]bool{}
-				start = i
-			}
-			seen[r] = true
+		if seen[r] {
+			continue
 		}
+		if _, ok := assignKeycodes(append(append([]rune{}, distinct...), r)); !ok {
+			out = append(out, text[start:i])
+			seen = map[rune]bool{}
+			distinct = distinct[:0]
+			start = i
+		}
+		seen[r] = true
+		distinct = append(distinct, r)
 	}
 	return append(out, text[start:])
 }
 
-// buildKeymap returns a keycode per distinct rune and the xkb keymap that
-// defines them.
+// buildKeymap returns the evdev keycode per distinct rune and the xkb keymap
+// that defines them.
 //
 // One rune per key, with no modifier levels, is what makes typing arbitrary
 // text tractable: the alternative is knowing which layout the user has and
 // which shift level produces which character on it.
-func buildKeymap(text string) (map[rune]uint32, string) {
+func buildKeymap(text string) (map[rune]uint32, string, error) {
 	var runes []rune
 	seen := map[rune]bool{}
 	for _, r := range text {
@@ -226,18 +313,24 @@ func buildKeymap(text string) (map[rune]uint32, string) {
 	// makes the output testable and the wire traffic predictable.
 	sort.Slice(runes, func(i, j int) bool { return runes[i] < runes[j] })
 
-	codes := make(map[rune]uint32, len(runes))
+	codes, ok := assignKeycodes(runes)
+	if !ok {
+		return nil, "", fmt.Errorf("wayland: %d distinct runes need more keys than one keymap holds", len(runes))
+	}
+
 	var keycodes, symbols strings.Builder
-	for i, r := range runes {
-		// From 9, not 8. The protocol's `key` request takes an EVDEV
-		// keycode, which is the xkb keycode minus 8 — so an xkb code of 8
-		// is evdev 0, which is not a key. The compositor answers that
-		// protocol error by closing the connection, and it presents as
-		// "broken pipe" on a later write rather than at the offending one.
-		code := uint32(i + 9)
-		codes[r] = code
-		fmt.Fprintf(&keycodes, "    <K%d> = %d;\n", i, code)
-		fmt.Fprintf(&symbols, "    key <K%d> {[ %s ]};\n", i, keysymName(r))
+	var highest uint32
+	for _, r := range runes {
+		// The keymap is written in xkb keycodes, which are the evdev codes
+		// plus 8. This is the one place that conversion happens; everything
+		// else in this file is evdev, because that is what the protocol's
+		// `key` request takes.
+		xkb := codes[r] + 8
+		if xkb > highest {
+			highest = xkb
+		}
+		fmt.Fprintf(&keycodes, "    <K%d> = %d;\n", xkb, xkb)
+		fmt.Fprintf(&symbols, "    key <K%d> {[ %s ]};\n", xkb, keysymName(r))
 	}
 
 	return codes, fmt.Sprintf(`xkb_keymap {
@@ -251,7 +344,7 @@ xkb_symbols "(unnamed)" {
     name[Group1] = "mavor";
 %s};
 };
-`, len(runes)+8, keycodes.String(), symbols.String())
+`, highest, keycodes.String(), symbols.String()), nil
 }
 
 // keysymName spells a rune the way xkb wants it in a symbols map.
