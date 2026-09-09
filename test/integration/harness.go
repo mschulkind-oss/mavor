@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mschulkind-oss/mavor/internal/ipc"
 	"github.com/mschulkind-oss/mavor/internal/speech"
 )
 
@@ -188,6 +189,49 @@ func (h *Harness) startSway(opts Options) {
 		h.t.Fatalf("sway: %v", err)
 	}
 	h.sway = cmd
+}
+
+// RestartCompositor kills sway and brings a new one up on the SAME Wayland
+// socket name, which is what a compositor crash and restart looks like to a
+// client whose WAYLAND_DISPLAY was fixed when it was spawned.
+//
+// The stale socket and lock file are removed first. wlroots takes the lowest
+// free wayland-N, so leaving them behind gets the replacement wayland-2 and
+// the daemon under test would be reconnecting to a name nobody is listening
+// on — a passing test that proved the opposite of what it claimed. The name
+// is asserted rather than assumed for the same reason.
+//
+// Waybar is killed and not replaced: the tests that restart a compositor are
+// about the overlay's own connection, and a bar that came back at a different
+// time would only add a variable.
+func (h *Harness) RestartCompositor(opts Options) {
+	h.t.Helper()
+	was := h.WaylandDisp
+
+	for _, p := range []*exec.Cmd{h.waybar, h.sway} {
+		if p != nil && p.Process != nil {
+			_ = p.Process.Kill()
+			_, _ = p.Process.Wait()
+		}
+	}
+	h.waybar = nil
+
+	entries, _ := os.ReadDir(h.XDGRuntime)
+	for _, e := range entries {
+		n := e.Name()
+		if strings.HasPrefix(n, "wayland-") || strings.HasPrefix(n, "sway-ipc.") {
+			_ = os.Remove(filepath.Join(h.XDGRuntime, n))
+		}
+	}
+
+	h.startSway(opts)
+	h.waitForWayland()
+	if h.WaylandDisp != was {
+		h.t.Fatalf("restarted compositor took socket %q, not %q: a client holding the old name "+
+			"would be reconnecting to nothing and the test would prove nothing",
+			h.WaylandDisp, was)
+	}
+	h.configureOutput(opts.Width, opts.Height)
 }
 
 func (h *Harness) waitForWayland() {
@@ -534,6 +578,55 @@ func (h *Harness) RunDaemon(ctx context.Context, binary, modelName string, extra
 	}
 	h.t.Fatalf("daemon socket %s never appeared", socket)
 	return socket, stop
+}
+
+// ShowOverlay toggles the daemon into recording, which is what puts the
+// overlay on screen, and waits for the state to land before returning.
+func (h *Harness) ShowOverlay(socket string) {
+	h.t.Helper()
+	if _, err := ipc.Send(socket, ipc.Request{Action: "toggle"}, 2*time.Second); err != nil {
+		h.t.Fatalf("toggle: %v", err)
+	}
+	h.WaitForState(socket, "recording")
+}
+
+// HideOverlay returns the daemon to idle.
+func (h *Harness) HideOverlay(socket string) {
+	h.t.Helper()
+	if _, err := ipc.Send(socket, ipc.Request{Action: "stop"}, 2*time.Second); err != nil {
+		h.t.Fatalf("stop: %v", err)
+	}
+}
+
+// DaemonState reports the daemon's current FSM state, or an error if it is not
+// answering. Tests that pull the compositor out from under the daemon use it
+// to separate "the overlay stopped drawing" from "the daemon died", which look
+// identical in a screenshot.
+func (h *Harness) DaemonState(socket string) (string, error) {
+	r, err := ipc.Send(socket, ipc.Request{Action: "status"}, 2*time.Second)
+	if err != nil {
+		return "", err
+	}
+	return r.State, nil
+}
+
+// WaitForState blocks until the daemon reports want, and fails the test if it
+// never does.
+func (h *Harness) WaitForState(socket, want string) {
+	h.t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	var last string
+	for time.Now().Before(deadline) {
+		got, err := h.DaemonState(socket)
+		if err == nil {
+			if got == want {
+				return
+			}
+			last = got
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	h.t.Fatalf("daemon never reached %q (last seen %q)", want, last)
 }
 
 func findDBusSessionConf() (string, error) {
