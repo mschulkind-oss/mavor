@@ -195,11 +195,15 @@ Selection is resolved by the index in each row's first column, not by the text,
 so a picker that truncates or reformats what it displays still recovers the right
 transcript.
 
+Picker rows are numbered and otherwise bare — a full RFC3339 timestamp is 25
+columns of prefix that never helps you tell two transcripts apart. Add
+`--timestamps` if you want the column back.
+
 Without a picker, the log is an ordinary listing you can pipe anywhere:
 
 ```bash
 mavor history                     # 20 newest, timestamped
-mavor history -n0 --no-timestamps # all of them, text only
+mavor history -n0 --timestamps=false # all of them, text only
 mavor history --number            # prefixed with the index `history copy` takes
 mavor history --json              # JSON Lines, for scripts
 mavor history copy                # copy the newest — the one that just vanished

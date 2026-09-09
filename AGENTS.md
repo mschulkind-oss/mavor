@@ -175,7 +175,7 @@ Two build tags remain, and both are test-only:
 - `mavor config init` — Scaffold default `~/.config/mavor/config.toml`.
 - `mavor config show` — Print active resolved configuration.
 - `mavor service install [--start]` — Install and enable systemd user service (`mavor.service`).
-- `mavor history [-n N] [--number] [--no-timestamps] [--json] [--null]` — List
+- `mavor history [-n N] [--number] [--timestamps] [--json] [--null]` — List
   past transcripts, newest first, one row each. `mavor history --pick` does the
   whole recovery round trip in one command — render, run a picker, copy the
   choice — and is the form to bind to a key; it works with any dmenu-compatible

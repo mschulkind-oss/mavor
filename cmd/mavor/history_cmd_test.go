@@ -49,7 +49,7 @@ func capturePicked(t *testing.T) *string {
 func TestHistoryListingIsOneRowPerTranscript(t *testing.T) {
 	seedHistory(t, "first one", "second\nspans\nlines")
 
-	out, err := execCLI(t, "history", "--no-timestamps")
+	out, err := execCLI(t, "history", "--timestamps=false")
 	if err != nil {
 		t.Fatalf("mavor history: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestHistoryListingIsOneRowPerTranscript(t *testing.T) {
 func TestHistoryNumbersAreTheIndexCopyTakes(t *testing.T) {
 	want := seedHistory(t, "oldest", "middle", "newest")
 
-	out, err := execCLI(t, "history", "--number", "--no-timestamps")
+	out, err := execCLI(t, "history", "--number", "--timestamps=false")
 	if err != nil {
 		t.Fatalf("mavor history --number: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestParsePickedIndex(t *testing.T) {
 func TestHistoryNullSeparator(t *testing.T) {
 	seedHistory(t, "one", "two")
 
-	out, err := execCLI(t, "history", "--null", "--no-timestamps")
+	out, err := execCLI(t, "history", "--null", "--timestamps=false")
 	if err != nil {
 		t.Fatalf("mavor history --null: %v", err)
 	}
@@ -204,5 +204,71 @@ func TestHistoryNullSeparator(t *testing.T) {
 	}
 	if got := bytes.Count([]byte(out), []byte{0}); got != 2 {
 		t.Errorf("--null wrote %d NUL separators, want 2", got)
+	}
+}
+
+// A picker row is for choosing between transcripts, and a full RFC3339 stamp
+// pushes the text that distinguishes them off to the right. --pick drops the
+// column unless it is asked for.
+func TestHistoryPickOmitsTimestampsByDefault(t *testing.T) {
+	seedHistory(t, "older", "the newest transcript")
+	capturePicked(t)
+
+	menu := pickerMenu(t, "history", "--pick")
+	if strings.Contains(menu, "2023-") {
+		t.Errorf("picker menu carried a timestamp:\n%s", menu)
+	}
+	if !strings.Contains(menu, "0\tthe newest transcript") {
+		t.Errorf("picker menu = %q, want a bare numbered row", menu)
+	}
+}
+
+// Knowing whether a transcript is from ten minutes ago or yesterday can be what
+// tells two similar ones apart, so the column is still available on request.
+func TestHistoryPickKeepsTimestampsWhenAsked(t *testing.T) {
+	seedHistory(t, "older", "the newest transcript")
+	capturePicked(t)
+
+	menu := pickerMenu(t, "history", "--pick", "--timestamps")
+	if !strings.Contains(menu, "2023-") {
+		t.Errorf("--timestamps did not restore the column:\n%s", menu)
+	}
+}
+
+// pickerMenu runs the command with a picker that records what it was shown
+// before choosing the first row. The menu never reaches stdout — it is written
+// to the picker's stdin — so intercepting it is the only way to assert on the
+// rows a user would actually see in rofi.
+func pickerMenu(t *testing.T, args ...string) string {
+	t.Helper()
+	shown := filepath.Join(t.TempDir(), "menu")
+	if err := execCLIErr(t, append(args, "--picker", "tee "+shown+" | head -1")...); err != nil {
+		t.Fatalf("mavor %s: %v", strings.Join(args, " "), err)
+	}
+	menu, err := os.ReadFile(shown)
+	if err != nil {
+		t.Fatalf("read captured menu: %v", err)
+	}
+	return string(menu)
+}
+
+// The plain listing keeps its timestamps, which is what it did before --pick
+// existed and what a human reading the log wants.
+func TestHistoryListingKeepsTimestampsByDefault(t *testing.T) {
+	seedHistory(t, "something")
+
+	out, err := execCLI(t, "history")
+	if err != nil {
+		t.Fatalf("mavor history: %v", err)
+	}
+	if !strings.Contains(out, "2023-") {
+		t.Errorf("listing lost its timestamp column:\n%s", out)
+	}
+	out, err = execCLI(t, "history", "--timestamps=false")
+	if err != nil {
+		t.Fatalf("mavor history --timestamps=false: %v", err)
+	}
+	if strings.Contains(out, "2023-") {
+		t.Errorf("--timestamps=false still printed a timestamp:\n%s", out)
 	}
 }

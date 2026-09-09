@@ -30,13 +30,13 @@ const defaultPicker = "rofi -dmenu -i -p transcript"
 const pickerEnv = "MAVOR_PICKER"
 
 type historyOpts struct {
-	limit    int
-	asJSON   bool
-	number   bool
-	noStamps bool
-	pick     bool
-	picker   string
-	nul      bool
+	limit      int
+	asJSON     bool
+	number     bool
+	timestamps bool
+	pick       bool
+	picker     string
+	nul        bool
 }
 
 func newHistoryCmd() *cobra.Command {
@@ -51,10 +51,12 @@ The default listing is one transcript per line — the shape a picker like rofi,
 wofi, fuzzel or dmenu expects on stdin. Rows are TAB-separated, and each column
 is opt-in so the listing can be shaped for whatever is reading it:
 
-  --number          prefix each row with its index, the number 'history copy'
-                    and 'history --pick' both take
-  --no-timestamps   drop the leading timestamp column
-  --json            JSON Lines including timestamps, for scripts
+  --number       prefix each row with its index, the number 'history copy'
+                 and 'history --pick' both take
+  --timestamps   the leading timestamp column; on when listing, off under
+                 --pick, where a full stamp pushes the text that actually
+                 distinguishes two transcripts off to the right
+  --json         JSON Lines including timestamps, for scripts
 
 --pick does the whole round trip in one command: it renders a numbered listing,
 feeds it to the picker, and copies whatever was chosen to the clipboard. That is
@@ -68,10 +70,19 @@ the form to bind to a key.`,
   # Recover the newest transcript without a picker at all.
   mavor history copy
 
+  # Keep the timestamps in the picker after all.
+  mavor history --pick --timestamps
+
   # The listing by hand, piped wherever you like.
-  mavor history -n0 --no-timestamps`,
+  mavor history -n0 --timestamps=false`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// A picker row is for telling transcripts apart, and a full RFC3339
+			// stamp is 25 columns of prefix that never does that. Drop it under
+			// --pick unless this run asked for it by name.
+			if o.pick && !cmd.Flags().Changed("timestamps") {
+				o.timestamps = false
+			}
 			if o.pick {
 				return runHistoryPick(cmd.OutOrStdout(), o)
 			}
@@ -83,7 +94,7 @@ the form to bind to a key.`,
 	f.IntVarP(&o.limit, "limit", "n", 20, "maximum entries to show (0 for all)")
 	f.BoolVar(&o.asJSON, "json", false, "emit JSON Lines including timestamps")
 	f.BoolVar(&o.number, "number", false, "prefix each row with its index")
-	f.BoolVar(&o.noStamps, "no-timestamps", false, "omit the leading timestamp column")
+	f.BoolVar(&o.timestamps, "timestamps", true, "include the timestamp column (default false under --pick)")
 	f.BoolVarP(&o.pick, "pick", "p", false, "run a picker and copy the chosen transcript")
 	f.StringVar(&o.picker, "picker", "", "picker command for --pick (default $"+pickerEnv+", else "+strconv.Quote(defaultPicker)+")")
 	f.BoolVar(&o.nul, "null", false, "separate rows with NUL instead of newline")
@@ -144,7 +155,7 @@ func renderHistory(w io.Writer, entries []history.Entry, o historyOpts) error {
 		if o.number {
 			fmt.Fprintf(&row, "%d\t", i)
 		}
-		if !o.noStamps {
+		if o.timestamps {
 			fmt.Fprintf(&row, "%s\t", e.At.Local().Format(time.RFC3339))
 		}
 		row.WriteString(oneLine(e.Text))

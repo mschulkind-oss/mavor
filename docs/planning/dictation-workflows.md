@@ -868,7 +868,7 @@ Two terms recur, and both are defined in
 | `config` | `mavor config <action>` | Scaffold or inspect configuration | `init [--force]`, `show`, `path` |
 | `models` | `mavor models <action>` | Download and inspect the model catalog | `list [--installed] [--verbose] [--json]`, `pull <name>` |
 | `service` | `mavor service <action>` | Manage systemd user unit | `install [--start]`, `status`, `restart`, `stop`, `uninstall` |
-| `history` | `mavor history` | Inspect or recover recent transcripts | `-n N`, `--json`, `--copy`, `--index N`, `--no-timestamps` |
+| `history` | `mavor history` | Inspect or recover recent transcripts | `-n N`, `--number`, `--timestamps`, `--json`, `--null`, `--pick`, `--picker CMD`; plus `mavor history copy [index]` |
 
 ### The one-line config, by persona
 
