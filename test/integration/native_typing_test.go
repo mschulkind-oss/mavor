@@ -23,7 +23,7 @@ import (
 // accepted end to end and that the timing is what the change was made for.
 
 func TestNativeTypingIsAcceptedByTheCompositor(t *testing.T) {
-	h := sharedCompositor(t)
+	h := StartWithBar(t)
 	t.Setenv("XDG_RUNTIME_DIR", h.XDGRuntime)
 	t.Setenv("WAYLAND_DISPLAY", h.WaylandDisp)
 
@@ -41,7 +41,7 @@ func TestNativeTypingIsAcceptedByTheCompositor(t *testing.T) {
 // Unicode, punctuation and case all go through the same one-key-per-rune
 // keymap, so a transcript with any of them must not error.
 func TestNativeTypingHandlesAwkwardText(t *testing.T) {
-	h := sharedCompositor(t)
+	h := StartWithBar(t)
 	t.Setenv("XDG_RUNTIME_DIR", h.XDGRuntime)
 	t.Setenv("WAYLAND_DISPLAY", h.WaylandDisp)
 
@@ -65,7 +65,7 @@ func TestNativeTypingHandlesAwkwardText(t *testing.T) {
 // The reason the change was made. wtype measured 4.14 ms/char on this same
 // compositor; batching the whole transcript should be far below that.
 func TestNativeTypingIsFasterThanWtype(t *testing.T) {
-	h := sharedCompositor(t)
+	h := StartWithBar(t)
 	t.Setenv("XDG_RUNTIME_DIR", h.XDGRuntime)
 	t.Setenv("WAYLAND_DISPLAY", h.WaylandDisp)
 

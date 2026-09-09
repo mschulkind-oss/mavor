@@ -17,7 +17,7 @@ import (
 // default made typing slower than it had been. wtype rejects `-d 0`, so the
 // question cannot be answered by asking it for none.
 func TestTypingSpeedAgainstDelay(t *testing.T) {
-	h := sharedCompositor(t)
+	h := StartWithBar(t)
 
 	text := strings.Repeat("the quick brown fox ", 20) // 400 characters
 	run := func(args ...string) time.Duration {

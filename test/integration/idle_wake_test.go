@@ -23,7 +23,7 @@ import (
 const idleTick = 500 * time.Millisecond
 
 func TestTheOverlayAppearsAtOnceAfterIdling(t *testing.T) {
-	h := sharedCompositor(t)
+	h := StartWithBar(t)
 	t.Setenv("XDG_RUNTIME_DIR", h.XDGRuntime)
 	t.Setenv("WAYLAND_DISPLAY", h.WaylandDisp)
 

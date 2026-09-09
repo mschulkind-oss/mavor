@@ -93,13 +93,36 @@ func Start(t *testing.T, opts Options) *Harness {
 		t.Fatal(err)
 	}
 	h := start(t, opts, xdg)
+	// Registered BEFORE Stop so it runs AFTER it: cleanups are LIFO. Sway and
+	// waybar write on the way down and those writes should reach the test
+	// log, but the goroutines copying their output are not waited on, so a
+	// straggler arriving after the test has finished would panic it. detach
+	// sends anything later to stderr instead.
+	t.Cleanup(h.detach)
 	t.Cleanup(h.Stop)
 	return h
 }
 
+// StartWithBar brings up a compositor with waybar on it, which is what the
+// overlay tests want: the overlay anchors below the bar's exclusive zone
+// rather than at the screen edge, so without a bar the top-margin assertions
+// have nothing to clear and would pass on a broken placement.
+//
+// These tests shared one process-wide compositor until the overlay stopped
+// being a GTK client. GTK could be initialized only once per process and its
+// main loop could not outlive the compositor, so one application and one
+// compositor per process was the only combination that worked. The overlay is
+// a hand-written Wayland client now: it opens a connection per overlay, and
+// since it rebuilds after a compositor restart it outlives one on purpose.
+// Neither constraint survives, so each test gets its own compositor and the
+// isolation that comes with it.
+func StartWithBar(t *testing.T) *Harness {
+	t.Helper()
+	return Start(t, Options{Width: testWidth, Height: testHeight, LaunchWaybar: true})
+}
+
 // start brings up the compositor in the given runtime directory. Split out of
-// Start so the shared compositor can own a directory and a lifetime that are
-// not tied to whichever test happened to ask for it first.
+// Start so a caller can own a runtime directory it created itself.
 func start(t *testing.T, opts Options, xdg string) *Harness {
 	t.Helper()
 	if opts.Width == 0 {

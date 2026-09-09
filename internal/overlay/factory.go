@@ -16,8 +16,3 @@ import "log/slog"
 func NewDefault(topMargin int, previewFraction float64, log *slog.Logger) (Overlay, error) {
 	return NewWL(topMargin, previewFraction, log)
 }
-
-// Shutdown exists for symmetry with the daemon's teardown path. The overlay
-// owns nothing process-wide, so there is nothing to tear down: each overlay's
-// own Close releases its connection.
-func Shutdown() {}

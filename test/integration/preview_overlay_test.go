@@ -66,7 +66,7 @@ func overlayBand(t *testing.T, h *Harness) (rowBand, bool) {
 // The pill must reach the screen at all. Trivial to state, and it is one of
 // the things that stopped working.
 func TestRecordingPillReachesTheScreen(t *testing.T) {
-	h := sharedCompositor(t)
+	h := StartWithBar(t)
 	t.Setenv("XDG_RUNTIME_DIR", h.XDGRuntime)
 	t.Setenv("WAYLAND_DISPLAY", h.WaylandDisp)
 
@@ -90,7 +90,7 @@ func TestRecordingPillReachesTheScreen(t *testing.T) {
 // Transcribing has its own colour and its own label, and "it doesn't always
 // show up" was a real report. A state change must reach the screen.
 func TestTranscribingReachesTheScreen(t *testing.T) {
-	h := sharedCompositor(t)
+	h := StartWithBar(t)
 	t.Setenv("XDG_RUNTIME_DIR", h.XDGRuntime)
 	t.Setenv("WAYLAND_DISPLAY", h.WaylandDisp)
 
@@ -123,7 +123,7 @@ func TestTranscribingReachesTheScreen(t *testing.T) {
 // daemon records independently the user saw the overlay disappear while
 // dictation carried on. Nothing survives that except drawing it for real.
 func TestPreviewTextSurvivesTheResizeAndKeepsDrawing(t *testing.T) {
-	h := sharedCompositor(t)
+	h := StartWithBar(t)
 	t.Setenv("XDG_RUNTIME_DIR", h.XDGRuntime)
 	t.Setenv("WAYLAND_DISPLAY", h.WaylandDisp)
 
@@ -184,7 +184,7 @@ func TestPreviewTextSurvivesTheResizeAndKeepsDrawing(t *testing.T) {
 // wider than the screen, and it is measured here in real pixels rather than in
 // SceneSize's arithmetic.
 func TestPreviewStaysWithinItsShareOfTheScreen(t *testing.T) {
-	h := sharedCompositor(t)
+	h := StartWithBar(t)
 	t.Setenv("XDG_RUNTIME_DIR", h.XDGRuntime)
 	t.Setenv("WAYLAND_DISPLAY", h.WaylandDisp)
 

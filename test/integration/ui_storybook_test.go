@@ -121,7 +121,7 @@ func TestUIStorybookReport(t *testing.T) {
 	// Shared, not per-test: this test builds an overlay in-process, and the
 	// GTK application it starts must not outlive its compositor. The shared
 	// compositor is 1920x1080 with waybar, which is what this test wants.
-	h := sharedCompositor(t)
+	h := StartWithBar(t)
 
 	t.Setenv("XDG_RUNTIME_DIR", h.XDGRuntime)
 	t.Setenv("WAYLAND_DISPLAY", h.WaylandDisp)

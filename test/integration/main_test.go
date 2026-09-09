@@ -8,8 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
-
-	"github.com/mschulkind-oss/mavor/internal/overlay"
 )
 
 // MavorBinary is the absolute path to the built `mavor` binary. Tests pass it to
@@ -35,12 +33,5 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "build:", err)
 		os.Exit(2)
 	}
-	code := m.Run()
-	// Order matters. The GTK application has to stop before the compositor
-	// it is connected to: a main loop whose compositor disappears takes the
-	// process down with it, which would turn a passing run into a
-	// "signal: terminated" failure after every test had already passed.
-	overlay.Shutdown()
-	stopSharedCompositor()
-	os.Exit(code)
+	os.Exit(m.Run())
 }

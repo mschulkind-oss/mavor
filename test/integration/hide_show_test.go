@@ -26,7 +26,7 @@ import (
 // surface survive by never unmapping, which left it permanently visible — a
 // test that only checked survival would have called that a pass.
 func TestOverlaySurvivesHideAndShowAgain(t *testing.T) {
-	h := sharedCompositor(t)
+	h := StartWithBar(t)
 	t.Setenv("XDG_RUNTIME_DIR", h.XDGRuntime)
 	t.Setenv("WAYLAND_DISPLAY", h.WaylandDisp)
 

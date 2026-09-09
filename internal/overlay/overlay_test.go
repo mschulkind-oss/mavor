@@ -286,24 +286,6 @@ func TestCanvasIsTallerThanTheLabelBesideIt(t *testing.T) {
 	}
 }
 
-// GTK cannot be torn down and re-initialized within one process: a second
-// gtk.Application in the same binary takes the process down with a SIGTERM a
-// few seconds later. That is a real constraint on this type, and it made the
-// integration suite fail as a whole while every test passed alone —
-// TestWaveformRingScrolls and TestUIStorybookReport each build an overlay.
-//
-// This test only pins the contract in the default build. The GTK build has
-// TestNewGTKIsReusableWithinOneProcess, which actually creates two.
-func TestOverlayDocumentsSingleApplicationPerProcess(t *testing.T) {
-	// A sentinel so the constraint is discoverable from the non-GTK build too:
-	// if the shared-application machinery is ever removed, this name goes with
-	// it and the test stops compiling.
-	if !overlayUsesSharedApplication {
-		t.Fatal("the overlay must share one GTK application per process; " +
-			"creating a second one terminates the binary")
-	}
-}
-
 // The recording dot used to be the text glyph "●" in a 20px label, baseline-
 // aligned beside 15px capitals. Measured from a capture, its centre sat 2.5px
 // below the text's, and its ink ran below the text baseline — because ● is not

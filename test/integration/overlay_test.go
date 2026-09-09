@@ -98,7 +98,7 @@ func TestOverlayWithoutWaybarStillFloats(t *testing.T) {
 // live column moved" bug where the shift kept index 0 pinned and overwrote
 // the tail instead of scrolling.
 func TestWaveformReachesTheScreen(t *testing.T) {
-	h := sharedCompositor(t)
+	h := StartWithBar(t)
 	t.Setenv("XDG_RUNTIME_DIR", h.XDGRuntime)
 	t.Setenv("WAYLAND_DISPLAY", h.WaylandDisp)
 

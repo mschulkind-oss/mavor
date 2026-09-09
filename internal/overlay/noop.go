@@ -3,9 +3,12 @@ package overlay
 import "sync"
 
 // Noop is an Overlay that records its calls without touching Wayland. It's
-// what unit tests of the daemon use, and it's also the safe fallback when
-// the daemon is built without GTK. Show, SetLevel, and SetText are goroutine-safe
-// so daemon tests (which call them from background listeners) don't trip the race detector.
+// what unit tests of the daemon use, and it's also the safe fallback when the
+// real one cannot be built — no compositor, or one without layer-shell —
+// since dictation works fine without a visual indicator and refusing to start
+// over a missing HUD would be the worse trade. Show, SetLevel, and SetText are
+// goroutine-safe so daemon tests (which call them from background listeners)
+// don't trip the race detector.
 type Noop struct {
 	mu        sync.Mutex
 	calls     []Visual

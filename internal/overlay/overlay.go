@@ -66,17 +66,10 @@ func resetWave(wave []float64) {
 	}
 }
 
-// overlayUsesSharedApplication records that all overlays in a process share
-// one GTK application. GTK cannot be torn down and re-initialized: a second
-// gtk.Application in the same binary terminates the process a few seconds
-// later. NewGTK therefore starts the application once and builds each
-// overlay's window on it, and Close destroys only the window.
-const overlayUsesSharedApplication = true
-
-// Recording-pill geometry. These live here rather than beside the GTK widget
-// code so they are reachable from tests in the default build, and because the
-// bar's padding is duplicated into the stylesheet — keeping both derived from
-// one constant is what stops them drifting apart.
+// Recording-pill geometry. These live here rather than beside the painting
+// code because the pill's height is derived from them in two places — the
+// scene size and the buffer damage — and keeping both from one constant is
+// what stops them drifting apart.
 //
 // The pill's height is waveHeight + 2*barPaddingY: the canvas is the tallest
 // thing in the row, so it, not the label, sizes the pill.
@@ -130,9 +123,9 @@ const (
 // it is vertically centred in, given the label's ink and logical extents.
 //
 // "RECORDING" is all capitals, so it has no descenders — but its line box
-// reserves descender space anyway, and GTK centres the box, not the ink. The
-// letters therefore ride above the middle of the row, and a dot centred on the
-// row lands below them. Because the dot is also taller than the cap height,
+// reserves descender space anyway, and centring the label centres that box,
+// not the ink. The letters therefore ride above the middle of the row, and a
+// dot centred on the row lands below them. Because the dot is also taller than the cap height,
 // that bias shows up asymmetrically: the dot's top sits flush with the cap
 // tops while its bottom hangs past the baseline, which is what reads as the
 // dot sitting low.

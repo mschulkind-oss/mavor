@@ -15,7 +15,7 @@ import (
 // The daemon holds two Wayland connections: the overlay's and the one
 // in-process typing opens. Each is fine alone. This is the pair.
 func TestOverlayAndTypingConnectionsCoexist(t *testing.T) {
-	h := sharedCompositor(t)
+	h := StartWithBar(t)
 	t.Setenv("XDG_RUNTIME_DIR", h.XDGRuntime)
 	t.Setenv("WAYLAND_DISPLAY", h.WaylandDisp)
 	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
