@@ -156,6 +156,21 @@ server, so a Wayland IME never sees them.
   `KeyboardEvent.code` / editing-command mapping **[INF]**. The standard
   mitigation is a per-key delay (`wtype -d N`), and note `-d 0` is *rejected*
   by the arg parser (`if (delay_ms <= 0) fail(...)`) **[SRC]**.
+- **Round 2 — the Chromium half of that is not a race, and a delay does not fix
+  it [LOCAL 2026-09-08].** Dictating into a Chrome text box through mavor's own
+  virtual keyboard dropped every space and nothing else. Chromium resolves ASCII
+  letters and digits from the keysym on the key (`AlphanumericKeyboardCode`) and
+  every other character — space, punctuation, anything outside ASCII — from the
+  *physical* key beneath it, falling through to
+  `DomCodeToUsLayoutKeyboardCode(dom_code)` **[SRC 2026-09-08,
+  `ui/events/ozone/layout/xkb/xkb_keyboard_layout_engine.cc`]**. Assigning
+  keycodes in sorted order from 1 therefore always parks the space — the lowest
+  codepoint in a cleaned transcript — on the physical Escape key, which produces
+  no text. Issue #71's punctuation-at-position-14 is the same mechanism one key
+  over. The fix is to choose the physical key, not to slow down: mavor now hands
+  out only keys that carry a character in a US layout, pinning the space to the
+  space bar, and lets ASCII alphanumerics spill onto F13-F24 and the keypad
+  because those it resolves by keysym.
 - Issue #62 (2024): typing into XWayland windows does nothing at all, open, no
   workaround. Issue #66: fails to release modifiers on exit.
 - Issue #5, "Use input-method if available", has been open since 2020.
