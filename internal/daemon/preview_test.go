@@ -251,3 +251,28 @@ func TestStreamPartialArrivingAfterStopIsDropped(t *testing.T) {
 		}
 	}
 }
+
+// Phrase mode re-transcribes with the main model, so a pause mid-sentence
+// decodes to a non-speech annotation and would paint "[BLANK_AUDIO]" across the
+// HUD. The preview shows what was said, or nothing.
+func TestPhrasePreviewDropsNonSpeechMarkers(t *testing.T) {
+	ov := &overlay.Mock{}
+	d, _ := newTestDaemon(t, func(c *Config) {
+		c.Overlay = ov
+		c.PreviewMode = speech.PreviewPhrases
+	})
+	ctx := t.Context()
+
+	d.appendPhrase(ctx, d.streamGen, "[BLANK_AUDIO]")
+	if got := d.streamHistory; got != "" {
+		t.Errorf("streamHistory = %q after a marker-only phrase, want empty", got)
+	}
+	if texts := ov.Texts(); len(texts) != 0 {
+		t.Errorf("overlay painted %v, want nothing", texts)
+	}
+
+	d.appendPhrase(ctx, d.streamGen, "hello (paper rustling) world")
+	if got, want := d.streamHistory, "hello world"; got != want {
+		t.Errorf("streamHistory = %q, want %q", got, want)
+	}
+}

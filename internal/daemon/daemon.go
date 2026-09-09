@@ -546,7 +546,11 @@ func (d *Daemon) transcribePhrase(ctx context.Context, gen uint64, phrase []int1
 // still in flight is precisely the result that can outlive its recording: it
 // is dropped here, not appended.
 func (d *Daemon) appendPhrase(ctx context.Context, gen uint64, text string) {
-	text = strings.TrimSpace(text)
+	// Phrase mode re-transcribes with the main model, so it produces the same
+	// non-speech annotations the final transcript does — a pause mid-sentence
+	// paints "[BLANK_AUDIO]" across the HUD. Cut them here, before the empty
+	// check, so a phrase that was nothing but markers adds nothing.
+	text = strings.TrimSpace(speech.StripNonSpeech(text))
 	if text == "" {
 		return
 	}
@@ -571,6 +575,8 @@ func (d *Daemon) appendPhrase(ctx context.Context, gen uint64, text string) {
 // arrives after that recording stopped. Both preview mechanisms write the
 // overlay through here, which is what makes the driver its one writer.
 func (d *Daemon) setPreview(ctx context.Context, gen uint64, text string) {
+	// Partials read off the main model carry its annotations too.
+	text = speech.StripNonSpeech(text)
 	d.streamMu.Lock()
 	defer d.streamMu.Unlock()
 	if !d.previewLive(ctx, gen) {
@@ -683,6 +689,17 @@ func (d *Daemon) runTranscription(ctx context.Context) {
 	}
 	transcribeMS := time.Since(transcribeStart).Milliseconds()
 	d.logger.Info("pipeline: transcript received", "text_len", len(text), "transcribe_ms", transcribeMS)
+
+	// Whisper decodes near-speech to an annotation rather than to nothing, so
+	// "[BLANK_AUDIO]" reaches here as a perfectly ordinary non-empty string and
+	// would be typed. Strip the annotations before the empty check, so a
+	// transcript that was nothing but markers takes the existing no-op path.
+	if stripped := speech.StripNonSpeech(text); stripped != text {
+		d.logger.Info("pipeline: stripped non-speech markers from transcript",
+			"before", text, "after", stripped)
+		text = stripped
+	}
+
 	if text == "" {
 		d.logger.Warn("pipeline: empty transcript — skipping emit (whisper found no speech?)")
 		d.machine.Apply(state.EventTranscribeDone)

@@ -200,6 +200,7 @@ sequenceDiagram
     D->>D: VAD pre-filter — silence ends the cycle here
     D->>S: Transcribe(ctx, wav)
     S-->>D: text
+    D->>D: strip non-speech markers — a marker-only transcript ends the cycle here
     D->>D: append to history log
     D->>O: Emit — wtype, then wl-copy
     D->>M: Apply(EventTranscribeDone)
@@ -413,6 +414,7 @@ Every row was traced through the code.
 | A WAV with a header and no samples | Passes the size check, reaches the VAD pre-filter, ends the cycle as silence | Pill vanishes, nothing typed |
 | VAD finds no speech | `EventTranscribeDone` without calling the transcriber | Pill vanishes, nothing typed |
 | The transcriber errors | `reportError` → `Idle` | The error pill |
+| Whisper decodes near-silence to `[BLANK_AUDIO]` or `(machine whirring)` | `speech.StripNonSpeech` cuts the annotation; what is left is empty, so this becomes the empty-transcript row | Pill vanishes, nothing typed |
 | Empty transcript | Logged at Warn, `Emit` never called | Pill vanishes, nothing typed |
 | `wtype` fails | `wl-copy` still runs; the joined error is logged at Warn and the cycle completes | Nothing typed — **but the text is on the clipboard and in the history log** |
 | Both `wtype` and `wl-copy` fail | Identical to the above from the FSM's side | Nothing typed; recover with `mavor history --copy` |

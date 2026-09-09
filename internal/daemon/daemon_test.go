@@ -708,3 +708,72 @@ func TestTranscriptRecordedEvenWhenOutputFails(t *testing.T) {
 		t.Fatalf("history = %v, want the transcript recorded despite output failure", got)
 	}
 }
+
+// Whisper decodes near-silence to a non-speech annotation rather than to
+// nothing, so "[BLANK_AUDIO]" arrives as an ordinary non-empty transcript. It
+// must not be typed into the focused window, and it must not take up a slot in
+// the recovery log either — there is nothing there to recover.
+func TestNonSpeechMarkerIsNeverTypedOrRecorded(t *testing.T) {
+	for _, marker := range []string{"[BLANK_AUDIO]", "(machine whirring)", "*coughs*", "[MUSIC]"} {
+		t.Run(marker, func(t *testing.T) {
+			dir := t.TempDir()
+			store := &history.Store{Path: filepath.Join(dir, "history.jsonl")}
+			out := &output.Mock{}
+			d, sock := newTestDaemon(t, func(c *Config) {
+				c.History = store
+				c.Output = out
+				c.Transcriber = &speech.Mock{Text: marker}
+			})
+			stop := runDaemon(t, d)
+			defer stop()
+
+			sendWithRetry(t, sock, "toggle")
+			waitForState(t, sock, "recording")
+			sendWithRetry(t, sock, "toggle")
+			waitForState(t, sock, "idle")
+
+			if calls := out.Calls(); len(calls) != 0 {
+				t.Errorf("typed %q, want nothing emitted", calls)
+			}
+			got, err := store.Recent(0)
+			if err != nil {
+				t.Fatalf("Recent: %v", err)
+			}
+			if len(got) != 0 {
+				t.Errorf("history = %v, want no entry recorded", got)
+			}
+		})
+	}
+}
+
+// A marker sitting inside otherwise real speech is cut out, and what the user
+// actually said is typed and recorded without it.
+func TestNonSpeechMarkerIsStrippedFromRealSpeech(t *testing.T) {
+	dir := t.TempDir()
+	store := &history.Store{Path: filepath.Join(dir, "history.jsonl")}
+	out := &output.Mock{}
+	d, sock := newTestDaemon(t, func(c *Config) {
+		c.History = store
+		c.Output = out
+		c.Transcriber = &speech.Mock{Text: "commit the fix (keyboard clacking) and push"}
+	})
+	stop := runDaemon(t, d)
+	defer stop()
+
+	sendWithRetry(t, sock, "toggle")
+	waitForState(t, sock, "recording")
+	sendWithRetry(t, sock, "toggle")
+	waitForState(t, sock, "idle")
+
+	const want = "commit the fix and push"
+	if calls := out.Calls(); len(calls) != 1 || calls[0] != want {
+		t.Errorf("typed %q, want [%q]", calls, want)
+	}
+	got, err := store.Recent(0)
+	if err != nil {
+		t.Fatalf("Recent: %v", err)
+	}
+	if len(got) != 1 || got[0].Text != want {
+		t.Errorf("history = %v, want one entry %q", got, want)
+	}
+}
