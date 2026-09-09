@@ -269,7 +269,26 @@ func (o *WL) connect(configureTimeout time.Duration) (*wlState, error) {
 // The whole connection is rebuilt rather than only the surface, because the
 // output the overlay lands on may be a different size and Display.OutputWidth
 // is read once, during Connect, to size the preview.
+//
+// The new connection is dialled BEFORE the old one is torn down, and a
+// failure returns having touched nothing.
+//
+// The other order looks natural — release, then acquire — and it cost the
+// overlay exactly what rebuild was written to save. A rebuild fails when
+// there is no output to give, which is the same moment it is needed, so the
+// failing path is the common one rather than the rare one. Tearing down first
+// left st holding a closed display; the loop dispatches on that display at
+// the top of every iteration, so the next tick turned "retry in two seconds"
+// into "use of closed network connection" and stopped the loop for good, 1.5
+// seconds before the retry it had scheduled. Keeping the old connection alive
+// costs one idle socket for the length of a dial and leaves something for the
+// retry to run on.
 func (o *WL) rebuild(st *wlState) error {
+	fresh, err := o.connect(waitConfigureOnRebuild)
+	if err != nil {
+		return err
+	}
+
 	for i, b := range st.bufs {
 		if b != nil {
 			b.Close()
@@ -279,10 +298,6 @@ func (o *WL) rebuild(st *wlState) error {
 	_ = st.surface.Destroy()
 	_ = st.display.Close()
 
-	fresh, err := o.connect(waitConfigureOnRebuild)
-	if err != nil {
-		return err
-	}
 	// Carry the dictation across. The user did not stop talking because their
 	// monitor blinked, so the scene and its waveform history come along; only
 	// the compositor-side state — buffers, damage, assigned size — is new.
