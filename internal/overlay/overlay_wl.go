@@ -337,8 +337,11 @@ func (o *WL) run(st *wlState) {
 	start := time.Now()
 	var seen uint64
 	// rebuildAfter throttles recovery attempts so a compositor with no output
-	// to give is not asked at the frame rate.
+	// to give is not asked at the frame rate. connLost says the socket itself
+	// is gone rather than just the surface on it — the loop stops reading and
+	// stops painting until a rebuild replaces both.
 	var rebuildAfter time.Time
+	var connLost bool
 
 	// apply folds the latest state the producers asked for into the scene
 	// this goroutine owns. Producers never touch the scene themselves.
@@ -392,24 +395,33 @@ func (o *WL) run(st *wlState) {
 		}
 
 		// Read first. Releases arrive here, and a client that never
-		// reads is disconnected once the buffer fills.
-		if err := st.display.DispatchPending(); err != nil {
-			o.fail(err)
-			return
+		// reads is disconnected once the buffer fills. Skipped once the
+		// socket is known to be gone, so a dead connection is not read at
+		// the tick rate and does not log once per tick either.
+		if !connLost {
+			if err := st.display.DispatchPending(); err != nil {
+				o.log.Warn("overlay: wayland connection lost — will rebuild", "err", err)
+				connLost = true
+			}
 		}
 
-		// A closed surface cannot be painted back to life, so check before
-		// drawing anything. See rebuild for why this happens.
+		// Two ways to lose what is on screen, one recovery. The compositor
+		// closing the layer surface takes the surface and leaves the
+		// connection; a compositor restart takes both. Neither can be
+		// painted back to life, so check before drawing anything, and let
+		// rebuild dial a fresh connection either way. See rebuild.
 		rebuilt := false
-		if st.surface.Closed {
+		if connLost || st.surface.Closed {
 			if !time.Now().Before(rebuildAfter) {
 				if err := o.rebuild(st); err != nil {
-					o.log.Warn("overlay: layer surface was closed and could not be rebuilt yet",
-						"err", err, "retry_in", rebuildRetry)
+					o.log.Warn("overlay: could not be rebuilt yet",
+						"err", err, "conn_lost", connLost, "retry_in", rebuildRetry)
 					rebuildAfter = time.Now().Add(rebuildRetry)
 				} else {
-					o.log.Info("overlay: layer surface was closed by the compositor and has been rebuilt",
-						"w", st.reqW, "h", st.reqH, "preview_cap_px", st.maxPreview)
+					o.log.Info("overlay: rebuilt after the compositor took the surface away",
+						"conn_lost", connLost, "w", st.reqW, "h", st.reqH,
+						"preview_cap_px", st.maxPreview)
+					connLost = false
 					rebuilt = true
 					// The pulse phase is derived from `start`, so the
 					// rebuilt surface picks the animation up where the old
@@ -438,9 +450,18 @@ func (o *WL) run(st *wlState) {
 			changed = true
 		}
 		if st.animate || changed {
+			// A frame can be the thing that discovers the socket is gone:
+			// dispatch ran at the top of this iteration and the compositor
+			// may have exited since. Route that to the same recovery rather
+			// than stopping, and keep fail for a scene no connection draws.
 			if err := o.paint(st, start); err != nil {
-				o.fail(err)
-				return
+				if !worthRebuilding(err) {
+					o.fail(err)
+					return
+				}
+				o.log.Warn("overlay: wayland connection lost while painting — will rebuild", "err", err)
+				connLost = true
+				continue
 			}
 		}
 
@@ -458,6 +479,28 @@ func (o *WL) run(st *wlState) {
 	}
 }
 
+// lostConn marks an error as the Wayland connection having gone, which a
+// rebuild fixes, as opposed to a scene the overlay cannot draw, which it does
+// not.
+//
+// The distinction is the whole point. Every error out of the socket — a
+// compositor restart, a broken pipe — is worth another connection two seconds
+// later. SceneBounds, by contrast, fails when the fonts will not load, and
+// that is true of the next socket and every one after it; routing it into the
+// recovery path would churn connections forever and never draw a frame.
+type lostConn struct{ err error }
+
+func (e lostConn) Error() string { return e.err.Error() }
+func (e lostConn) Unwrap() error { return e.err }
+
+// worthRebuilding reports whether err is the connection rather than the scene.
+func worthRebuilding(err error) bool {
+	var l lostConn
+	return errors.As(err, &l)
+}
+
+// fail stops the render loop for good. It is for what a rebuild cannot fix;
+// anything the connection did is handled by the recovery path in run instead.
 func (o *WL) fail(err error) {
 	select {
 	case o.err <- err:
@@ -523,7 +566,7 @@ func (o *WL) paint(st *wlState, start time.Time) error {
 		for i := range st.bufs {
 			b, err := st.display.NewBuffer(sw, sh)
 			if err != nil {
-				return err
+				return lostConn{err}
 			}
 			st.bufs[i] = b
 			st.bufDirty[i] = image.Rectangle{} // a new shm buffer is zeroed
@@ -591,7 +634,7 @@ func (o *WL) paint(st *wlState, start time.Time) error {
 	// The compositor compares against the LAST COMMIT, not against this
 	// buffer's history, so this union is over one frame rather than three.
 	if err := st.surface.AttachDamaged(buf, bounds.Union(st.lastDamage)); err != nil {
-		return err
+		return lostConn{err}
 	}
 	st.lastDamage = bounds
 	st.mapped = true

@@ -1,6 +1,8 @@
 package overlay
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -37,5 +39,36 @@ func TestFailedRebuildLeavesTheOldConnectionAlone(t *testing.T) {
 	}
 	if st.display != nil || st.surface != nil {
 		t.Error("a failed rebuild replaced the state it was given; the old connection must survive for the retry")
+	}
+}
+
+// A lost connection must be routed into the same recovery the compositor's
+// own surface-closed event gets, rather than stopping the render loop.
+//
+// A compositor restart takes the socket with it, not just the layer surface.
+// That surfaces as a dispatch error rather than surface.Closed, and it used to
+// go straight to fail(): the loop returned, and the overlay was gone for the
+// life of the daemon even though a compositor was running again moments later.
+// Recording, ducking and typing carry on regardless, so nothing else reports
+// it — the same silent failure the surface-closed rebuild was written for.
+//
+// A scene the overlay cannot draw at all is the case that must NOT be routed
+// there. SceneBounds fails on font loading, which a fresh socket does not fix,
+// so retrying it every two seconds would churn connections forever.
+func TestOnlyConnectionErrorsAreWorthRebuilding(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"a dead socket", lostConn{errors.New("use of closed network connection")}, true},
+		{"a scene that cannot be drawn", errors.New("overlay: no font"), false},
+		{"a dead socket wrapped further", fmt.Errorf("paint: %w", lostConn{errors.New("broken pipe")}), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := worthRebuilding(tc.err); got != tc.want {
+				t.Errorf("worthRebuilding(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }
