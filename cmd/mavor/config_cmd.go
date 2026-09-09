@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/spf13/cobra"
+
 	"errors"
 	"fmt"
 	"os"
@@ -158,35 +160,44 @@ preview_width = %v
 	)
 }
 
-func runConfig(args []string) error {
-	if len(args) == 0 {
-		return runConfigShow()
+func newConfigCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "config",
+		Short: "initialize or inspect ~/.config/mavor/config.toml",
+		Args:  cobra.NoArgs,
+		// Bare `mavor config` prints the resolved configuration, which is what
+		// it did before subcommands existed and what people have in their notes.
+		RunE: func(_ *cobra.Command, _ []string) error { return runConfigShow() },
 	}
-	switch args[0] {
-	case "init":
-		force := false
-		for _, a := range args[1:] {
-			if a == "--force" || a == "-f" {
-				force = true
-			}
-		}
-		return runConfigInit(force)
-	case "path":
-		fmt.Println(config.Path())
-		return nil
-	case "show":
-		return runConfigShow()
-	case "help", "-h", "--help":
-		fmt.Println(`usage: mavor config <command>
 
-commands:
-  init [--force]   create default configuration file (~/.config/mavor/config.toml)
-  show             print the current resolved configuration
-  path             print the path to the configuration file`)
-		return nil
-	default:
-		return fmt.Errorf("unknown config command: %s (try 'mavor config help')", args[0])
+	var force bool
+	initCmd := &cobra.Command{
+		Use:   "init",
+		Short: "create the default configuration file",
+		Args:  cobra.NoArgs,
+		RunE:  func(_ *cobra.Command, _ []string) error { return runConfigInit(force) },
 	}
+	initCmd.Flags().BoolVarP(&force, "force", "f", false, "overwrite an existing configuration file")
+
+	cmd.AddCommand(
+		initCmd,
+		&cobra.Command{
+			Use:   "show",
+			Short: "print the current resolved configuration",
+			Args:  cobra.NoArgs,
+			RunE:  func(_ *cobra.Command, _ []string) error { return runConfigShow() },
+		},
+		&cobra.Command{
+			Use:   "path",
+			Short: "print the path to the configuration file",
+			Args:  cobra.NoArgs,
+			RunE: func(_ *cobra.Command, _ []string) error {
+				fmt.Println(config.Path())
+				return nil
+			},
+		},
+	)
+	return cmd
 }
 
 func runConfigInit(force bool) error {

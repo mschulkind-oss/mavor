@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/spf13/cobra"
+
 	"bufio"
 	"fmt"
 	"io"
@@ -13,35 +15,31 @@ import (
 	"github.com/mschulkind-oss/mavor/internal/config"
 )
 
-func runLogs(args []string) error {
-	follow := false
-	lines := 50
-	var customFile string
+func newLogsCmd() *cobra.Command {
+	var (
+		follow     bool
+		lines      int
+		customFile string
+	)
+	cmd := &cobra.Command{
+		Use:   "logs",
+		Short: "view or stream daemon logs",
+		Long: "View and follow real-time logs from the mavor dictation daemon.\n\n" +
+			"Reads from journald when it is available and the daemon log file otherwise.",
+		Args: cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runLogs(follow, lines, customFile)
+		},
+	}
+	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "follow log output in real time")
+	cmd.Flags().IntVarP(&lines, "lines", "n", 50, "number of past lines to show")
+	cmd.Flags().StringVar(&customFile, "file", "", "read from this log file instead of journald")
+	return cmd
+}
 
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "-f" || a == "--follow":
-			follow = true
-		case (a == "-n" || a == "--lines") && i+1 < len(args):
-			if n, err := strconv.Atoi(args[i+1]); err == nil && n > 0 {
-				lines = n
-			}
-			i++
-		case a == "--file" && i+1 < len(args):
-			customFile = args[i+1]
-			i++
-		case a == "-h" || a == "--help":
-			fmt.Println(`usage: mavor logs [-f|--follow] [-n <lines>] [--file <path>]
-
-View and follow real-time logs from the mavor dictation daemon.
-
-options:
-  -f, --follow       follow log output in real time (stream new entries)
-  -n, --lines <N>    number of past lines to show (default: 50)
-  --file <path>      read directly from a specific log file instead of journald`)
-			return nil
-		}
+func runLogs(follow bool, lines int, customFile string) error {
+	if lines <= 0 {
+		return fmt.Errorf("--lines must be positive, got %d", lines)
 	}
 
 	// Try journalctl first if no explicit file was requested

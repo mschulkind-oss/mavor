@@ -250,25 +250,25 @@ func TestRunModelsListDetailed(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(moonshineDir, "encode.int8.onnx"), make([]byte, 3*1024*1024), 0o644)
 	_ = os.WriteFile(filepath.Join(moonshineDir, "tokens.txt"), []byte("tokens"), 0o644)
 
-	if err := runModels([]string{"list"}); err != nil {
-		t.Fatalf("runModels(list) error: %v", err)
+	if err := execCLIErr(t, "models", "list"); err != nil {
+		t.Fatalf("mavor models list error: %v", err)
 	}
 
-	if err := runModels([]string{"ls"}); err != nil {
-		t.Fatalf("runModels(ls) error: %v", err)
+	if err := execCLIErr(t, "models", "ls"); err != nil {
+		t.Fatalf("mavor models ls error: %v", err)
 	}
 }
 
 func TestRunModelsCommands(t *testing.T) {
-	if err := runModels([]string{"help"}); err != nil {
-		t.Fatalf("runModels(help) error: %v", err)
+	if err := execCLIErr(t, "models", "--help"); err != nil {
+		t.Fatalf("mavor models --help error: %v", err)
 	}
 
-	if err := runModels([]string{"pull"}); err == nil {
+	if err := execCLIErr(t, "models", "pull"); err == nil {
 		t.Fatalf("expected error for 'mavor models pull' without arguments")
 	}
 
-	if err := runModels([]string{"invalid-command"}); err == nil {
+	if err := execCLIErr(t, "models", "invalid-command"); err == nil {
 		t.Fatalf("expected error for unknown command")
 	}
 }
@@ -533,8 +533,8 @@ func TestModelsListInstalledIsEmptyWithNoModels(t *testing.T) {
 func TestModelsListAcceptsTheInstalledFlag(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", tmpDir)
-	if err := runModels([]string{"list", "--installed"}); err != nil {
-		t.Fatalf("runModels(list --installed): %v", err)
+	if err := execCLIErr(t, "models", "list", "--installed"); err != nil {
+		t.Fatalf("mavor models list --installed: %v", err)
 	}
 }
 
@@ -738,12 +738,12 @@ func TestOnlyTransducersClaimHotwordSupport(t *testing.T) {
 func TestModelsListAcceptsVerbose(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	for _, args := range [][]string{
-		{"list", "--verbose"},
-		{"list", "-v"},
-		{"list", "--verbose", "--installed"},
+		{"models", "list", "--verbose"},
+		{"models", "list", "-v"},
+		{"models", "list", "--verbose", "--installed"},
 	} {
-		if err := runModels(args); err != nil {
-			t.Errorf("runModels(%v): %v", args, err)
+		if err := execCLIErr(t, args...); err != nil {
+			t.Errorf("mavor %v: %v", args, err)
 		}
 	}
 }
@@ -903,7 +903,7 @@ func TestModelsListJSONAlwaysEmitsArraysNotNull(t *testing.T) {
 func TestModelsListRejectsJSONWithVerbose(t *testing.T) {
 	// They are two renderings of the same data; silently honouring one would
 	// leave a script parsing prose.
-	err := runModels([]string{"list", "--json", "--verbose"})
+	err := execCLIErr(t, "models", "list", "--json", "--verbose")
 	if err == nil {
 		t.Fatal("`models list --json --verbose` was accepted; want an error")
 	}

@@ -48,7 +48,7 @@ Two facts about that tree are easy to get wrong:
 
 ## Directory Layout
 
-- `cmd/mavor/` — CLI entry point, subcommands (`setup`, `daemon`, `start`, `stop`, `toggle`, `status`, `logs`, `doctor`, `config`, `service`, `models`, `history`, `version`).
+- `cmd/mavor/` — CLI entry point, subcommands (`setup`, `daemon`, `start`, `stop`, `toggle`, `status`, `logs`, `doctor`, `config`, `service`, `models`, `history`, `version`). The command tree is cobra: `root.go` assembles it, each `*_cmd.go` exports one `newXxxCmd()`, and the `run*` functions behind them take typed arguments rather than a `[]string`. There is no hand-written usage text left — help is generated from the flags, so it cannot drift from what the parser accepts.
 - `cmd/mavor-bench/` — the benchmark harness. Reads `models.Catalog` through
   `mavor models list --json`, so a model added to the catalog is benchmarked
   without editing a list here. Writes [`docs/reports/model-benchmarks.md`](./docs/reports/model-benchmarks.md).
@@ -71,8 +71,16 @@ Two facts about that tree are easy to get wrong:
   from a catalog name to a file on disk, `factory.go` turns a resolved model
   into a transcriber, `companion.go` decides where the preview text comes from,
   `vocabulary.go` turns the `[vocabulary]` table into a whisper prompt or a
-  sherpa hotwords file, and `sherpa*.go` / `server.go` / `supervisor.go` are
+  sherpa hotwords file, `nonspeech.go` strips the annotations Whisper emits for
+  audio that is not speech, and `sherpa*.go` / `server.go` / `supervisor.go` are
   the implementations.
+
+  **`[BLANK_AUDIO]` is a transcript, not an error.** Whisper's training
+  transcripts annotated non-speech, so the model emits `[BLANK_AUDIO]`,
+  `(machine whirring)` and `*coughs*` as ordinary tokens — whisper.cpp contains
+  no such literal. A non-empty check does not catch them, which is why
+  `speech.StripNonSpeech` runs before the daemon's empty-transcript guard rather
+  than after it.
 - `internal/overlay/` — Layer-shell HUD: `paint.go` turns state into pixels with no compositor involved, `overlay_wl.go` puts them on screen.
 - `internal/wayland/` — Minimal hand-written Wayland client: the wire protocol, wlr-layer-shell, and shared-memory buffers. No cgo in this package (the binary as a whole is cgo — see below).
 - `internal/ipc/` — JSON-over-Unix-socket IPC server and client.

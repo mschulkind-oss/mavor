@@ -1,23 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
-
-func TestUsageOutput(t *testing.T) {
-	buf := new(bytes.Buffer)
-	usage(buf)
-	out := buf.String()
-	for _, cmd := range []string{"daemon", "toggle", "start", "stop", "status", "doctor", "config", "service", "models", "version"} {
-		if !strings.Contains(out, cmd) {
-			t.Errorf("usage output missing command %q", cmd)
-		}
-	}
-}
 
 func TestVersionOutput(t *testing.T) {
 	if err := runVersion(); err != nil {
@@ -46,13 +34,13 @@ func TestConfigCommands(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
 
 	// 1. Config path
-	if err := runConfig([]string{"path"}); err != nil {
-		t.Fatalf("runConfig(path) error = %v", err)
+	if err := execCLIErr(t, "config", "path"); err != nil {
+		t.Fatalf("mavor config path error = %v", err)
 	}
 
 	// 2. Config init
-	if err := runConfig([]string{"init"}); err != nil {
-		t.Fatalf("runConfig(init) error = %v", err)
+	if err := execCLIErr(t, "config", "init"); err != nil {
+		t.Fatalf("mavor config init error = %v", err)
 	}
 
 	// Verify file was written
@@ -62,18 +50,18 @@ func TestConfigCommands(t *testing.T) {
 	}
 
 	// 3. Config init duplicate without force fails
-	if err := runConfig([]string{"init"}); err == nil {
+	if err := execCLIErr(t, "config", "init"); err == nil {
 		t.Fatalf("expected error re-initializing without --force, got nil")
 	}
 
 	// 4. Config init with force succeeds
-	if err := runConfig([]string{"init", "--force"}); err != nil {
-		t.Fatalf("runConfig(init --force) error = %v", err)
+	if err := execCLIErr(t, "config", "init", "--force"); err != nil {
+		t.Fatalf("mavor config init --force error = %v", err)
 	}
 
 	// 5. Config show
-	if err := runConfig([]string{"show"}); err != nil {
-		t.Fatalf("runConfig(show) error = %v", err)
+	if err := execCLIErr(t, "config", "show"); err != nil {
+		t.Fatalf("mavor config show error = %v", err)
 	}
 }
 
@@ -84,8 +72,8 @@ func TestConfigCommands(t *testing.T) {
 func TestScaffoldDoesNotPromiseIncrementalTyping(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
-	if err := runConfig([]string{"init"}); err != nil {
-		t.Fatalf("runConfig(init) error = %v", err)
+	if err := execCLIErr(t, "config", "init"); err != nil {
+		t.Fatalf("mavor config init error = %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(tmpDir, "mavor", "config.toml"))
 	if err != nil {
@@ -114,8 +102,8 @@ func TestModelsList(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", tmpDir)
 
 	// Empty list
-	if err := runModels([]string{"list"}); err != nil {
-		t.Fatalf("runModels(list) error = %v", err)
+	if err := execCLIErr(t, "models", "list"); err != nil {
+		t.Fatalf("mavor models list error = %v", err)
 	}
 
 	// Create fake model files
@@ -126,14 +114,14 @@ func TestModelsList(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(modelDir, "ggml-base.en.bin"), []byte("test"), 0o644)
 
 	// List with model
-	if err := runModels([]string{"list"}); err != nil {
-		t.Fatalf("runModels(list) with model error = %v", err)
+	if err := execCLIErr(t, "models", "list"); err != nil {
+		t.Fatalf("mavor models list with model error = %v", err)
 	}
 }
 
 func TestDoctorRuns(t *testing.T) {
 	// Doctor may return non-zero in test environment (e.g. no physical display), but should execute cleanly without panic
-	_ = runDoctor(nil)
+	_ = execCLIErr(t, "doctor")
 }
 
 func TestSetupCommand(t *testing.T) {
@@ -146,8 +134,8 @@ func TestSetupCommand(t *testing.T) {
 	_ = os.MkdirAll(modelDir, 0o755)
 	_ = os.WriteFile(filepath.Join(modelDir, "ggml-base.en.bin"), []byte("test-model"), 0o644)
 
-	if err := runSetup(nil); err != nil {
-		t.Fatalf("runSetup() error = %v", err)
+	if err := execCLIErr(t, "setup"); err != nil {
+		t.Fatalf("mavor setup error = %v", err)
 	}
 
 	cfgPath := filepath.Join(tmpDir, "mavor", "config.toml")
@@ -161,7 +149,7 @@ func TestLogsCommand(t *testing.T) {
 	logFile := filepath.Join(tmpDir, "daemon.log")
 	_ = os.WriteFile(logFile, []byte("time=2026-08-16 level=INFO msg=\"daemon started\"\n"), 0o644)
 
-	if err := runLogs([]string{"--file", logFile, "-n", "10"}); err != nil {
-		t.Fatalf("runLogs() error = %v", err)
+	if err := execCLIErr(t, "logs", "--file", logFile, "-n10"); err != nil {
+		t.Fatalf("mavor logs error = %v", err)
 	}
 }

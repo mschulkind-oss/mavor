@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/spf13/cobra"
+
 	"bufio"
 	"fmt"
 	"os"
@@ -22,13 +24,50 @@ type Check struct {
 	Fn   func() (ok bool, msg string)
 }
 
-func runDoctor(args []string) error {
-	for _, a := range args {
-		if a == "--fix" || a == "-f" || a == "fix" {
-			return runSetup(args)
-		}
+func newDoctorCmd() *cobra.Command {
+	var fix bool
+	cmd := &cobra.Command{
+		Use:   "doctor",
+		Short: "run the environment diagnostic (Wayland, audio, tools, models)",
+		Long: "Run the environment diagnostic.\n\n" +
+			"Besides checking the environment, doctor is the second half of the config\n" +
+			"file: it reports the derived facts a user cannot read off config.toml —\n" +
+			"which runtime and placement the model got, the thread count and where it\n" +
+			"came from, whether a GPU backend actually loaded, and where preview text\n" +
+			"will come from.",
+		Args: cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if fix {
+				return runSetup(true)
+			}
+			return runDoctor()
+		},
 	}
+	cmd.Flags().BoolVarP(&fix, "fix", "f", false, "run the setup flow to repair what the checks found")
+	return cmd
+}
 
+func newSetupCmd() *cobra.Command {
+	var force bool
+	cmd := &cobra.Command{
+		Use:     "setup",
+		Aliases: []string{"install"},
+		Short:   "one-shot setup (creates config, downloads the models it names)",
+		Long: "Make the current config fully runnable: scaffold config.toml if it is\n" +
+			"missing, install missing runtime tools, and download every model the\n" +
+			"config names — the main model and the preview companion.\n\n" +
+			"It is idempotent: a second run downloads nothing and exits zero, and it is\n" +
+			"the right command to re-run after editing `model` or `preview.source`.",
+		Args: cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runSetup(force)
+		},
+	}
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "re-scaffold the config and re-download the models")
+	return cmd
+}
+
+func runDoctor() error {
 	fmt.Println("mavor doctor — system and environment verification")
 	fmt.Println("==================================================")
 
@@ -70,14 +109,7 @@ func runDoctor(args []string) error {
 	return nil
 }
 
-func runSetup(args []string) error {
-	force := false
-	for _, a := range args {
-		if a == "--force" || a == "-f" {
-			force = true
-		}
-	}
-
+func runSetup(force bool) error {
 	fmt.Println("mavor setup — automated first-run configuration & model install")
 	fmt.Println("================================================================")
 

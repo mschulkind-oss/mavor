@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/spf13/cobra"
+
 	"archive/tar"
 	"compress/bzip2"
 	"compress/gzip"
@@ -19,56 +21,59 @@ import (
 	"github.com/mschulkind-oss/mavor/internal/speech"
 )
 
-func runModels(args []string) error {
-	if len(args) == 0 {
-		return runModelsList(false, false, false)
+func newModelsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "models",
+		Short: "download or view cached voice models",
+		Args:  cobra.NoArgs,
+		// Bare `mavor models` lists the catalog, as it did before.
+		RunE: func(_ *cobra.Command, _ []string) error { return runModelsList(false, false, false) },
 	}
-	switch args[0] {
-	case "pull":
-		if len(args) < 2 {
-			return fmt.Errorf("usage: mavor models pull <name>\n\n%s", models.Summary())
-		}
-		return pullModel(args[1])
-	case "list", "ls":
-		installedOnly, verbose, asJSON := false, false, false
-		for _, a := range args[1:] {
-			switch a {
-			case "--installed", "-i":
-				installedOnly = true
-			case "--verbose", "-v":
-				verbose = true
-			case "--json":
-				asJSON = true
-			default:
-				return fmt.Errorf("unknown flag for 'mavor models list': %s", a)
+
+	var installedOnly, verbose, asJSON bool
+	listCmd := &cobra.Command{
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "list every model mavor can download, marking what is cached",
+		Long: "List every model mavor can download, with sizes, languages, and which\n" +
+			"of them are already in the cache.",
+		Args: cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if asJSON && verbose {
+				return errors.New("--json and --verbose are different renderings of the same data; pick one")
 			}
-		}
-		if asJSON && verbose {
-			return errors.New("--json and --verbose are different renderings of the same data; pick one")
-		}
-		return runModelsList(installedOnly, verbose, asJSON)
-	case "help", "-h", "--help":
-		fmt.Printf(`usage: mavor models <command>
-
-commands:
-  list, ls            list every model mavor can download, with sizes, languages,
-                      and which of them are already in the cache
-      --installed,-i  restrict the listing to models already downloaded
-      --verbose,-v    one block per model: speed, vocabulary biasing, GPU
-      --json          the same catalog as JSON, for scripts and benchmarks
-  pull <name>         download a model into the cache
-
-%s
-Examples:
-  mavor models list
-  mavor models list --installed
-  mavor models pull whisper-base.en
-  mavor models pull fastconformer-streaming
-`, models.Summary())
-		return nil
-	default:
-		return fmt.Errorf("unknown models command: %s (try 'mavor models help')", args[0])
+			return runModelsList(installedOnly, verbose, asJSON)
+		},
 	}
+	listCmd.Flags().BoolVarP(&installedOnly, "installed", "i", false, "restrict the listing to models already downloaded")
+	listCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "one block per model: speed, vocabulary biasing, GPU")
+	listCmd.Flags().BoolVar(&asJSON, "json", false, "the same catalog as JSON, for scripts and benchmarks")
+
+	pullCmd := &cobra.Command{
+		Use:   "pull <name>",
+		Short: "download a model into the cache",
+		Long:  "Download a model into the cache.\n\n" + models.Summary(),
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return pullModel(args[0])
+		},
+		ValidArgsFunction: completeModelNames,
+	}
+
+	cmd.AddCommand(listCmd, pullCmd)
+	return cmd
+}
+
+// completeModelNames offers catalog names to the shell completer, so
+// `mavor models pull <TAB>` no longer requires reading `models list` first.
+func completeModelNames(_ *cobra.Command, _ []string, prefix string) ([]string, cobra.ShellCompDirective) {
+	var out []string
+	for _, m := range models.Catalog {
+		if strings.HasPrefix(m.Name, prefix) {
+			out = append(out, m.Name)
+		}
+	}
+	return out, cobra.ShellCompDirectiveNoFileComp
 }
 
 func pullModel(name string) error {

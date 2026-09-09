@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/mschulkind-oss/mavor/internal/audio"
 	"github.com/mschulkind-oss/mavor/internal/config"
 	"github.com/mschulkind-oss/mavor/internal/daemon"
@@ -25,45 +27,7 @@ import (
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		usage(os.Stderr)
-		os.Exit(2)
-	}
-	args := os.Args[2:]
-	switch os.Args[1] {
-	case "setup", "install":
-		exit(runSetup(args))
-	case "doctor":
-		exit(runDoctor(args))
-	case "daemon":
-		exit(runDaemon(args))
-	case "toggle":
-		exit(runToggle())
-	case "start":
-		exit(runStart())
-	case "stop":
-		exit(runStop())
-	case "status":
-		exit(runStatus())
-	case "config":
-		exit(runConfig(args))
-	case "service":
-		exit(runService(args))
-	case "models":
-		exit(runModels(args))
-	case "logs":
-		exit(runLogs(args))
-	case "history":
-		exit(runHistory(os.Args[2:]))
-	case "version", "-v", "--version":
-		exit(runVersion())
-	case "-h", "--help", "help":
-		usage(os.Stdout)
-	default:
-		fmt.Fprintf(os.Stderr, "unknown subcommand %q\n\n", os.Args[1])
-		usage(os.Stderr)
-		os.Exit(2)
-	}
+	exit(newRootCmd().Execute())
 }
 
 // transcriptStore returns the transcript history log, or nil if its location
@@ -77,68 +41,63 @@ func transcriptStore(logger *slog.Logger) daemon.TranscriptRecorder {
 	return store
 }
 
-func usage(w io.Writer) {
-	fmt.Fprintln(w, `mavor — low-latency voice dictation for Wayland
-
-usage: mavor <command> [args]
-
-First-Run & Setup:
-  setup [--force]                       one-shot setup (creates config, downloads default model)
-  doctor [--fix]                        validate environment or auto-fix missing setup
-
-Core Commands:
-  daemon [--verbose] [--log-file PATH]  run the long-lived voice dictation daemon
-  toggle                                start recording or stop+transcribe (toggle mode)
-  start                                 start voice capture (push-to-talk key press)
-  stop                                  stop recording and transcribe (push-to-talk key release)
-  status                                print the daemon's current state (idle/recording/transcribing)
-  logs [-f|--follow] [-n <lines>]       view or stream real-time daemon logs
-  history [-n N] [--json] [--copy]      list past transcripts, newest first, or recover one
-
-Environment & Service Management:
-  config [init|show|path]               initialize or inspect ~/.config/mavor/config.toml
-  service [install|start|status|stop]   manage systemd user service (~/.config/systemd/user/mavor.service)
-  models [pull <name>|list]             download or view cached voice models
-  version                               show version and build tags
-  help                                  show this help message
-
-Keybinding example (sway; adapt for your compositor):
-  exec mavor daemon
-  bindsym $mod+grave exec mavor toggle`)
+func newDaemonCmd() *cobra.Command {
+	var (
+		verbose bool
+		logFile string
+	)
+	cmd := &cobra.Command{
+		Use:   "daemon",
+		Short: "run the long-lived dictation service",
+		Long: "Run the long-lived dictation service.\n\n" +
+			"Config is read once at start and never reloaded: a change needs a restart.",
+		Args: cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runDaemon(verbose, logFile)
+		},
+	}
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "log at debug level")
+	cmd.Flags().StringVar(&logFile, "log-file", "", "write the daemon log here instead of the configured path")
+	return cmd
 }
 
-// exitUpgraded is what `mavor daemon` returns when it stepped aside for a
-// newly installed binary. It is deliberately a failure code: that is what
-// makes the unit's Restart=on-failure start the new version, and EX_TEMPFAIL
-// is the closest thing sysexits.h has to "nothing is wrong, try again".
-const exitUpgraded = 75
-
-func exit(err error) {
-	if err == nil {
-		return
+func newToggleCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "toggle",
+		Short: "toggle recording on or off",
+		Args:  cobra.NoArgs,
+		RunE:  func(_ *cobra.Command, _ []string) error { return runToggle() },
 	}
-	fmt.Fprintln(os.Stderr, err)
-	if errors.Is(err, daemon.ErrBinaryReplaced) {
-		os.Exit(exitUpgraded)
-	}
-	os.Exit(1)
 }
 
-func runDaemon(args []string) error {
-	verbose := false
-	logFile := ""
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "-v" || a == "--verbose":
-			verbose = true
-		case a == "--log-file" && i+1 < len(args):
-			logFile = args[i+1]
-			i++
-		case strings.HasPrefix(a, "--log-file="):
-			logFile = strings.TrimPrefix(a, "--log-file=")
-		}
+func newStartCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "start",
+		Short: "begin recording (push-to-talk: bind to key press)",
+		Args:  cobra.NoArgs,
+		RunE:  func(_ *cobra.Command, _ []string) error { return runStart() },
 	}
+}
+
+func newStopCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "stop",
+		Short: "end recording and transcribe (push-to-talk: bind to key release)",
+		Args:  cobra.NoArgs,
+		RunE:  func(_ *cobra.Command, _ []string) error { return runStop() },
+	}
+}
+
+func newStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "print the daemon state (idle, recording, transcribing)",
+		Args:  cobra.NoArgs,
+		RunE:  func(_ *cobra.Command, _ []string) error { return runStatus() },
+	}
+}
+
+func runDaemon(verbose bool, logFile string) error {
 	// A systemd user service may start before the compositor has exported
 	// WAYLAND_DISPLAY into the environment it inherited, so recover it from
 	// the socket on disk. The .lock file sits beside the socket and sorts

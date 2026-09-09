@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/spf13/cobra"
+
 	"fmt"
 	"os"
 	"os/exec"
@@ -27,46 +29,58 @@ PassEnvironment=WAYLAND_DISPLAY XDG_CURRENT_DESKTOP
 WantedBy=graphical-session.target
 `
 
-func runService(args []string) error {
-	if len(args) == 0 {
-		return runServiceStatus()
+func newServiceCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "service",
+		Short: "manage the systemd user service (mavor.service)",
+		Args:  cobra.NoArgs,
+		// Bare `mavor service` reports status, as it did before.
+		RunE: func(_ *cobra.Command, _ []string) error { return runServiceStatus() },
 	}
-	switch args[0] {
-	case "install":
-		start := false
-		for _, a := range args[1:] {
-			if a == "--start" || a == "-s" {
-				start = true
-			}
-		}
-		return runServiceInstall(start)
-	case "status":
-		return runServiceStatus()
-	case "start":
-		return runServiceAction("start")
-	case "stop":
-		return runServiceAction("stop")
-	case "restart":
-		return runServiceAction("restart")
-	case "uninstall":
-		return runServiceUninstall()
-	case "show":
-		return runServiceShow()
-	case "help", "-h", "--help":
-		fmt.Println(`usage: mavor service <command>
 
-commands:
-  install [--start]   install and enable systemd user service (~/.config/systemd/user/mavor.service)
-  status              show systemd user service status
-  start               start the mavor background service
-  stop                stop the mavor background service
-  restart             restart the mavor background service
-  uninstall           disable and remove the systemd user service
-  show                print the systemd service unit template`)
-		return nil
-	default:
-		return fmt.Errorf("unknown service command: %s (try 'mavor service help')", args[0])
+	var start bool
+	installCmd := &cobra.Command{
+		Use:   "install",
+		Short: "install and enable the systemd user service",
+		Args:  cobra.NoArgs,
+		RunE:  func(_ *cobra.Command, _ []string) error { return runServiceInstall(start) },
 	}
+	installCmd.Flags().BoolVarP(&start, "start", "s", false, "start the service once it is installed")
+
+	action := func(use, short, verb string) *cobra.Command {
+		return &cobra.Command{
+			Use:   use,
+			Short: short,
+			Args:  cobra.NoArgs,
+			RunE:  func(_ *cobra.Command, _ []string) error { return runServiceAction(verb) },
+		}
+	}
+
+	cmd.AddCommand(
+		installCmd,
+		&cobra.Command{
+			Use:   "status",
+			Short: "show systemd user service status",
+			Args:  cobra.NoArgs,
+			RunE:  func(_ *cobra.Command, _ []string) error { return runServiceStatus() },
+		},
+		action("start", "start the mavor background service", "start"),
+		action("stop", "stop the mavor background service", "stop"),
+		action("restart", "restart the mavor background service", "restart"),
+		&cobra.Command{
+			Use:   "uninstall",
+			Short: "disable and remove the systemd user service",
+			Args:  cobra.NoArgs,
+			RunE:  func(_ *cobra.Command, _ []string) error { return runServiceUninstall() },
+		},
+		&cobra.Command{
+			Use:   "show",
+			Short: "print the systemd service unit template",
+			Args:  cobra.NoArgs,
+			RunE:  func(_ *cobra.Command, _ []string) error { return runServiceShow() },
+		},
+	)
+	return cmd
 }
 
 func getServicePath() string {
