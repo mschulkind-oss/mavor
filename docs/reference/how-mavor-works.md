@@ -201,6 +201,7 @@ sequenceDiagram
     D->>S: Transcribe(ctx, wav)
     S-->>D: text
     D->>D: strip non-speech markers — a marker-only transcript ends the cycle here
+    D->>D: flatten to one line (output.CleanText)
     D->>D: append to history log
     D->>O: Emit — wtype, then wl-copy
     D->>M: Apply(EventTranscribeDone)
@@ -415,6 +416,7 @@ Every row was traced through the code.
 | VAD finds no speech | `EventTranscribeDone` without calling the transcriber | Pill vanishes, nothing typed |
 | The transcriber errors | `reportError` → `Idle` | The error pill |
 | Whisper decodes near-silence to `[BLANK_AUDIO]` or `(machine whirring)` | `speech.StripNonSpeech` cuts the annotation; what is left is empty, so this becomes the empty-transcript row | Pill vanishes, nothing typed |
+| A dictation longer than ~30s | whisper-cli writes one line per window; `output.CleanText` joins them before the transcript is recorded or typed | One flowing line, and `mavor history` recovers the same string that was typed |
 | Empty transcript | Logged at Warn, `Emit` never called | Pill vanishes, nothing typed |
 | `wtype` fails | `wl-copy` still runs; the joined error is logged at Warn and the cycle completes | Nothing typed — **but the text is on the clipboard and in the history log** |
 | Both `wtype` and `wl-copy` fail | Identical to the above from the FSM's side | Nothing typed; recover with `mavor history --copy` |

@@ -272,3 +272,19 @@ func TestHistoryListingKeepsTimestampsByDefault(t *testing.T) {
 		t.Errorf("--timestamps=false still printed a timestamp:\n%s", out)
 	}
 }
+
+// Logs written before transcripts were flattened still hold whisper's line
+// breaks, so recovery flattens what it copies rather than pasting a shape the
+// user never dictated and could not have typed.
+func TestHistoryCopyFlattensStoredLineBreaks(t *testing.T) {
+	seedHistory(t, "first window of speech.\nsecond window of speech.")
+	got := capturePicked(t)
+
+	if err := execCLIErr(t, "history", "copy"); err != nil {
+		t.Fatalf("mavor history copy: %v", err)
+	}
+	const want = "first window of speech. second window of speech."
+	if *got != want {
+		t.Errorf("copied %q, want %q", *got, want)
+	}
+}

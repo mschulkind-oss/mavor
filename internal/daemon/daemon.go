@@ -700,6 +700,13 @@ func (d *Daemon) runTranscription(ctx context.Context) {
 		text = stripped
 	}
 
+	// Flatten before the empty check, and before recording, so the log holds
+	// exactly the string that gets typed. whisper-cli writes one line per ~30
+	// second window, so any dictation longer than that is multi-line; Emit
+	// already flattens it, and a history entry that still carried the breaks
+	// pasted line endings the user never dictated when it was recovered.
+	text = output.CleanText(text)
+
 	if text == "" {
 		d.logger.Warn("pipeline: empty transcript — skipping emit (whisper found no speech?)")
 		d.machine.Apply(state.EventTranscribeDone)

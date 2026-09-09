@@ -777,3 +777,37 @@ func TestNonSpeechMarkerIsStrippedFromRealSpeech(t *testing.T) {
 		t.Errorf("history = %v, want one entry %q", got, want)
 	}
 }
+
+// whisper-cli writes one line per ~30 second window, so any dictation longer
+// than that arrives as a multi-line transcript. Emit flattens it before typing,
+// which left the history log holding a shape that was never typed — and
+// recovering it pasted line breaks the user never dictated.
+func TestHistoryRecordsTheTextThatWasTyped(t *testing.T) {
+	dir := t.TempDir()
+	store := &history.Store{Path: filepath.Join(dir, "history.jsonl")}
+	out := &output.Mock{}
+	d, sock := newTestDaemon(t, func(c *Config) {
+		c.History = store
+		c.Output = out
+		c.Transcriber = &speech.Mock{Text: "first window of speech.\nsecond window of speech."}
+	})
+	stop := runDaemon(t, d)
+	defer stop()
+
+	sendWithRetry(t, sock, "toggle")
+	waitForState(t, sock, "recording")
+	sendWithRetry(t, sock, "toggle")
+	waitForState(t, sock, "idle")
+
+	const want = "first window of speech. second window of speech."
+	got, err := store.Recent(0)
+	if err != nil {
+		t.Fatalf("Recent: %v", err)
+	}
+	if len(got) != 1 || got[0].Text != want {
+		t.Fatalf("history = %q, want the flattened transcript %q", got, want)
+	}
+	if calls := out.Calls(); len(calls) != 1 || calls[0] != want {
+		t.Errorf("typed %q, want %q — history and output must agree", calls, want)
+	}
+}

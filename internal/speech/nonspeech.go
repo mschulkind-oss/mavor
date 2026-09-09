@@ -21,14 +21,18 @@ var nonSpeechSpan = regexp.MustCompile(`\[[^\]]*\]|\([^)]*\)|\*[^*]*\*`)
 // punctuation, so "hello (typing), world" does not become "hello , world".
 var spaceBeforePunct = regexp.MustCompile(`[ \t]+([,.!?;:])`)
 
-// horizontalRun matches a run of spaces or tabs — but never a newline, so a
-// multi-segment transcript keeps its lines instead of being reflowed.
+// horizontalRun matches a run of spaces or tabs — but never a newline. Whether
+// a multi-segment transcript keeps its lines is not this function's call: the
+// daemon flattens the final transcript with output.CleanText a step later, and
+// the preview paints one line at a time. Stripping a marker must not decide it.
 var horizontalRun = regexp.MustCompile(`[ \t]+`)
 
 // StripNonSpeech removes non-speech annotations from a transcript and tidies
 // the whitespace their removal leaves behind. A transcript that was nothing but
 // annotations comes back empty, which the daemon already treats as "say
 // nothing" — that is the whole point of the empty check it feeds.
+//
+// Line structure is left alone — see horizontalRun.
 //
 // The cut is deliberately blunt: every bracketed, parenthesised or asterisked
 // span goes, wherever it sits. A dictated parenthetical is collateral, and that

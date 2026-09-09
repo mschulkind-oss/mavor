@@ -192,7 +192,10 @@ func runHistoryCopy(msg io.Writer, index int) error {
 	if index < 0 || index >= len(entries) {
 		return fmt.Errorf("no history entry at index %d (have %d)", index, len(entries))
 	}
-	text := entries[index].Text
+	// Entries written before transcripts were flattened still carry whisper's
+	// per-window line breaks. Recovery pastes what would have been typed, and
+	// typing never produced those breaks.
+	text := output.CleanText(entries[index].Text)
 	if err := clipboardCopy(text); err != nil {
 		return fmt.Errorf("copy to clipboard: %w", err)
 	}
