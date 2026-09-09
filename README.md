@@ -167,6 +167,48 @@ have reserved. `overlay.top_margin` is therefore a gap below Waybar, not an
 offset from the screen edge — a bar of any height, or no bar at all, works
 without configuring anything.
 
+### Recovering a transcript
+
+Synthetic typing can be swallowed by a window that lost focus or an app that was
+still starting, and the transcript goes with it. Every completed transcription is
+appended to a log first, so it is always recoverable.
+
+`mavor history --pick` is the whole recovery round trip in one command: it renders
+the log, hands it to a picker, and copies whatever you chose to the clipboard.
+Bind it to a key:
+
+```
+# ~/.config/sway/config
+bindsym $mod+shift+grave exec mavor history --pick
+```
+
+Any dmenu-compatible picker works — rofi, wofi, fuzzel, dmenu, fzf — because the
+contract is only "read rows on stdin, echo the chosen one to stdout". It defaults
+to `rofi -dmenu`; set `$MAVOR_PICKER` once in your profile, or pass `--picker`:
+
+```bash
+export MAVOR_PICKER='fuzzel --dmenu'
+mavor history --pick --picker 'wofi --dmenu'
+```
+
+Selection is resolved by the index in each row's first column, not by the text,
+so a picker that truncates or reformats what it displays still recovers the right
+transcript.
+
+Without a picker, the log is an ordinary listing you can pipe anywhere:
+
+```bash
+mavor history                     # 20 newest, timestamped
+mavor history -n0 --no-timestamps # all of them, text only
+mavor history --number            # prefixed with the index `history copy` takes
+mavor history --json              # JSON Lines, for scripts
+mavor history copy                # copy the newest — the one that just vanished
+mavor history copy 3              # copy a specific entry
+```
+
+Each transcript is flattened to exactly one row, so a multi-line transcription
+stays one selectable entry.
+
 ## Systemd User Service
 
 Alternatively, run the daemon as a systemd user unit that starts automatically with your graphical session:

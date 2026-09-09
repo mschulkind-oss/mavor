@@ -175,7 +175,16 @@ Two build tags remain, and both are test-only:
 - `mavor config init` — Scaffold default `~/.config/mavor/config.toml`.
 - `mavor config show` — Print active resolved configuration.
 - `mavor service install [--start]` — Install and enable systemd user service (`mavor.service`).
-- `mavor history [-n N] [--json] [--copy]` — List past transcripts (newest first) or recover one to the clipboard.
+- `mavor history [-n N] [--number] [--no-timestamps] [--json] [--null]` — List
+  past transcripts, newest first, one row each. `mavor history --pick` does the
+  whole recovery round trip in one command — render, run a picker, copy the
+  choice — and is the form to bind to a key; it works with any dmenu-compatible
+  picker (rofi, wofi, fuzzel, dmenu, fzf), defaulting to `rofi -dmenu` and
+  honouring `$MAVOR_PICKER`. `mavor history copy [index]` copies one entry
+  without a picker, defaulting to the newest. The index is the number
+  `--number` prints, and it — not the visible text — is what resolves a
+  selection, so a picker that truncates or reformats rows still recovers the
+  right transcript.
 - `mavor models pull <name>` — Download a Whisper GGML or sherpa-onnx model
   into the cache. `<name>` is a catalog name, and **every catalog name now
   begins with its model family**: `whisper-base.en`, not `base.en`. The old

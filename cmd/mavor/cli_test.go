@@ -102,7 +102,7 @@ func TestSubcommandHelpNamesItsOwnFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mavor history --help: %v", err)
 	}
-	for _, want := range []string{"--limit", "--copy", "--index", "--no-timestamps", "--json"} {
+	for _, want := range []string{"--limit", "--pick", "--picker", "--number", "--no-timestamps", "--json"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("history help missing %q", want)
 		}
