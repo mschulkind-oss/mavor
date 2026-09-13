@@ -1,7 +1,7 @@
 ---
 title: "Ongoing Work: mavor Roadmap"
 author: "Matthew Schulkind"
-date: 2026-09-05
+date: 2026-09-13
 status: in-review
 tags: [roadmap, benchmarks, doctor, models, gpu, sherpa, whisper, release]
 summary: "Living roadmap for the mavor dictation daemon: open decisions, the ready-to-build queue, and active workstreams across benchmarking, diagnostics, and the first public release."
@@ -9,7 +9,7 @@ summary: "Living roadmap for the mavor dictation daemon: open decisions, the rea
 
 # Ongoing Work: `mavor` Voice-to-Text Utility
 
-**Status:** 2 Needs Attention (💬), 4 Ready to Implement (📦), 6 Open Threads (🏗️ 1, 🔒 1, 🛑 1, 🧊 3)
+**Status:** 2 Needs Attention (💬), 7 Ready to Implement (📦), 6 Open Threads (🏗️ 1, 🔒 1, 🛑 1, 🧊 3)
 
 ---
 
@@ -113,8 +113,10 @@ Ordered by what unblocks other work first, then by cost.
 
 ### ✅ 1. All 24 models load (was: ten could not)
 
-The catalog is 25 entries now — `zipformer-streaming-20m` joined it as the
-preview companion (item 7) and has not been through a benchmark run yet.
+The catalog is 31 entries now. `zipformer-streaming-20m` joined it as the
+preview companion (item 7), `fastconformer-streaming` took that slot from it
+(`08ce3e3`), and six more arrived on 2026-09-13 — none of those seven has been
+through a benchmark run. Items 1d and 1e below are what that leaves open.
 
 Fixed. The catalog-wide benchmark
 ([`model-benchmarks.md`](reports/model-benchmarks.md)) now reports **48
@@ -210,6 +212,74 @@ capitalisation 1.00** — the same formatting quality as `base.en` — in 457 MB
 and 4.4 s. It is the only model in the catalog that combines large-model
 accuracy with usable formatting, and it is a candidate for the accurate
 preset that `large-v3` currently cannot fill.
+
+### 📦 1d. Nothing compares the catalog against upstream
+
+Six models were added on 2026-09-13, and the exports four of them come from had
+been sitting upstream for months: sherpa-onnx published the Cohere Transcribe
+export on 2026-04-01 and the Nemotron 3.5 streaming export on 2026-06-11, while
+[`internal/models/catalog.go`](../internal/models/catalog.go) was last extended
+on 2026-09-05 and picked up neither. The defect is not the missing rows. It is
+that nobody could have known they were missing: the catalog is hand-maintained,
+and no step in CI or in the `just` recipes ever asks upstream what it has.
+
+**What would fix it:** a check that lists what the `asr-models` release of
+`k2-fsa/sherpa-onnx` holds and the catalog does not. The data is one request
+away — `gh api repos/k2-fsa/sherpa-onnx/releases/tags/asr-models` returns every
+asset with its name and byte size — and every sherpa entry already records the
+asset URL it downloads, so this is a set subtraction on filenames rather than a
+scrape.
+
+Three things it has to get right to be worth running:
+
+- **It is a development check, never a daemon one.** The only outbound request
+  in the program is `mavor models pull`, and that property is worth more than
+  this check is. So: a `just` recipe, or a test that skips when the network is
+  absent, in the shape the live OSC test already uses.
+- **It has to be quiet.** That release carries roughly 500 assets against the
+  catalog's twenty sherpa entries, so a raw diff is 480 rows nobody reads.
+  Filter to assets published since the catalog was last extended, and keep a
+  checked-in ignore list for what was deliberately passed over — the fp16
+  variants, the single-language exports, and the streaming chunk tiers
+  [`choosing-a-model.md`](choosing-a-model.md#the-chunk-sizes-the-catalog-does-not-carry)
+  names as an intentional omission.
+- **It covers half the catalog.** Whisper GGML models come from a Hugging Face
+  repository, not from that release. Leaving the eleven whisper entries out is
+  defensible — they change about as often as Whisper does — but the check
+  should say it is a sherpa check rather than implying coverage it does not
+  have.
+
+### 📦 1e. The default preview companion has not been re-measured
+
+[`speech.DefaultCompanionModel`](../internal/speech/companion.go) is
+`fastconformer-streaming`, and the doc comment on that constant records the
+measurement that put it there. Against `zipformer-streaming-20m`, same fixture,
+same 30 ms chunks, same decode loop: first output at 1.53 s against 1.68 s and,
+the part that actually decided it, the FastConformer got the opening words and
+returned them in lower case where the zipformer lost them and shouted.
+
+That comparison had two candidates because the catalog had two candidates. It
+now has more. `nemotron-streaming-en-80ms` (442 MB) and
+`parakeet-unified-en-streaming-240ms` (478 MB) are the same size class as the
+429 MB incumbent, both decode incrementally, and **neither has been compared
+against it for anything**. This is not a claim that either is better. It is
+that the slot was settled by a two-way test that is now out of date.
+
+**Next step:** rerun that comparison with the new entries in it. The criteria
+are the companion's rather than `just bench`'s — time to first output, whether
+the opening words survive, and whether the partials are cased and punctuated
+like the final transcript they sit in front of, because a preview that
+disagrees with the text that lands reads as a bug. Measuring and then leaving
+the default alone is a result too.
+
+**Until that runs, note that the docs disagree with the code.** `08ce3e3`
+changed the default companion and updated none of the prose;
+[`choosing-a-model.md`](choosing-a-model.md), [`user-guide.md`](user-guide.md)
+and [`../README.md`](../README.md) were corrected on 2026-09-13, and
+[`quickstart.md`](quickstart.md),
+[`reference/how-mavor-works.md`](reference/how-mavor-works.md) and
+[`planning/dictation-workflows.md`](planning/dictation-workflows.md) still name
+`zipformer-streaming-20m` as what `preview.source = "auto"` loads.
 
 ### 📦 2. `mavor doctor` — the checks it still does not do
 
@@ -348,6 +418,39 @@ preview resolution rule and the vocabulary mapping belong in
 first pass of all three — and then be deleted, the same lifecycle item 6
 describes. Until that happens the design doc is the only statement of the
 `[advanced]` semantics, so do not delete it early.
+
+### 📦 8. No language selection, for the models that could use one
+
+`nemotron-streaming-multi-560ms` is multilingual and mavor cannot tell it which
+language you are speaking. Upstream exposes a `prompt_index` input on that
+model's encoder for exactly this, chosen per stream; nothing in mavor's
+configuration reaches it, so the model runs in its own auto-detect mode and
+cannot be pinned.
+
+That model is where the gap becomes visible rather than where it starts.
+**mavor has no language key at all**, and every place a sherpa recognizer needs
+a language today gets a literal in
+[`internal/speech/sherpa.go`](../internal/speech/sherpa.go): Cohere Transcribe
+is built with `"en"` (sherpa-onnx refuses to load it without one, and it was
+trained on fourteen languages), Canary with an `"en"` source and target
+language (the catalog advertises `canary-180m` as en/es/de/fr and `canary-1b`
+as 25 languages), and SenseVoice with `"auto"`. Three of the catalog's
+multilingual models are therefore pinned to English by a constant, and a fourth
+guesses — which makes this a correctness problem for models mavor already
+recommends, not only a missing feature on a model just added.
+
+**What it costs:** one key, and a decision about where it lives. A top-level
+`language` beside `model` reads best, because the language is a property of the
+person speaking rather than of the runtime — but the key has to degrade
+honestly, since most of the catalog takes no such setting and a key that
+silently does nothing on `whisper-base.en` is worse than no key. `mavor doctor`
+is the precedent for saying so: it already reports whether the `[vocabulary]`
+table can reach the configured model, and where the language went belongs on
+the same page.
+
+**Open first:** whether the Go binding surfaces `prompt_index` at all. The
+Cohere and Canary halves are reachable today — they are struct fields with
+constants in them — so those could land without waiting for the answer.
 
 ---
 

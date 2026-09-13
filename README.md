@@ -302,7 +302,7 @@ SIZE is the download; sherpa archives expand to roughly twice that on disk.
 Download one with `mavor models pull <name>`.
 ```
 
-That is seven of twenty-five rows; `mavor models list` prints them all.
+That is seven of thirty-one rows; `mavor models list` prints them all.
 
 - **Every name carries its model family**, and there are no aliases — one name
   per model. `whisper-base.en`, not `base.en`; a name that is not in the
@@ -319,7 +319,7 @@ mavor models list --installed              # only what is downloaded
 mavor models list --verbose                # a block per model, with the detail below
 mavor models pull whisper-base.en          # production default
 mavor models pull whisper-tiny.en          # smallest; what the test suite uses
-mavor models pull zipformer-streaming-20m  # the live-preview companion
+mavor models pull fastconformer-streaming  # the live-preview companion
 ```
 
 `--verbose` adds the properties that do not fit a column:

@@ -1,17 +1,17 @@
 ---
 title: "Choosing a Model"
 author: "Matthew Schulkind"
-date: 2026-09-05
+date: 2026-09-13
 status: accepted
 tags: [models, whisper, sherpa, gpu, accuracy, latency, guide]
-summary: "Which of mavor's 25 models to actually use, decided from measurements rather than reputation — including why the largest Whisper models are the wrong choice for dictation."
+summary: "Which of mavor's 31 models to actually use, decided from measurements rather than reputation — including why the largest Whisper models are the wrong choice for dictation, and which six models nothing has measured yet."
 vantage:
   status-chip: true
 ---
 
 # Choosing a Model
 
-`mavor` ships a catalog of 25 models. This page says which one to use and
+`mavor` ships a catalog of 31 models. This page says which one to use and
 why, from measurements rather than reputation. The measurements themselves,
 with the machine they came from and the method, are in
 [`model-benchmarks.md`](./reports/model-benchmarks.md); rerun them on your own
@@ -43,8 +43,13 @@ where that runtime runs. `mavor doctor` prints what it chose.
 | **The lightest thing that works** | `whisper-tiny.en` | 1.0 s, 196 MB, and still fully punctuated and capitalised. |
 | **Languages other than English** | `parakeet-tdt-0.6b` | 25 languages, clean formatting. Costs 1.6 GB of RAM. |
 | **A non-English model that stays small** | `canary-180m` | English, Spanish, German, French in 457 MB, formatting as good as `whisper-base.en`. |
-| **Words appearing while you speak** | `whisper-base.en`, unchanged | The `zipformer-streaming-20m` companion paints the overlay live; your typed text still comes from `model`. [Below](#you-do-not-have-to-choose-zipformer-streaming-20m). |
+| **Words appearing while you speak** | `whisper-base.en`, unchanged | The preview companion paints the overlay live; your typed text still comes from `model`. [Below](#you-do-not-have-to-choose-the-preview-companion). |
 | **Maximum accuracy** | `whisper-base.en`, still | See below — the large models do not deliver this. |
+
+Six models joined the catalog on 2026-09-13 and are in none of the tables
+on this page, because nothing has measured them yet — what they are, and why
+you might try one anyway, is
+[at the bottom](#the-six-models-nothing-has-measured-yet).
 
 Set it in `~/.config/mavor/config.toml`. One key, whichever family you pick:
 
@@ -141,9 +146,13 @@ count to set.
 
 ## Streaming: text while you speak
 
-Three catalog models decode incrementally rather than waiting for you to stop
-— `zipformer-streaming`, `zipformer-streaming-20m` and
-`fastconformer-streaming`. Two of them have been benchmarked as a main model:
+Seven catalog models decode incrementally rather than waiting for you to
+stop. Three are long-standing — `zipformer-streaming`,
+`zipformer-streaming-20m` and `fastconformer-streaming` — and four arrived on
+2026-09-13 and are covered [below](#the-six-models-nothing-has-measured-yet)
+rather than here, because none of them has a number yet.
+
+Two of the three have been benchmarked as a main model:
 
 | Model | First token | Total | Accuracy (WER) |
 |---|---:|---:|---:|
@@ -162,26 +171,27 @@ want correct text, a batch model is the better trade.
 `zipformer-streaming`, so despite its reputation there is currently no
 configuration in which it is the right pick as your main model.
 
-### You do not have to choose: `zipformer-streaming-20m`
+### You do not have to choose: the preview companion
 
 Picking a streaming model as `model` means accepting its accuracy for the text
 you keep. You rarely need to, because mavor can run a small streaming model
-*alongside* your main model purely to paint the overlay while you speak — the
-**preview companion**, and the reason `zipformer-streaming-20m` is in the
-catalog.
-
-It is the 20-million-parameter streaming zipformer: a 122 MB download, small
-enough to keep up on a core or so while `whisper-base.en` does the real work.
-It is what `preview.source = "auto"` loads by default, `mavor setup` pulls it
-alongside your main model, and **it never contributes a word to the final
+*alongside* your main model purely to paint the overlay while you speak. That
+second model is the **preview companion**: it is fed the same audio, emits
+partial text continuously, and **never contributes a word to the final
 transcript** — the text that gets typed is always `model`'s, produced once,
 when you release the key.
 
+`preview.source = "auto"` loads `fastconformer-streaming`, a 429 MB download,
+and `mavor setup` pulls it alongside your main model. It replaced
+`zipformer-streaming-20m` in that slot: on the same fixture the zipformer lost
+the opening words and returned upper case, which reads as a broken preview
+even when the typed text is perfect. `zipformer-streaming-20m` stays
+selectable by name at 122 MB for anyone who wants the smaller download, as
+does the 296 MB `zipformer-streaming`.
+
 So the streaming table above is about a trade you only make deliberately: for
 words on screen while you talk, keep a batch `model` and let the companion do
-it. The larger `zipformer-streaming` stays selectable as a companion for
-anyone who wants it, at 296 MB for a better preview of text that is thrown
-away.
+it.
 
 ## Sherpa models
 
@@ -210,6 +220,135 @@ The remaining catalogued sherpa models — `fastconformer-streaming`,
 something above at any job. `zipformer-streaming` and
 `zipformer-streaming-20m` are the exception to that judgement, and only as
 preview companions rather than as `model`.
+
+The table is every sherpa model the benchmark has run. The six added on
+2026-09-13 are absent from it because there is nothing to put in the columns
+yet; they are next.
+
+## The six models nothing has measured yet
+
+Six sherpa models joined the catalog on 2026-09-13. **None of them has been
+through `just bench`**, so there is no speed, memory or accuracy figure for any
+of them — not on this page, and not in
+[`model-benchmarks.md`](./reports/model-benchmarks.md). What follows is what
+they are and what they might be for, which is a different claim from how they
+scored.
+
+| Model | What it is | Download | Languages | Streams |
+|---|---|---:|---|---|
+| `parakeet-tdt-0.6b-v2` | NVIDIA Parakeet TDT 0.6B **v2**, INT8 | 460 MB | en | no |
+| `nemotron-streaming-en-80ms` | NVIDIA Nemotron Speech streaming 0.6B, 80 ms chunk, INT8 | 442 MB | en | yes |
+| `nemotron-streaming-en-560ms` | The same weights at a 560 ms chunk | 442 MB | en | yes |
+| `nemotron-streaming-multi-560ms` | NVIDIA Nemotron 3.5 ASR streaming 0.6B, 560 ms chunk, INT8 | 453 MB | multi (35) | yes |
+| `parakeet-unified-en-streaming-240ms` | The streaming export of `parakeet-unified-en`, 240 ms chunk | 478 MB | en | yes |
+| `cohere-transcribe` | Cohere Transcribe 03-2026, INT8 | 1.58 GB | multi (14) | no |
+
+Download sizes are the archive, as `mavor models list` prints them; a sherpa
+archive expands to roughly twice that on disk.
+
+### `parakeet-tdt-0.6b-v2`, beside the v3 that was already there
+
+`parakeet-tdt-0.6b` is the **v3** export: 25 European languages, and the
+multilingual recommendation at the top of this page. `parakeet-tdt-0.6b-v2` is
+the previous generation of the same model, and it is English-only.
+
+That sounds like a downgrade and is not necessarily one. NVIDIA reports v2
+ahead of v3 on English — a claim about the weights, made upstream, which this
+project has not tested against its own fixture. If you dictate only in
+English, v2 is the one of the pair worth a try; if you switch languages
+mid-sentence, v3 is the only one that can follow you.
+
+### The Nemotron models, and a new family in the listing
+
+The catalog records a **model family** for every entry — the lineage a set of
+weights comes from, which is what groups the names mavor offers you when you
+mistype one. Three of the six add a family that was not there before,
+`Nemotron`, alongside Whisper, NeMo, Moonshine, SenseVoice, Paraformer and
+Zipformer; `cohere-transcribe` adds a `Cohere` family of one.
+
+All three Nemotron entries decode incrementally, and what separates them is
+**chunk size**: the block of audio the recognizer takes in before it will emit
+anything. A short chunk puts words on screen sooner and gives the model less
+audio after each word to reconsider it with; a long chunk does the reverse.
+80 ms and 560 ms are the two ends the catalog carries, and *nothing here has
+measured what that trade costs in accuracy* — that is the whole reason both
+are in the catalog rather than one.
+
+- `nemotron-streaming-en-80ms` is the low-latency end, and the obvious
+  candidate to try as a [preview companion](#you-do-not-have-to-choose-the-preview-companion),
+  where latency is the point and the text is thrown away.
+- `nemotron-streaming-en-560ms` is the same weights waiting longer before it
+  commits, which is the sensible end to try first if you are picking a
+  streaming model as your actual `model`.
+- `nemotron-streaming-multi-560ms` is the multilingual Nemotron 3.5 export,
+  35 languages, and the only streaming model in the catalog that is not
+  English-only.
+
+> [!IMPORTANT]
+> **The Nemotron weights are not Apache-2.0.** NVIDIA licenses them under
+> OpenMDW-1.1, a model-weights licence rather than a software licence, where
+> the rest of the catalog is Apache-2.0. Nothing about running them locally
+> changes; if you redistribute the weights or ship them inside a product, read
+> that licence rather than assuming the catalog's usual terms.
+
+`nemotron-streaming-multi-560ms` also has a limitation mavor cannot currently
+work around. Upstream exposes a `prompt_index` input on the encoder, which is
+how you tell the model which language a stream is in. mavor has no
+configuration key that reaches it, so the model runs in its own auto-detect
+mode and there is no way to pin it to a language. The
+[roadmap](./roadmap.md#-8-no-language-selection-for-the-models-that-could-use-one)
+carries that as work to do.
+
+### `parakeet-unified-en-streaming-240ms`
+
+The same model as the catalog's `parakeet-unified-en`, exported for
+incremental decoding instead of one-shot. Picking between them is picking
+whether you want partial text at all: the non-streaming export sees the whole
+utterance before it answers, the streaming one answers as you go, at a 240 ms
+chunk. Neither has been benchmarked, so there is no accuracy gap here to quote
+— only the structural one that a model which has heard the whole sentence has
+more to work with than one that has heard 240 ms of it.
+
+### `cohere-transcribe` takes no vocabulary biasing
+
+Fourteen languages in 1.58 GB, the largest non-Whisper entry in the catalog,
+and the one that most directly competes with `parakeet-tdt-0.6b` for the
+multilingual slot once somebody measures them against each other.
+
+Thirteen of those fourteen are out of reach today, though, and that is mavor's
+doing rather than the model's: sherpa-onnx refuses to load Cohere Transcribe
+without being told which language to expect, and mavor has no configuration
+key that sets one, so it builds the recognizer with English. The same constant
+pins `canary-180m` and `canary-1b`, which the catalog advertises as
+multilingual. It is the same gap the multilingual Nemotron runs into from the
+other direction, and it is
+[on the roadmap](./roadmap.md#-8-no-language-selection-for-the-models-that-could-use-one).
+
+One property is decided by its architecture rather than by a measurement: it
+is an **attention encoder-decoder**, meaning the decoder attends over the whole
+encoded utterance to produce text — the same shape as Whisper, and not the
+frame-by-frame transducer decoding that sherpa-onnx implements hotword biasing
+inside. So the [`[vocabulary]`](./user-guide.md#74-vocabulary--words-the-model-gets-wrong)
+table reaches nothing on this model, exactly as it reaches nothing on the CTC,
+paraformer, moonshine and sensevoice entries, and `mavor doctor` says so rather
+than failing.
+
+### The chunk sizes the catalog does not carry
+
+Upstream publishes more of these than mavor lists. The English Nemotron export
+comes at 80, 160, 560 and 1120 ms; the multilingual Nemotron 3.5 export adds a
+320 ms tier to that set; the Parakeet Unified streaming export comes at 240,
+560 and 1120 ms. That is twelve exports, and the catalog carries four of them.
+
+This is deliberate. The catalog is a curated shortlist — every row is a row
+each user reads past — not a mirror of the upstream release. A tier it skips is
+still perfectly usable: download and unpack the archive into
+`paths.models/sherpa/<name>/` and set `model` to that directory name, which is
+[§8.4 of the user guide](./user-guide.md#84-installing-a-custom-sherpa-model).
+Two things you give up by doing that are named there, and one of them matters
+here: a hand-installed model is never assumed to stream, because the catalog
+entry is what records that, so `preview.source = "auto"` will not read partials
+from it.
 
 ## What these numbers do and do not tell you
 

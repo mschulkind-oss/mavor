@@ -258,7 +258,7 @@ mavor doctor — system and environment verification
 ✅ GPU acceleration:            CPU only (whisper-cli loaded no GPU backend — the stock build ships CPU backends only; install a whisper.cpp built with -DGGML_VULKAN=ON for acceleration)
 ✅ Configuration file:          valid config (model=whisper-base.en, preview=auto)
 ✅ Voice model availability:    whisper-base.en found at /home/you/.cache/mavor/models/ggml-base.en.bin
-✅ Live preview source:         companion (zipformer-streaming-20m) — "whisper-base.en" does not decode incrementally, so the streaming companion "zipformer-streaming-20m" runs alongside it
+✅ Live preview source:         companion (fastconformer-streaming) — "whisper-base.en" does not decode incrementally, so the streaming companion "fastconformer-streaming" runs alongside it
 ✅ Vocabulary biasing:          no [vocabulary] configured — nothing is biased
 ❌ Daemon socket status:        daemon is not running at /run/user/1000/mavor.sock (run 'mavor daemon' or 'mavor service start')
 ✅ Systemd user service:        systemd unit not installed (optional; run 'mavor service install' to enable)
@@ -467,7 +467,7 @@ are provisional, and typing them would insert the same words twice.
 2. **The companion model is installed.** A **companion model** is a small
    streaming recognizer loaded alongside the main model, fed the same audio,
    emitting partial text continuously; it never contributes to the final
-   transcript. The designated one is `zipformer-streaming-20m`, and
+   transcript. The designated one is `fastconformer-streaming`, and
    `mavor setup` pulls it.
 3. **Otherwise, phrase mode.** No second model: when you pause, the audio since
    the last pause is transcribed with the main model and appended to the
@@ -605,7 +605,7 @@ rename was a catalog-name change, and the files on disk keep upstream's names.
 ## 8. Model Management & Supported Architectures
 
 `mavor` runs batch **Whisper GGML** models on whisper.cpp and **sherpa-onnx**
-models in-process through cgo. The catalog is 26 models; `mavor models list`
+models in-process through cgo. The catalog is 31 models; `mavor models list`
 prints it with sizes, languages, streaming support, and what is already
 downloaded.
 
@@ -621,32 +621,38 @@ downloaded.
 $ mavor models list
 Model cache: /home/you/.cache/mavor/models
 
-NAME                     ENGINE       SIZE  LANGUAGES            STREAM  STATUS
-whisper-tiny             whisper   74.1 MB  multi (99)           no      –
-whisper-tiny.en          whisper   74.1 MB  en                   no      –
-whisper-base             whisper  141.1 MB  multi (99)           no      –
-whisper-base.en          whisper  141.1 MB  en                   no      –  ★
-whisper-small            whisper  465.0 MB  multi (99)           no      –
-whisper-small.en         whisper  465.0 MB  en                   no      –
-whisper-medium           whisper   1.43 GB  multi (99)           no      –
-whisper-medium.en        whisper   1.43 GB  en                   no      –
-whisper-large-v3         whisper   2.88 GB  multi (99)           no      –
-whisper-large-v3-turbo   whisper   1.51 GB  multi (99)           no      –
-whisper-distil-large-v3  whisper   1.42 GB  en                   no      –
-fastconformer-streaming  sherpa   429.4 MB  en                   yes     –
-parakeet-tdt-0.6b        sherpa   464.6 MB  multi (25)           no      –
-parakeet-unified-en      sherpa   478.1 MB  en                   no      –
-parakeet-ctc             sherpa   582.4 MB  en                   no      –
-canary-1b                sherpa    1.07 GB  multi (25)           no      –
-canary-180m              sherpa   146.6 MB  en, es, de, fr       no      –
-moonshine-tiny           sherpa   102.6 MB  en                   no      –
-moonshine-base           sherpa   239.2 MB  en                   no      –
-sensevoice-small         sherpa   999.3 MB  zh, en, ja, ko, yue  no      –
-paraformer               sherpa   950.4 MB  zh                   no      –
-zipformer-streaming      sherpa   296.0 MB  en                   yes     –
-zipformer-streaming-20m  sherpa   122.0 MB  en                   yes     –
-zipformer-offline        sherpa   293.4 MB  en                   no      –
-zipformer-ctc            sherpa   365.4 MB  en                   no      –
+NAME                                 ENGINE       SIZE  LANGUAGES            STREAM  STATUS
+whisper-tiny                         whisper   74.1 MB  multi (99)           no      –
+whisper-tiny.en                      whisper   74.1 MB  en                   no      –
+whisper-base                         whisper  141.1 MB  multi (99)           no      –
+whisper-base.en                      whisper  141.1 MB  en                   no      –  ★
+whisper-small                        whisper  465.0 MB  multi (99)           no      –
+whisper-small.en                     whisper  465.0 MB  en                   no      –
+whisper-medium                       whisper   1.43 GB  multi (99)           no      –
+whisper-medium.en                    whisper   1.43 GB  en                   no      –
+whisper-large-v3                     whisper   2.88 GB  multi (99)           no      –
+whisper-large-v3-turbo               whisper   1.51 GB  multi (99)           no      –
+whisper-distil-large-v3              whisper   1.42 GB  en                   no      –
+fastconformer-streaming              sherpa   429.4 MB  en                   yes     –
+parakeet-tdt-0.6b                    sherpa   464.6 MB  multi (25)           no      –
+parakeet-tdt-0.6b-v2                 sherpa   460.1 MB  en                   no      –
+parakeet-unified-en                  sherpa   478.1 MB  en                   no      –
+parakeet-unified-en-streaming-240ms  sherpa   478.1 MB  en                   yes     –
+parakeet-ctc                         sherpa   582.4 MB  en                   no      –
+canary-1b                            sherpa    1.07 GB  multi (25)           no      –
+canary-180m                          sherpa   146.6 MB  en, es, de, fr       no      –
+nemotron-streaming-en-80ms           sherpa   442.5 MB  en                   yes     –
+nemotron-streaming-en-560ms          sherpa   442.5 MB  en                   yes     –
+nemotron-streaming-multi-560ms       sherpa   453.3 MB  multi (35)           yes     –
+cohere-transcribe                    sherpa    1.58 GB  multi (14)           no      –
+moonshine-tiny                       sherpa   102.6 MB  en                   no      –
+moonshine-base                       sherpa   239.2 MB  en                   no      –
+sensevoice-small                     sherpa   999.3 MB  zh, en, ja, ko, yue  no      –
+paraformer                           sherpa   950.4 MB  zh                   no      –
+zipformer-streaming                  sherpa   296.0 MB  en                   yes     –
+zipformer-streaming-20m              sherpa   122.0 MB  en                   yes     –
+zipformer-offline                    sherpa   293.4 MB  en                   no      –
+zipformer-ctc                        sherpa   365.4 MB  en                   no      –
 
 ★ active   ✓ downloaded   – not downloaded
 SIZE is the download; sherpa archives expand to roughly twice that on disk.
@@ -655,9 +661,15 @@ Download one with `mavor models pull <name>`.
 
 That is a fresh machine: nothing downloaded, and ★ marking the model the
 config names. `--installed` narrows the listing to what is in the cache,
-`--verbose` prints a block per model adding speed,
-vocabulary biasing, GPU support and the source URL, and `--json` emits the same
-catalog machine-readably.
+`--verbose` prints a block per model adding speed, vocabulary biasing, GPU
+support and the source URL, and `--json` emits the same catalog
+machine-readably.
+
+Six of those rows are new as of 2026-09-13 — `parakeet-tdt-0.6b-v2`,
+`parakeet-unified-en-streaming-240ms`, the three `nemotron-streaming-*` entries
+and `cohere-transcribe` — and no benchmark run has covered any of them.
+[`choosing-a-model.md`](./choosing-a-model.md#the-six-models-nothing-has-measured-yet)
+says what they are, what they might be for, and what is not yet known.
 
 ### 8.2 Supported model matrix
 
@@ -684,6 +696,15 @@ returns punctuated, capitalised text or a bare lowercase word stream.
 > than `whisper-base.en` on CPU and wants 3.9 GB of RAM.
 > [Details](./choosing-a-model.md#do-not-reach-for-the-biggest-model).
 
+Six catalog models are missing from that matrix rather than omitted from it:
+`parakeet-tdt-0.6b-v2`, the three Nemotron streaming entries,
+`parakeet-unified-en-streaming-240ms` and `cohere-transcribe` were added on
+2026-09-13 and no benchmark run has covered them, so there is no time, no
+memory figure and no formatting verdict to print. One of them is already known
+to be limited by mavor rather than by the model: `cohere-transcribe` is built
+with English pinned, because sherpa-onnx refuses to load it without a language
+and mavor has no key that sets one.
+
 GPU changes the calculation for the larger models but not their formatting: a
 Vulkan build (`just bench-gpu-build`) runs `whisper-medium.en` **12.8x** faster
 and drops host memory from 2.07 GB to 174 MB, because the weights move to the
@@ -703,7 +724,7 @@ $ mavor models pull whisper-base.en
 $ mavor models pull canary-180m
 
 # The preview companion, which `mavor setup` also pulls
-$ mavor models pull zipformer-streaming-20m
+$ mavor models pull fastconformer-streaming
 ```
 
 See [`choosing-a-model.md`](./choosing-a-model.md) before pulling one of the
@@ -828,8 +849,8 @@ There is one build and it is cgo, so there is no `build-sherpa` recipe and no
 | `toggle: connect: no such file or directory` | Daemon is not running or socket mismatch | Run `mavor daemon -v` or `mavor doctor` to inspect status |
 | Overlay does not appear | Compositor does not implement `wlr-layer-shell` | Ensure a wlroots session (sway, hyprland, river) is active; `mavor daemon -v` logs the reason it fell back to a silent overlay |
 | Audio volume does not duck | Ducking is off by default | Set `enabled = true` under `[ducking]`, and check `apps` if you narrowed it |
-| No text in the overlay while speaking | The preview is off, or fell back to phrase mode | `mavor doctor`'s `Live preview source` line names the mode and the reason; pull `zipformer-streaming-20m` for the low-latency preview |
-| Preview shows words that were never said | Phrase mode feeding whisper short clips, which it fills with plausible text | Pull `zipformer-streaming-20m` so `auto` uses the companion instead, or turn the preview off with `enabled = false` |
+| No text in the overlay while speaking | The preview is off, or fell back to phrase mode | `mavor doctor`'s `Live preview source` line names the mode and the reason; pull `fastconformer-streaming` for the low-latency preview |
+| Preview shows words that were never said | Phrase mode feeding whisper short clips, which it fills with plausible text | Pull `fastconformer-streaming` so `auto` uses the companion instead, or turn the preview off with `enabled = false` |
 | Vocabulary words still misheard | The model cannot be biased at all | `mavor doctor`'s `Vocabulary biasing` line says which mechanism applies; CTC, paraformer, moonshine and sensevoice have none |
 | Ghost words typed during silence | Speech quiet enough to pass the energy gate, then hallucinated by whisper | Raise the input gain, or move closer to the microphone; the gate is an RMS threshold and cannot tell quiet speech from room noise |
 | Text typed in wrong window | Focus shifted during transcription | Keep window focused until overlay closes |
