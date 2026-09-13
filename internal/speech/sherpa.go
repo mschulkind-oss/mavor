@@ -33,6 +33,7 @@ const (
 	ModelTypeNemoCTC      SherpaModelType = "nemo_ctc"      // NeMo CTC
 	ModelTypeWhisper      SherpaModelType = "whisper"       // Whisper ONNX
 	ModelTypeCanary       SherpaModelType = "canary"        // NVIDIA NeMo Canary
+	ModelTypeCohere       SherpaModelType = "cohere"        // Cohere Transcribe
 )
 
 // CanaryModelConfig configures NVIDIA's Canary models, which are attention
@@ -45,6 +46,24 @@ type CanaryModelConfig struct {
 	SrcLang string
 	TgtLang string
 	UsePnc  bool
+}
+
+// CohereModelConfig configures Cohere Transcribe, which is the same shape of
+// thing as Canary — an attention encoder-decoder, encoder and decoder and no
+// joiner — reading a different set of ONNX metadata and a different decoder
+// interface, so it gets its own sub-config rather than borrowing Canary's.
+//
+// Language has no useful zero value here. Canary infers a source language
+// when SrcLang is empty; sherpa-onnx refuses to build a Cohere recognizer at
+// all with "Please specify a language for Cohere Transcribe", and accepts
+// only the fourteen it was trained on (ar, de, el, en, es, fr, it, ja, ko,
+// nl, pl, pt, vi, zh).
+type CohereModelConfig struct {
+	Encoder                     string
+	Decoder                     string
+	Language                    string
+	UsePunct                    bool
+	UseInverseTextNormalization bool
 }
 
 // SherpaModelInfo is what the file layout says about a model directory: which
@@ -136,6 +155,7 @@ type SherpaOfflineConfig struct {
 	NemoCTC        NemoCTCModelConfig
 	Whisper        WhisperModelConfig
 	Canary         CanaryModelConfig
+	Cohere         CohereModelConfig
 	Tokens         string
 	NumThreads     int
 	Provider       string
@@ -594,11 +614,31 @@ func DetectSherpaModel(modelDir string, modelName string) (SherpaModelInfo, erro
 	}
 
 	// Encoder and decoder with no joiner is an attention encoder-decoder:
-	// Whisper or Canary. Both need their own reader; neither is a paraformer,
-	// which is what this layout used to be called.
+	// Whisper, Canary or Cohere Transcribe. Each needs its own reader; none of
+	// them is a paraformer, which is what this layout used to be called.
 	if encoder != "" && decoder != "" {
 		if strings.Contains(cleanName, "whisper") {
 			return SherpaModelInfo{Type: ModelTypeWhisper}, nil
+		}
+		// Ambiguous by layout, and this one is worth spelling out because a
+		// signal that looks decisive is not. Cohere Transcribe extracts to
+		// exactly what Canary extracts to — encoder.int8.onnx,
+		// decoder.int8.onnx, tokens.txt and a test_wavs directory — with one
+		// extra file: encoder.int8.onnx.data, the sidecar ONNX writes when a
+		// graph's weights cross protobuf's 2 GB message limit. That sidecar is
+		// a fact about how large this particular export happens to be, not
+		// about its architecture: a bigger Canary export would grow one too,
+		// and a detector keyed on it would then feed a Canary model to the
+		// Cohere reader. That is the bug class this function is ordered to
+		// prevent, so the sidecar is deliberately not consulted.
+		//
+		// The evidence sherpa-onnx itself uses is the encoder's ONNX metadata,
+		// where model_type reads "cohere-transcribe-03-2026". Reaching it from
+		// Go means an ONNX dependency or a byte scan over the tail of a
+		// multi-gigabyte file, for a distinction the directory name already
+		// makes — so the name decides, as it does for SenseVoice below.
+		if strings.Contains(cleanName, "cohere") {
+			return SherpaModelInfo{Type: ModelTypeCohere}, nil
 		}
 		return SherpaModelInfo{Type: ModelTypeCanary}, nil
 	}
@@ -887,6 +927,31 @@ func BuildSherpaOfflineConfig(cfg config.Config) (SherpaOfflineConfig, error) {
 		sc.Canary = CanaryModelConfig{
 			Encoder: enc, Decoder: dec,
 			SrcLang: "en", TgtLang: "en", UsePnc: true,
+		}
+
+	case ModelTypeCohere:
+		enc := findFile(modelDir, "encoder.onnx", "encoder.int8.onnx", "encoder-*.onnx")
+		dec := findFile(modelDir, "decoder.onnx", "decoder.int8.onnx", "decoder-*.onnx")
+		if enc == "" || dec == "" {
+			return SherpaOfflineConfig{}, fmt.Errorf("speech: cohere transcribe model in %s requires encoder and decoder onnx files (found: encoder=%q, decoder=%q)", modelDir, enc, dec)
+		}
+		// The encoder's weights live beside it in encoder.int8.onnx.data and
+		// are never named here: ONNX Runtime resolves an external-data sidecar
+		// relative to the graph file it loaded, so pointing at the .onnx is
+		// what loads both. Naming the .data file instead loads nothing.
+		//
+		// UsePunct is the same trade as Canary's UsePnc — punctuation and
+		// capitalisation are the whole reason to dictate with a model this
+		// size rather than a bare CTC one — and inverse text normalisation
+		// gets spoken numbers typed as digits, which is what SenseVoice is
+		// already configured for. Language is required rather than optional;
+		// see CohereModelConfig.
+		sc.Cohere = CohereModelConfig{
+			Encoder:                     enc,
+			Decoder:                     dec,
+			Language:                    "en",
+			UsePunct:                    true,
+			UseInverseTextNormalization: true,
 		}
 
 	case ModelTypeWhisper:

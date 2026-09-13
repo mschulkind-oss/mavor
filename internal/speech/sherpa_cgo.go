@@ -282,6 +282,13 @@ func newCGOOfflineRecognizer(_ config.Config, sc SherpaOfflineConfig, _ *slog.Lo
 				TgtLang: sc.Canary.TgtLang,
 				UsePnc:  boolToInt(sc.Canary.UsePnc),
 			},
+			CohereTranscribe: sherpa_onnx.OfflineCohereTranscribeModelConfig{
+				Encoder:                     sc.Cohere.Encoder,
+				Decoder:                     sc.Cohere.Decoder,
+				Language:                    sc.Cohere.Language,
+				UsePunct:                    boolToInt(sc.Cohere.UsePunct),
+				UseInverseTextNormalization: boolToInt(sc.Cohere.UseInverseTextNormalization),
+			},
 			Tokens:     sc.Tokens,
 			NumThreads: sc.NumThreads,
 			Provider:   sc.Provider,

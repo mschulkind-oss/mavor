@@ -72,6 +72,20 @@ func TestDetectRecognizesEveryCataloguedLayout(t *testing.T) {
 			wantType:  ModelTypeCanary,
 		},
 		{
+			// Cohere Transcribe extracts to the same five entries Canary does,
+			// plus the external-weights sidecar that is deliberately not part
+			// of the decision — see TestCohereIsNotDetectedFromItsWeightsSidecar.
+			// The name is what separates the two, and this is the layout the
+			// real download produces.
+			name:      "cohere-transcribe is an encoder-decoder named cohere",
+			modelName: "cohere-transcribe",
+			files: []string{
+				"encoder.int8.onnx", "encoder.int8.onnx.data",
+				"decoder.int8.onnx", "tokens.txt", "README.md",
+			},
+			wantType: ModelTypeCohere,
+		},
+		{
 			// Was detected as NeMo CTC. The config.yaml plus tokens.json pair
 			// is what distinguishes a real paraformer from the other models
 			// that ship a lone model.onnx.
@@ -219,6 +233,105 @@ func TestBuildOfflineConfigForCanaryPopulatesTheCanaryFields(t *testing.T) {
 	// old detector did and what made it fail on lfr_window_size.
 	if sc.Paraformer.Model != "" || sc.Paraformer.Encoder != "" {
 		t.Errorf("canary model also populated the paraformer config: %+v", sc.Paraformer)
+	}
+}
+
+func TestBuildOfflineConfigForCoherePopulatesTheCohereFields(t *testing.T) {
+	dir := writeLayout(t, "cohere-transcribe",
+		"encoder.int8.onnx", "encoder.int8.onnx.data", "decoder.int8.onnx", "tokens.txt")
+	sc, err := BuildSherpaOfflineConfig(config.Config{Model: dir})
+	if err != nil {
+		t.Fatalf("BuildSherpaOfflineConfig: %v", err)
+	}
+	if sc.ModelType != ModelTypeCohere {
+		t.Fatalf("model type = %q, want cohere", sc.ModelType)
+	}
+	if sc.Cohere.Encoder == "" || sc.Cohere.Decoder == "" {
+		t.Errorf("cohere config is empty: %+v", sc.Cohere)
+	}
+	// The sidecar holds the weights but is not a graph; ONNX Runtime finds it
+	// from the .onnx beside it. Naming it here would load nothing.
+	if strings.HasSuffix(sc.Cohere.Encoder, ".data") {
+		t.Errorf("encoder = %q, want the .onnx graph and not its weights sidecar", sc.Cohere.Encoder)
+	}
+	// sherpa-onnx refuses to build the recognizer at all without a language:
+	// "Please specify a language for Cohere Transcribe".
+	if sc.Cohere.Language == "" {
+		t.Error("cohere config has no language; sherpa-onnx rejects an empty one")
+	}
+	// Cohere must not also arrive as a Canary or a Whisper. sherpa-onnx picks
+	// its reader from whichever sub-config is populated, so a second one
+	// filled in is a coin toss over which model actually loads.
+	if sc.Canary.Encoder != "" || sc.Whisper.Encoder != "" {
+		t.Errorf("cohere model also populated another encoder-decoder config: canary=%+v whisper=%+v", sc.Canary, sc.Whisper)
+	}
+}
+
+func TestCohereIsNotDetectedFromItsWeightsSidecar(t *testing.T) {
+	// encoder.int8.onnx.data is the file ONNX writes when a graph's weights
+	// cross protobuf's 2 GB limit. Cohere Transcribe has one and today's two
+	// Canary exports do not, which makes it look like a layout signal — and
+	// it is not: it reports how big an export is, not what architecture it
+	// holds. A Canary large enough to need one would be handed to the Cohere
+	// reader, which is the same shape of failure as calling parakeet-ctc a
+	// transducer because of its name.
+	dir := writeLayout(t, "canary-1b",
+		"encoder.int8.onnx", "encoder.int8.onnx.data", "decoder.int8.onnx", "tokens.txt")
+	got, err := DetectSherpaModel(dir, "canary-1b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Type != ModelTypeCanary {
+		t.Errorf("a canary carrying an external-weights sidecar detected as %q, want canary", got.Type)
+	}
+
+	// And the converse: the sidecar is not required to recognise a Cohere
+	// model either, so a future export that fits in one file still lands on
+	// the Cohere reader.
+	dir = writeLayout(t, "cohere-transcribe",
+		"encoder.int8.onnx", "decoder.int8.onnx", "tokens.txt")
+	got, err = DetectSherpaModel(dir, "cohere-transcribe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Type != ModelTypeCohere {
+		t.Errorf("a cohere model with no sidecar detected as %q, want cohere", got.Type)
+	}
+
+	// Configuration takes a path as readily as a catalog name, and the real
+	// download lands in a directory named for the catalog entry. Only the
+	// base name may decide, so a path resolves the same way the name does.
+	got, err = DetectSherpaModel(dir, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Type != ModelTypeCohere {
+		t.Errorf("cohere addressed by full path detected as %q, want cohere", got.Type)
+	}
+}
+
+// Cohere Transcribe is an attention encoder-decoder, and sherpa-onnx boosts
+// phrases only inside transducer beam search — it goes further here and
+// refuses anything but greedy outright ("Only greedy_search is supported at
+// present for Cohere Transcribe"). A configured [vocabulary] is therefore
+// ignored rather than fatal, exactly as it is for Canary and the CTC models.
+func TestCohereIgnoresVocabularyRatherThanBeamSearching(t *testing.T) {
+	dir := writeLayout(t, "cohere-transcribe",
+		"encoder.int8.onnx", "encoder.int8.onnx.data", "decoder.int8.onnx", "tokens.txt")
+	cfg := config.Config{
+		Model:      dir,
+		Vocabulary: config.Vocabulary{Words: []string{"Kubernetes", "mavor"}},
+	}
+
+	sc, err := BuildSherpaOfflineConfig(cfg)
+	if err != nil {
+		t.Fatalf("BuildSherpaOfflineConfig: %v", err)
+	}
+	if sc.DecodingMethod != "greedy_search" {
+		t.Errorf("DecodingMethod = %q, want greedy_search; cohere aborts on anything else", sc.DecodingMethod)
+	}
+	if sc.HotwordsFile != "" {
+		t.Errorf("HotwordsFile = %q, want none: cohere cannot be biased", sc.HotwordsFile)
 	}
 }
 
