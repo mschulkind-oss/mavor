@@ -128,6 +128,17 @@ func writeRunContext(b *strings.Builder, r *report) {
 	row("Audio", fmt.Sprintf("`%s` (%.2f s)", r.Audio, r.AudioSeconds))
 	row("Threads", fmt.Sprint(r.Threads))
 	row("Runs per cell", fmt.Sprintf("%d (median reported)", r.RunsPerCell))
+	// Contention is the one distortion the median of three runs does not
+	// smooth away, so the report has to hand the reader the evidence rather
+	// than leave a slow row looking like a slow model.
+	if r.Machine.LoadBefore > 0 || r.Machine.LoadAfter > 0 {
+		note := ""
+		if busy := loadIsHigh(r.Machine, r.Threads); busy != "" {
+			note = " — " + busy
+		}
+		row("Load average (1 min)", fmt.Sprintf("%.2f before, %.2f after%s",
+			r.Machine.LoadBefore, r.Machine.LoadAfter, note))
+	}
 	if len(r.WhisperCPUBackends) > 0 {
 		row("whisper CPU build loads", "`"+strings.Join(r.WhisperCPUBackends, "`, `")+"`")
 	}
@@ -135,6 +146,37 @@ func writeRunContext(b *strings.Builder, r *report) {
 		row("whisper GPU build loads", "`"+strings.Join(r.WhisperGPUBackends, "`, `")+"`")
 	}
 	b.WriteString("\n")
+}
+
+// loadIsHigh returns a warning when the machine was busy enough that the
+// timings describe the contention as much as the models.
+//
+// The threshold is twice the thread count, and the reasoning is worth stating
+// because the obvious threshold is wrong. A sweep running one worker at
+// `threads` threads puts a load of roughly `threads` on the machine all by
+// itself, and LoadAfter is read while that is still true — so anything keyed
+// on the core count fires on every honest run and teaches the reader to skip
+// the line. Doubling it leaves room for the sweep's own load plus ordinary
+// background noise, and still catches what this exists to catch: the run that
+// measured a model 2.5x slow at a load of 14 on a 6-thread sweep.
+//
+// Under a container these are the HOST's figures — /proc/loadavg is not
+// namespaced — which is the number that matters, since the competing process
+// does not have to be in here to take the CPU.
+func loadIsHigh(m machineInfo, threads int) string {
+	if threads <= 0 {
+		return ""
+	}
+	threshold := float64(threads) * 2
+	peak := m.LoadBefore
+	if m.LoadAfter > peak {
+		peak = m.LoadAfter
+	}
+	if peak <= threshold {
+		return ""
+	}
+	return fmt.Sprintf("**the machine was busy** (peak %.2f, over the %.0f this sweep accounts for); treat these timings as a floor, not a measurement",
+		peak, threshold)
 }
 
 func writeSkips(b *strings.Builder, r *report) {

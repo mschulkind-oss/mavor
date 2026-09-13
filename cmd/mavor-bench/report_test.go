@@ -245,3 +245,73 @@ func TestReportSaysSoWhenNothingStreamsAtAll(t *testing.T) {
 		t.Error("a run with no streaming models is reported as a failure; it is not one")
 	}
 }
+
+// renderToString is the shape the tests around it already use: write the
+// report to a temp file and read it back, so the assertion runs against what
+// a reader would actually get.
+func renderToString(t *testing.T, r *report) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "r.md")
+	if err := writeMarkdown(path, r); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// A sweep measured one model 2.5x slower than a direct measurement taken
+// minutes later on the same binary, because the host sat at a load average of
+// 14 while it ran. Nothing in the report said so, and the median of three
+// runs smooths jitter but not sustained contention — so the row read as a
+// slow model rather than a busy machine.
+func TestReportWarnsWhenTheMachineWasBusy(t *testing.T) {
+	r := sampleReport()
+	r.Machine.CPUCores = 12
+	r.Threads = 6
+	r.Machine.LoadBefore = 14.5
+	r.Machine.LoadAfter = 11.0
+
+	out := renderToString(t, r)
+	if !strings.Contains(out, "14.50 before, 11.00 after") {
+		t.Errorf("the load average is not in the report:\n%s", section(out, "| **Run at**", "##"))
+	}
+	if !strings.Contains(out, "the machine was busy") {
+		t.Errorf("a load of 14.5 against a 6-thread sweep was not called out:\n%s", section(out, "| **Run at**", "##"))
+	}
+}
+
+func TestReportStatesTheLoadWithoutWarningWhenTheMachineWasQuiet(t *testing.T) {
+	r := sampleReport()
+	r.Machine.CPUCores = 12
+	r.Threads = 6
+	r.Machine.LoadBefore = 0.4
+	// 9.3 is what an idle machine actually reads DURING this sweep: six
+	// worker threads plus the parent and ordinary noise. The first version of
+	// this threshold was half the core count, which called that busy and
+	// would have stamped the warning on every honest run.
+	r.Machine.LoadAfter = 9.3
+
+	out := renderToString(t, r)
+	if !strings.Contains(out, "0.40 before, 9.30 after") {
+		t.Errorf("the load average should be reported even when it is fine:\n%s", section(out, "| **Run at**", "##"))
+	}
+	if strings.Contains(out, "the machine was busy") {
+		t.Errorf("the sweep's own load was reported as contention:\n%s", section(out, "| **Run at**", "##"))
+	}
+}
+
+// A machine that reports no load average at all — no /proc — must not grow a
+// row reading "0.00 before, 0.00 after", which states a measurement that was
+// never taken.
+func TestReportOmitsTheLoadRowWhenItCouldNotBeRead(t *testing.T) {
+	r := sampleReport()
+	r.Machine.LoadBefore = 0
+	r.Machine.LoadAfter = 0
+
+	if strings.Contains(renderToString(t, r), "Load average") {
+		t.Error("an unreadable load average was rendered as a measurement")
+	}
+}

@@ -35,6 +35,38 @@ type machineInfo struct {
 	// GoVersion matters for the sherpa path, which is in-process CGO: the
 	// number is as much a property of this toolchain as of the model.
 	GoVersion string `json:"go_version"`
+
+	// LoadBefore and LoadAfter are the 1-minute load average either side of
+	// the sweep, and they exist because a benchmark that cannot tell you it
+	// ran on a busy machine is a benchmark that lies quietly. A run of this
+	// harness measured one model 2.5x slower than a direct measurement taken
+	// minutes later on the same binary; the cause was a load average of 14 on
+	// the host, and nothing in the report said so. Every timing here is a
+	// median of three, which smooths jitter and does nothing whatever about
+	// sustained contention.
+	//
+	// In a container these are the HOST's figures — /proc/loadavg is not
+	// namespaced — which is the right number anyway: the competing work is on
+	// the host whether or not it is in this container.
+	LoadBefore float64 `json:"load_before,omitempty"`
+	LoadAfter  float64 `json:"load_after,omitempty"`
+}
+
+// loadAverage returns the 1-minute load average, or 0 where /proc is absent.
+func loadAverage() float64 {
+	data, err := os.ReadFile("/proc/loadavg")
+	if err != nil {
+		return 0
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return 0
+	}
+	v, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil {
+		return 0
+	}
+	return v
 }
 
 func collectMachineInfo() machineInfo {
@@ -50,6 +82,7 @@ func collectMachineInfo() machineInfo {
 	m.MemTotalKB = memTotalKB()
 	m.MavorCommit = gitCommit()
 	m.GPUName, m.GPUDriver, m.VulkanAPI = vulkanDevice()
+	m.LoadBefore = loadAverage()
 	return m
 }
 

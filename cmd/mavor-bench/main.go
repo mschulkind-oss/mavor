@@ -263,6 +263,12 @@ func run() error {
 
 	runSweeps(ctx, report, stock, selected, cat.ModelDir, o, audioSec)
 
+	// Read after the sweep as well as before it. One figure says the machine
+	// was quiet when this started; the pair says whether it stayed quiet, and
+	// a run that began idle and ended under load produced numbers nobody
+	// should compare against anything.
+	report.Machine.LoadAfter = loadAverage()
+
 	if err := writeJSON(o.jsonOut, report); err != nil {
 		return err
 	}
