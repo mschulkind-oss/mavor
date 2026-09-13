@@ -19,7 +19,7 @@ import (
 type KnownModel struct {
 	Name        string // canonical name, as typed to `mavor models pull`
 	Engine      string // "whisper" or "sherpa"
-	Family      string // "Whisper", "NeMo", "Moonshine", "SenseVoice", "Zipformer"
+	Family      string // "Whisper", "NeMo", "Nemotron", "Cohere", "Moonshine", "SenseVoice", "Paraformer", "Zipformer"
 	Description string
 	URL         string
 	Format      string // "raw", "tar.bz2", "tar.gz", "tgz", "tar"
@@ -254,6 +254,22 @@ var Catalog = []KnownModel{
 		Vocabulary:   "hotwords supported (transducer)",
 	},
 	{
+		// v2 sits beside v3 rather than replacing it: v3 traded English
+		// accuracy for 25 languages, and v2 is still the better transcriber
+		// of the one language it knows. A user who dictates only in English
+		// wants this row; the entry above is for everyone else.
+		Name:   "parakeet-tdt-0.6b-v2",
+		Engine: "sherpa", Family: "NeMo",
+		Description:  "NeMo Parakeet TDT 0.6B v2, INT8 — English only, and ahead of v3 on English",
+		URL:          "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
+		Format:       "tar.bz2",
+		DownloadSize: 482468385,
+		Languages:    "en",
+		Transducer:   true,
+		Speed:        "moderate",
+		Vocabulary:   "hotwords supported (transducer)",
+	},
+	{
 		// Named for the artifact it actually downloads. The former name,
 		// parakeet-tdt-1.1b, described a 1.1B model but fetched this 0.6B one.
 		Name:   "parakeet-unified-en",
@@ -266,6 +282,33 @@ var Catalog = []KnownModel{
 		Transducer:   true,
 		Speed:        "moderate",
 		Vocabulary:   "hotwords supported (transducer)",
+	},
+	{
+		// The streaming export of the same unified model as the row above —
+		// one training run, two ONNX exports. The name has to keep saying
+		// "streaming" without ever reading as "non-streaming": that word is
+		// the only thing speech.isStreamingLayout has to go on here, since
+		// this export carries no chunk-* filename and leaves no upstream
+		// sherpa-onnx-* directory behind. Reaching the offline reader with
+		// these files aborts the daemon from C++, so the name is load-bearing
+		// and TestCatalogNamesRouteToTheRecognizerTheRowClaims pins it.
+		//
+		// "very slow" is not a guess from the parameter count: this export
+		// decodes several times slower than the audio it is fed, which is
+		// worse than the non-streaming row above manages on the same clip.
+		// It is in the catalog because it is the streaming counterpart users
+		// will look for, not because it is usable for live dictation.
+		Name:   "parakeet-unified-en-streaming-240ms",
+		Engine: "sherpa", Family: "NeMo",
+		Description:  "NeMo Parakeet Unified 0.6B English, INT8, 240ms chunk — decodes while you speak",
+		URL:          "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-streaming-240ms.tar.bz2",
+		Format:       "tar.bz2",
+		DownloadSize: 501358456,
+		Languages:    "en",
+		Transducer:   true,
+		Speed:        "very slow",
+		Vocabulary:   "hotwords supported (transducer)",
+		Streaming:    true,
 	},
 	{
 		Name:   "parakeet-ctc",
@@ -298,6 +341,85 @@ var Catalog = []KnownModel{
 		DownloadSize: 153692328,
 		Languages:    "en, es, de, fr",
 		Speed:        "moderate",
+		Vocabulary:   "none — sherpa-onnx biasing needs a transducer",
+	},
+
+	// ---- NVIDIA Nemotron (sherpa-onnx) -------------------------------------
+	// A separate family from NeMo above, not a sub-group of it: Nemotron is
+	// its own NVIDIA model line, and every entry here is a streaming
+	// transducer, which is the axis a user picking a dictation model cares
+	// about. Keeping them apart is what makes `mavor models list` scan.
+	//
+	// The chunk size in each name is the export's decision, baked into the
+	// ONNX graph — it is not a knob mavor turns. It buys the usual trade: the
+	// 80 ms export updates the overlay six times as often, the 560 ms one
+	// sees seven times as much audio before it commits to a word.
+	{
+		Name:   "nemotron-streaming-en-80ms",
+		Engine: "sherpa", Family: "Nemotron",
+		Description:  "Nemotron Speech Streaming 0.6B English, INT8, 80ms chunk — decodes while you speak",
+		URL:          "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-speech-streaming-en-0.6b-80ms-int8-2026-04-25.tar.bz2",
+		Format:       "tar.bz2",
+		DownloadSize: 463945379,
+		Languages:    "en",
+		Transducer:   true,
+		Speed:        "slow",
+		Vocabulary:   "hotwords supported (transducer)",
+		Streaming:    true,
+	},
+	{
+		Name:   "nemotron-streaming-en-560ms",
+		Engine: "sherpa", Family: "Nemotron",
+		Description:  "Nemotron Speech Streaming 0.6B English, INT8, 560ms chunk — coarser updates, more context per step",
+		URL:          "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25.tar.bz2",
+		Format:       "tar.bz2",
+		DownloadSize: 463945051,
+		Languages:    "en",
+		Transducer:   true,
+		Speed:        "moderate",
+		Vocabulary:   "hotwords supported (transducer)",
+		Streaming:    true,
+	},
+	{
+		// The count is the distinct languages behind the 39 locale tags this
+		// export's tokens.txt carries — NVIDIA's card advertises 40 locales,
+		// and en-GB/en-US and the two Norwegians are one language each here.
+		//
+		// The encoder also takes a prompt_index input for choosing a language
+		// per stream. mavor has no config key that reaches it, so the model
+		// runs in its own auto-detect mode; nothing here should be read as
+		// implying a language can be pinned.
+		Name:   "nemotron-streaming-multi-560ms",
+		Engine: "sherpa", Family: "Nemotron",
+		Description:  "Nemotron 3.5 ASR Streaming 0.6B, INT8, 560ms chunk — multilingual, auto-detecting",
+		URL:          "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11.tar.bz2",
+		Format:       "tar.bz2",
+		DownloadSize: 475271763,
+		Languages:    "multi (35)",
+		Transducer:   true,
+		Speed:        "moderate",
+		Vocabulary:   "hotwords supported (transducer)",
+		Streaming:    true,
+	},
+
+	// ---- Cohere (sherpa-onnx) ----------------------------------------------
+	{
+		// An attention encoder-decoder, so no hotwords however it is
+		// configured — sherpa-onnx biases paths inside transducer beam search
+		// and nowhere else.
+		//
+		// It is the largest download in the catalog, and the only entry whose
+		// encoder ships its weights outside the ONNX graph: encoder.int8.onnx
+		// is 3 MB of structure next to a 2.7 GB .onnx.data file. Both have to
+		// survive extraction side by side or the model loads to nothing.
+		Name:   "cohere-transcribe",
+		Engine: "sherpa", Family: "Cohere",
+		Description:  "Cohere Transcribe 03-2026, INT8 — 14 languages",
+		URL:          "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-cohere-transcribe-14-lang-int8-2026-04-01.tar.bz2",
+		Format:       "tar.bz2",
+		DownloadSize: 1699791751,
+		Languages:    "multi (14)",
+		Speed:        "slow",
 		Vocabulary:   "none — sherpa-onnx biasing needs a transducer",
 	},
 

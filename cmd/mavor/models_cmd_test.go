@@ -26,8 +26,16 @@ func TestKnownModelsCatalog(t *testing.T) {
 			"whisper-large-v3", "whisper-large-v3-turbo", "whisper-distil-large-v3",
 		},
 		"NeMo": {
-			"fastconformer-streaming", "parakeet-tdt-0.6b", "parakeet-unified-en",
+			"fastconformer-streaming", "parakeet-tdt-0.6b", "parakeet-tdt-0.6b-v2",
+			"parakeet-unified-en", "parakeet-unified-en-streaming-240ms",
 			"parakeet-ctc", "canary-1b", "canary-180m",
+		},
+		"Nemotron": {
+			"nemotron-streaming-en-80ms", "nemotron-streaming-en-560ms",
+			"nemotron-streaming-multi-560ms",
+		},
+		"Cohere": {
+			"cohere-transcribe",
 		},
 		"Moonshine": {
 			"moonshine-tiny", "moonshine-base",
@@ -122,6 +130,8 @@ func TestEveryCatalogNameBeginsWithItsFamily(t *testing.T) {
 	prefixes := map[string][]string{
 		"Whisper":    {"whisper-"},
 		"NeMo":       {"parakeet-", "canary-", "fastconformer-"},
+		"Nemotron":   {"nemotron-"},
+		"Cohere":     {"cohere-"},
 		"Moonshine":  {"moonshine-"},
 		"SenseVoice": {"sensevoice-"},
 		"Paraformer": {"paraformer"},
@@ -731,6 +741,85 @@ func TestOnlyTransducersClaimHotwordSupport(t *testing.T) {
 		}
 		if !claims && m.Transducer && m.Engine == "sherpa" {
 			t.Errorf("transducer %q should support hotwords but does not claim it", m.Name)
+		}
+	}
+}
+
+// A sherpa transducer's catalog row and the recognizer the loader will build
+// for it have to agree, and the name is what decides. sherpa-onnx builds a
+// streaming and an offline transducer from the same three ONNX files, so
+// speech.DetectSherpaModel has to choose before anything is opened — feeding
+// a streaming encoder to the offline reader does not return an error, it
+// aborts the process from C++, and the daemon dies with no log line.
+//
+// None of the recent NeMo or Nemotron artifacts carry a chunk-* filename or
+// leave an upstream sherpa-onnx-* directory behind after extraction, so for
+// those the catalog name is the *only* evidence there is. That makes a rename
+// a crash, which is why this is pinned here rather than left to reviewers:
+// parakeet-unified-en-streaming-240ms must read as streaming even though the
+// nearly identical parakeet-unified-en ships as "...-non-streaming", the one
+// substring that has to be ruled out first.
+func TestCatalogNamesRouteToTheRecognizerTheRowClaims(t *testing.T) {
+	for _, m := range models.Catalog {
+		if m.Engine != "sherpa" || !m.Transducer {
+			continue
+		}
+		t.Run(m.Name, func(t *testing.T) {
+			// A bare transducer layout: the three files and nothing that
+			// hints either way, so only the name can decide.
+			dir := t.TempDir()
+			for _, f := range []string{"encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"} {
+				if err := os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			info, err := speech.DetectSherpaModel(dir, m.Name)
+			if err != nil {
+				t.Fatalf("DetectSherpaModel(%q): %v", m.Name, err)
+			}
+			if info.Type != speech.ModelTypeTransducer {
+				t.Errorf("catalog says %q is a transducer, the loader read it as %q", m.Name, info.Type)
+			}
+			if info.Streaming != m.Streaming {
+				t.Errorf("catalog says Streaming=%v for %q, the loader would build streaming=%v — "+
+					"one of the two is wrong, and getting it wrong aborts the daemon from C++",
+					m.Streaming, m.Name, info.Streaming)
+			}
+		})
+	}
+}
+
+// The specific collision the test above generalises, spelled out so a rename
+// that breaks it fails with the two names in the message. These are two
+// exports of one training run and their names differ by a suffix; a plain
+// strings.Contains(name, "streaming") matches both.
+func TestTheTwoParakeetUnifiedExportsRouteApart(t *testing.T) {
+	for name, wantStreaming := range map[string]bool{
+		"parakeet-unified-en":                 false,
+		"parakeet-unified-en-streaming-240ms": true,
+	} {
+		spec, ok := models.Lookup(name)
+		if !ok {
+			t.Errorf("%q is not in the catalog", name)
+			continue
+		}
+		if spec.Streaming != wantStreaming {
+			t.Errorf("catalog row %q has Streaming=%v, want %v", name, spec.Streaming, wantStreaming)
+		}
+
+		dir := t.TempDir()
+		for _, f := range []string{"encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"} {
+			if err := os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		info, err := speech.DetectSherpaModel(dir, name)
+		if err != nil {
+			t.Fatalf("DetectSherpaModel(%q): %v", name, err)
+		}
+		if info.Streaming != wantStreaming {
+			t.Errorf("the loader reads %q as streaming=%v, want %v", name, info.Streaming, wantStreaming)
 		}
 	}
 }
