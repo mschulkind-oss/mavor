@@ -128,11 +128,17 @@ func TestSetupCommand(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
 	t.Setenv("XDG_CACHE_HOME", tmpDir)
+	// HOME as well as the XDG roots: setup's last step writes a systemd unit,
+	// and a $HOME left pointing at the real one is how this test came to
+	// overwrite a developer's own mavor.service. See
+	// TestServiceInstallStaysInsideConfigHome.
+	t.Setenv("HOME", tmpDir)
 
-	// Create fake base model file so setup doesn't make real network requests in unit test
 	modelDir := filepath.Join(tmpDir, "mavor", "models")
-	_ = os.MkdirAll(modelDir, 0o755)
-	_ = os.WriteFile(filepath.Join(modelDir, "ggml-base.en.bin"), []byte("test-model"), 0o644)
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stubInstalledModels(t, modelDir)
 
 	if err := execCLIErr(t, "setup"); err != nil {
 		t.Fatalf("mavor setup error = %v", err)

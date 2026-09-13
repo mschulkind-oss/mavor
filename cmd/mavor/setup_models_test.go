@@ -126,3 +126,40 @@ func TestSetupRefetchesAnEmptyModelDirectory(t *testing.T) {
 		t.Fatalf("setup pulled %v, want just the empty companion directory refetched", pulled)
 	}
 }
+
+// stubInstalledModels puts a placeholder on disk for every model `mavor setup`
+// will look for, so the command finds them all installed and downloads
+// nothing.
+//
+// It asks configuredModels which those are rather than naming files, because
+// configuredModels is what setup itself asks. The test that hardcoded a single
+// whisper file went on passing unchanged when setup started pulling the
+// preview companion as well — and from then on quietly downloaded 429 MB of
+// fastconformer-streaming on every run of the unit suite, on a hook that runs
+// before every commit. Deriving the list is what keeps that silent.
+func stubInstalledModels(t *testing.T, modelDir string) {
+	t.Helper()
+	cfg := config.Default()
+	cfg.Paths.Models = modelDir
+
+	for _, name := range configuredModels(cfg) {
+		path := installedModelPath(cfg, name)
+		if models.RuntimeFor(name) == models.RuntimeWhisper {
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatalf("mkdir for %s: %v", name, err)
+			}
+			if err := os.WriteFile(path, []byte("test-model"), 0o644); err != nil {
+				t.Fatalf("stub %s: %v", name, err)
+			}
+			continue
+		}
+		// Everything else unpacks into a directory, and setup reads an empty
+		// one as a download that died halfway — so it needs an entry in it.
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("mkdir for %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "tokens.txt"), []byte("stub"), 0o644); err != nil {
+			t.Fatalf("stub %s: %v", name, err)
+		}
+	}
+}
