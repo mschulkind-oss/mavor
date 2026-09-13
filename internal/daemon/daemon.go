@@ -382,6 +382,17 @@ func (d *Daemon) previewStreamSource() speech.StreamTranscriber {
 	return nil
 }
 
+// PreviewTick is how often the daemon hands the preview recognizer another
+// slice of captured audio while the user is speaking.
+//
+// It is exported and named because it is not a private implementation detail:
+// it is the cadence a streaming model is actually driven at, so it is the
+// cadence a streaming model has to be measured at. cmd/mavor-bench fed 100 ms
+// chunks for a while and described them in the report as "the way the daemon
+// does" — a model whose per-call overhead only shows below 100 ms scored well
+// there and would have felt slow here. A test now pins the two together.
+const PreviewTick = 30 * time.Millisecond
+
 // runStreamPreview feeds captured audio to a recognizer that decodes
 // incrementally — the main model when it can do that, otherwise the companion
 // loaded alongside it — and paints what it emits.
@@ -403,7 +414,7 @@ func (d *Daemon) runStreamPreview(ctx context.Context, gen uint64, src speech.St
 	}
 
 	go func() {
-		ticker := time.NewTicker(30 * time.Millisecond)
+		ticker := time.NewTicker(PreviewTick)
 		defer ticker.Stop()
 
 		// A preview that silently never appears is the failure this whole
@@ -476,7 +487,7 @@ func (d *Daemon) runPhrasePreview(ctx context.Context, gen uint64) {
 		"min_phrase", d.minPhraseDuration)
 
 	go func() {
-		ticker := time.NewTicker(30 * time.Millisecond)
+		ticker := time.NewTicker(PreviewTick)
 		defer ticker.Stop()
 
 		phrase := newPhraseBuffer()

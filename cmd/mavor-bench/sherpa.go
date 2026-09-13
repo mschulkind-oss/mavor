@@ -67,11 +67,20 @@ func (s sherpaRunner) batchOnce(ctx context.Context, model, wavPath string) (tex
 	return strings.TrimSpace(text), load, infer, nil
 }
 
-// streamChunkMS is how much audio each FeedChunk call carries. 100 ms is a
-// realistic dictation cadence — long enough that per-call overhead is not the
-// thing being measured, short enough to resolve a time-to-first-token worth
-// reporting.
-const streamChunkMS = 100
+// streamChunkMS is how much audio each FeedChunk call carries: the daemon's
+// preview tick, so this measures the cadence the model is actually driven at.
+//
+// It was 100 ms, chosen so that per-call overhead would not be "the thing
+// being measured". That reasoning had the question backwards. The daemon
+// drives the preview from a 30 ms ticker (internal/daemon/daemon.go), so
+// per-call overhead at 30 ms is not noise around the measurement — it is part
+// of what the user waits for, and a model whose overhead only becomes visible
+// below 100 ms would have looked fine here and felt slow in use. The report
+// also told the reader these chunks were "the way the daemon does", which was
+// simply untrue while the two numbers disagreed.
+//
+// Keep this equal to that ticker. If the daemon's tick changes, this changes.
+const streamChunkMS = 30
 
 // runStreaming feeds the file in chunks, as the daemon does while you speak,
 // and records when the first partial text comes back. This is the only

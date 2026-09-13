@@ -263,8 +263,9 @@ func writeStreamingSection(b *strings.Builder, r *report) {
 	}
 
 	b.WriteString("## Streaming vs batch\n\n")
-	fmt.Fprintf(b, "The streaming rows feed the same audio in %d ms chunks, the way the daemon\n", r.StreamChunkMS)
-	b.WriteString("does while you are still speaking, rather than handing over a finished\n")
+	fmt.Fprintf(b, "The streaming rows feed the same audio in %d ms chunks — the daemon's own\n", r.StreamChunkMS)
+	b.WriteString("preview tick — rather than handing over a finished file, so the per-call\n")
+	b.WriteString("cost the user actually waits through is inside these numbers.\n")
 	b.WriteString("file. **Time to first token** is what decides whether a model feels live;\n")
 	b.WriteString("total time cannot tell you that.\n\n")
 	b.WriteString("Only models the catalog marks as streaming appear here. Whisper is absent\n")
