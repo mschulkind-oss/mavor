@@ -118,9 +118,37 @@
     // identical from the outside and only the second is a download bug.
     "~/.cache/mavor/models:/ctx/mavor-models"
   ],
-  // Extra environment variables set inside the jail.
-  // Keys are variable names, values are strings.
-  // "env": {"DATABASE_URL": "postgres://localhost/dev", "DEBUG": "1"}
+  // Environment variables set inside the jail.  (There is no "env" key —
+  // `yolo config-ref` calls this one `env_sources`, and it takes an ordered
+  // list of dotenv paths and/or inline {"KEY": "VALUE"} objects.)
+  "env_sources": [
+    {
+      // The other half of the mesa story above.  mesa is in `packages`, and
+      // /dev/dri is passed through by the `gpu` block below, but the Vulkan
+      // loader still found nothing: it searches /usr/share/vulkan/icd.d,
+      // /etc/vulkan/icd.d and $XDG_DATA_DIRS, none of which exist or are set
+      // in this image, so `vulkaninfo` failed with "Found no drivers!" and the
+      // benchmark's GPU column silently vanished.  Everyone who wanted a GPU
+      // number exported this by hand first.
+      //
+      // The path carries NO store hash and so survives an image rebuild:
+      // /share is the image's merged tree, a symlink farm regenerated at build
+      // time from whatever mesa was baked in, and its icd.d entry always
+      // points at that mesa.  (There is no facility for interpolating a
+      // package's store path into a value — env_sources values are literal
+      // strings — but none is needed, because of that symlink.)
+      //
+      // It names radeon_icd, not the icd.d DIRECTORY, on purpose.  The loader
+      // accepts a directory, but mesa also installs lvp_icd — llvmpipe, a
+      // software rasterizer that enumerates as an ordinary VkPhysicalDevice.
+      // Pointing at the directory makes llvmpipe a "GPU", and a GPU column
+      // fed by it is CPU numbers under a GPU heading: exactly what the
+      // proof-of-a-GPU rule in AGENTS.md forbids.  `gpu.vendor` below is
+      // "amd", so naming the AMD driver is a fact about this jail, not a
+      // guess.  Verify after a restart with:  vulkaninfo --summary
+      "VK_ICD_FILENAMES": "/share/vulkan/icd.d/radeon_icd.x86_64.json"
+    }
+  ],
   // Extra tools to install via mise (key: tool name, value: version string).
   // Default: {"neovim": "stable"} — override in user or workspace config.
   // "mise_tools": {"neovim": "nightly", "typst": "latest"}

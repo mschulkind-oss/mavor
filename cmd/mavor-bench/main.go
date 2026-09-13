@@ -198,9 +198,14 @@ func run() error {
 				fmt.Sprintf("`%s` brings up only %v — no GPU backend, so a GPU column would be CPU numbers mislabelled", o.gpuBin, report.WhisperGPUBackends),
 			})
 		case report.Machine.GPUName == "":
+			// Still a refusal — a GPU column needs a device, and none
+			// enumerated. But say WHICH of the several reasons it was: an
+			// unloadable loader and an absent GPU are indistinguishable in
+			// the output and take opposite actions to fix.
 			report.Skipped = append(report.Skipped, skipNote{
 				"whisper-cli / gpu",
-				"the build has a GPU backend but no Vulkan device enumerated, so it would have fallen back to CPU",
+				"the build has a GPU backend but no Vulkan device enumerated, so it would have fallen back to CPU — " +
+					vulkanAbsenceReason(),
 			})
 		default:
 			// The same binary with -ng, so the GPU row has something to be
