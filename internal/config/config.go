@@ -432,6 +432,18 @@ func Path() string {
 	return filepath.Join(xdgConfigHome(), "mavor", "config.toml")
 }
 
+// ConfigHome is the directory user configuration is written under:
+// $XDG_CONFIG_HOME when it is set, and ~/.config otherwise.
+//
+// Exported because Path is not the only file mavor writes there — `mavor
+// service install` writes a systemd unit under the same root — and every such
+// writer has to agree on where that root is. A writer that reaches for $HOME
+// directly instead lands outside whatever config home the caller set, which
+// is how a unit test once rewrote a developer's real mavor.service.
+func ConfigHome() string {
+	return xdgConfigHome()
+}
+
 // ExpandPath expands environment variables and converts a leading ~ to the user's home directory.
 func ExpandPath(p string) string {
 	if p == "" {

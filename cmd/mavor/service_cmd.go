@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/mschulkind-oss/mavor/internal/config"
 )
 
 const systemdUnitTemplate = `[Unit]
@@ -83,12 +85,19 @@ func newServiceCmd() *cobra.Command {
 	return cmd
 }
 
+// getServicePath is where the systemd user unit is written and read.
+//
+// It resolves through config.ConfigHome rather than $HOME because that is the
+// directory systemd itself looks in: systemd.unit(5) searches
+// $XDG_CONFIG_HOME/systemd/user first and falls back to ~/.config/systemd/user
+// only when XDG_CONFIG_HOME is unset. Reading $HOME directly disagreed with
+// systemd for anyone who sets XDG_CONFIG_HOME, and — because it ignored the
+// config home its caller had set — let `mavor setup` running inside a unit
+// test overwrite the developer's real mavor.service with an ExecStart naming
+// the ephemeral `go test` binary. That unit stayed enabled and crash-looped at
+// every login once the temp build directory was gone.
 func getServicePath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "/root"
-	}
-	return filepath.Join(home, ".config", "systemd", "user", "mavor.service")
+	return filepath.Join(config.ConfigHome(), "systemd", "user", "mavor.service")
 }
 
 func runServiceInstall(start bool) error {
