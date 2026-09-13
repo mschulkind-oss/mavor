@@ -367,8 +367,12 @@ one batch — for the same reason. The two-pass ASR literature (a fast first pas
 emitting partials, an accurate second pass finalizing) is the same idea with a
 shared encoder.
 
-Cost is real but bounded: a streaming zipformer decodes at roughly 0.06–0.08
-real-time factor and keeps up on one to two cores, alongside the main model.
+Cost is real but bounded on CPU: a streaming zipformer decodes at roughly
+0.06–0.08 real-time factor and keeps up on one to two cores, alongside the main
+model. The model this slot eventually landed on ([§6.2](#62-the-resolution-rule))
+is heavier — 0.395 real-time factor — but still comfortably inside real time,
+which is what a preview needs. Memory, not CPU, turned out to be the cost that
+matters; [§6.2](#62-the-resolution-rule) prices it.
 
 ### 6.2 The resolution rule
 
@@ -381,15 +385,28 @@ real-time factor and keeps up on one to two cores, alongside the main model.
 3. **Otherwise**, fall back to phrase mode, and have `doctor` say which model to
    pull for a better preview.
 
-**The designated companion is the NeMo streaming FastConformer.**
-[OQ-2](#decision-ledger) first chose the 20M streaming zipformer on download
-size, and measurement reversed that: the zipformer loses the opening words of
-an utterance and emits upper case, while the FastConformer gets them and is
-already lower case, at the same latency. The catalogued `zipformer-streaming` is a
-310 MB artifact for a resident int8 encoder of roughly 40 MB, which is a poor
-trade for something that only paints an overlay; the 20M model upstream
-publishes is the right size for the job. It stays selectable by name for anyone
-who wants the larger one.
+**The designated companion is `nemotron-streaming-en-560ms`.**
+[OQ-2](#decision-ledger) has been answered three times, always on the same
+question — does the preview get the opening words of an utterance right? — and
+the answer moved as the catalog grew. It first chose the 20M streaming
+zipformer, on download size. Measurement reversed that: the zipformer loses the
+opening words and emits upper case, where the streaming FastConformer got them
+at the same latency. The 2026-09-13 sweep measured all seven streaming entries
+the catalog now holds and reversed it again, because the FastConformer does not
+in fact get them. Fed the fixture in 30 ms chunks it emits `lux`, then
+`luxe is`, lower case and unpunctuated, for a clip that opens with the word
+"Lux"; `nemotron-streaming-en-560ms` has `Lux is` correct 240 ms later,
+capitalised and punctuated, and never takes it back. Over the whole clip that
+is a 1.8% word error rate against 12.7%.
+
+**The price is memory, and it is the largest single cost in this design.**
+966 MB peak resident against the FastConformer's 550 MB, held beside the main
+model for the life of the daemon because the companion loads at daemon start.
+The download barely moves — 442 MB against 429 MB — so `mavor setup` is
+unaffected. Both previous occupants stay in the catalog and stay selectable by
+name: `fastconformer-streaming` at 550 MB resident and
+`zipformer-streaming-20m` at 112 MB, which is what makes the 966 MB a default
+rather than a requirement.
 
 **`mavor setup` always pulls it** ([OQ-3](#decision-ledger)), which makes step 3 a safety net rather
 than the normal path — it catches a model deleted after setup, or a config
@@ -820,6 +837,7 @@ This makes 21 keys rather than the 20 [§8](#8-the-proposed-file) counted.
 | OQ-1 | cgo only. The pure-Go build and the `sherpa` tag are deleted, not demoted — one build, one artifact | 2026-09-05 | [§4](#4-the-build-is-cgo-always) The build is cgo, always |
 | OQ-2 | The 20M-parameter streaming zipformer is the designated companion; `zipformer-streaming` stays selectable by name | 2026-09-05 | [§6.2](#62-the-resolution-rule) The resolution rule |
 | OQ-2 | **Superseded 2026-09-06:** the companion is `fastconformer-streaming`. On the same fixture the 20M zipformer lost the opening words and shouted (`'S IS IN THE PIT`) while the FastConformer got them and was already lower case (`luxe is in the pit`), at the same latency. Download size was the wrong thing to optimise for something on screen at every dictation | 2026-09-06 | `speech.DefaultCompanionModel` |
+| OQ-2 | **Superseded 2026-09-13:** the companion is `nemotron-streaming-en-560ms`. The sweep of that date measured all seven streaming entries the catalog now holds, and the FastConformer came last on accuracy — 12.7% word error rate against 1.8%. On the partial stream, which is what decided this slot the previous two times, it emits `lux` then `luxe is` for a clip opening with the word "Lux" while the Nemotron has `Lux is` right 240 ms later, capitalised and punctuated. The cost is 966 MB peak resident against 550 MB, for the life of the daemon | 2026-09-13 | `speech.DefaultCompanionModel`, [roadmap item 1e](../roadmap.md#-1e-the-preview-companion-default-is-nemotron-streaming-en-560ms--resolved-2026-09-13) |
 | OQ-3 | `mavor setup` always pulls the companion, is idempotent, and makes the current config fully runnable. A named model that is missing is fatal, never a downgrade | 2026-09-05 | [§6.2](#62-the-resolution-rule), [§10.2](#102-failure-paths) Failure paths |
 | OQ-4 | The `[vocabulary]` table lands now; the window-context design adopts its key shape rather than replacing it | 2026-09-05 | [§7](#7-vocabulary-and-decoding) Vocabulary and decoding |
 | OQ-5 | `[preview]` stays a table — `pause_ms` and `min_phrase_ms` belong with the thing they tune | 2026-09-05 | [§8](#8-the-proposed-file) The proposed file |

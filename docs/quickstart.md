@@ -1,7 +1,7 @@
 ---
 title: "mavor — 5-Minute Quickstart"
 author: "Matthew Schulkind"
-date: 2026-09-05
+date: 2026-09-13
 status: accepted
 tags: [quickstart, guide, sway, wayland, tutorial, setup, doctor]
 summary: "Install mavor, run `mavor setup`, bind a key, and dictate your first sentence — the shortest path from nothing to typed words, with what to check when a step does not land."
@@ -56,24 +56,36 @@ mavor setup — automated first-run configuration & model install
 downloading whisper-base.en (Whisper Base, 74M parameters, English-only — the default)
 URL: https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
 ✅ Downloaded and verified model "whisper-base.en"
-📥 Downloading model "zipformer-streaming-20m" into /home/you/.cache/mavor/models...
-downloading zipformer-streaming-20m (Streaming Zipformer transducer, 20M parameters — small enough to run alongside another model as the live-preview source)
-URL: https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2
-✅ Successfully extracted 13 model files to /home/you/.cache/mavor/models/sherpa/zipformer-streaming-20m
-✅ Downloaded and verified model "zipformer-streaming-20m"
+📥 Downloading model "nemotron-streaming-en-560ms" into /home/you/.cache/mavor/models...
+downloading nemotron-streaming-en-560ms (Nemotron Speech Streaming 0.6B English, INT8, 560ms chunk — coarser updates, more context per step)
+URL: https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25.tar.bz2
+✅ Downloaded and verified model "nemotron-streaming-en-560ms"
 
 ================================================================
 🎉 Setup complete! mavor is configured and ready.
 ```
 
 Two models, because the scaffolded config names two. `whisper-base.en` is the
-141 MB Whisper model that produces your text — it scores 0.0% word error on
-the project's fixture, and the larger Whisper models score *worse* on
-formatted text. `zipformer-streaming-20m` is the 122 MB streaming companion
-that paints the live preview in the overlay while you speak; it never
-contributes a word to what gets typed.
-[`choosing-a-model.md`](./choosing-a-model.md) explains both choices, and
+141 MB Whisper model that produces your text — it scores 0.0% word error on the
+project's fixture, and the larger Whisper models score *worse* on formatted
+text. `nemotron-streaming-en-560ms` is the 442 MB **preview companion**: a
+second streaming model that decodes the same audio as you speak, purely to
+paint the live preview in the overlay. It never contributes a word to what gets
+typed. [`choosing-a-model.md`](./choosing-a-model.md) explains both choices, and
 which model to pick if English-only does not fit.
+
+> [!NOTE]
+> **The companion costs 966 MB of resident memory, held for as long as the
+> daemon runs.** It loads at daemon start and stays beside your main model, so
+> that is memory spent on the overlay rather than on the text you keep. It buys
+> a preview that gets the opening words right and punctuates them — the
+> previous default, `fastconformer-streaming`, made seven times as many word
+> errors and emitted no punctuation at all, in 550 MB. If you would rather have
+> the memory, set `source` under `[preview]` to `"fastconformer-streaming"`
+> (550 MB resident) or `"zipformer-streaming-20m"` (112 MB) and re-run
+> `mavor setup`.
+> [`choosing-a-model.md`](./choosing-a-model.md#you-do-not-have-to-choose-the-preview-companion)
+> has the numbers behind the default.
 
 > [!NOTE]
 > **`mavor setup` is idempotent, and it is how you apply a config edit.** It
@@ -88,7 +100,7 @@ which model to pick if English-only does not fit.
 > ✅ Configuration file found at /home/you/.config/mavor/config.toml
 > ✅ All required system runtime tools (parec, wtype, wl-copy) are available
 > ✅ Model "whisper-base.en" is already installed (/home/you/.cache/mavor/models/ggml-base.en.bin)
-> ✅ Model "zipformer-streaming-20m" is already installed (/home/you/.cache/mavor/models/sherpa/zipformer-streaming-20m)
+> ✅ Model "nemotron-streaming-en-560ms" is already installed (/home/you/.cache/mavor/models/sherpa/nemotron-streaming-en-560ms)
 > ```
 >
 > After `setup` exits zero, `mavor daemon` starts on that config and needs no
@@ -128,7 +140,7 @@ mavor doctor — system and environment verification
 ✅ GPU acceleration:            CPU only (whisper-cli loaded no GPU backend — the stock build ships CPU backends only; install a whisper.cpp built with -DGGML_VULKAN=ON for acceleration)
 ✅ Configuration file:          valid config (model=whisper-base.en, preview=auto)
 ✅ Voice model availability:    whisper-base.en found at /home/you/.cache/mavor/models/ggml-base.en.bin
-✅ Live preview source:         companion (zipformer-streaming-20m) — "whisper-base.en" does not decode incrementally, so the streaming companion "zipformer-streaming-20m" runs alongside it
+✅ Live preview source:         companion (nemotron-streaming-en-560ms) — "whisper-base.en" does not decode incrementally, so the streaming companion "nemotron-streaming-en-560ms" runs alongside it
 ✅ Vocabulary biasing:          no [vocabulary] configured — nothing is biased
 ❌ Daemon socket status:        daemon is not running at /run/user/1000/mavor.sock (run 'mavor daemon' or 'mavor service start')
 ✅ Systemd user service:        systemd unit not installed (optional; run 'mavor service install' to enable)

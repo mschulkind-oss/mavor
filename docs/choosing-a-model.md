@@ -43,7 +43,7 @@ where that runtime runs. `mavor doctor` prints what it chose.
 | **The lightest thing that works** | `whisper-tiny.en` | 856 ms, 198 MB, and still fully punctuated and capitalised. |
 | **Languages other than English** | `parakeet-tdt-0.6b` | 25 languages, clean formatting. Costs 1.54 GB of RAM. |
 | **A non-English model that stays small** | `canary-180m` | English, Spanish, German, French in 460 MB, formatting as good as `whisper-base.en`. |
-| **Words appearing while you speak** | `whisper-base.en`, unchanged | The preview companion paints the overlay live; your typed text still comes from `model`. [Below](#you-do-not-have-to-choose-the-preview-companion). |
+| **Words appearing while you speak** | `whisper-base.en`, unchanged | The preview companion — `nemotron-streaming-en-560ms` by default — paints the overlay live; your typed text still comes from `model`. Costs 966 MB resident on top of it. [Below](#you-do-not-have-to-choose-the-preview-companion). |
 | **A streaming model as your main model** | `nemotron-streaming-en-560ms` | 1.8% word error rate while decoding live, punctuated and capitalised, first words 433 ms in. Costs 964 MB. [Below](#streaming-text-while-you-speak). |
 | **Maximum accuracy** | `whisper-base.en`, still | See below — the large models do not deliver this. |
 
@@ -171,8 +171,11 @@ output and **capitals F1** balances the words a model capitalised correctly
 against the ones it missed or invented, 1.00 being agreement with the reference;
 both are defined with the rest of the method in
 [the report](./reports/model-benchmarks.md#accuracy). Every figure below is that
-report's `sherpa / cpu / streaming` row — audio fed in 100 ms chunks, the way
-the daemon feeds it.
+report's `sherpa / cpu / streaming` row — audio fed in 100 ms chunks, from a
+model already loaded. The daemon's own preview tick is 30 ms, which is the
+cadence the companion comparison
+[below](#you-do-not-have-to-choose-the-preview-companion) uses; the two are not
+directly comparable.
 
 | Model | First token | Total | WER | Punct/word | Capitals F1 | Peak RAM |
 |---|---:|---:|---:|---:|---:|---:|
@@ -190,12 +193,13 @@ model in the catalog — one word behind `whisper-base.en`'s 0.0% — and it get
 there while emitting its first words 433 ms in, punctuated and capitalised. It
 is the first entry in this table that does not ask you to trade accuracy for
 liveness, which makes it a real candidate for `model` and not only for the
-overlay. It costs 966 MB resident, six times `zipformer-streaming`.
+overlay. It costs 966 MB resident, six times `zipformer-streaming`. It is also
+what `preview.source = "auto"` now loads —
+[below](#you-do-not-have-to-choose-the-preview-companion).
 
 `fastconformer-streaming` sits at the other end: 12.7% WER, the worst of any
 streaming model measured, with **no punctuation and no capitalisation at all**.
-That matters chiefly because it is the model `preview.source = "auto"` loads —
-[below](#you-do-not-have-to-choose-the-preview-companion).
+It held the companion slot until 2026-09-13 and lost it on exactly that.
 
 Two of the newer entries are far slower than their chunk size suggests:
 
@@ -229,34 +233,47 @@ of resolution rather than a genuine dead heat.
 ### You do not have to choose: the preview companion
 
 Picking a streaming model as `model` means accepting its accuracy for the text
-you keep. You rarely need to, because mavor can run a small streaming model
+you keep. You rarely need to, because mavor can run a second streaming model
 *alongside* your main model purely to paint the overlay while you speak. That
 second model is the **preview companion**: it is fed the same audio, emits
 partial text continuously, and **never contributes a word to the final
 transcript** — the text that gets typed is always `model`'s, produced once,
 when you release the key.
 
-`preview.source = "auto"` loads `fastconformer-streaming`, a 429 MB download,
-and `mavor setup` pulls it alongside your main model. It replaced
-`zipformer-streaming-20m` in that slot: on the same fixture the zipformer lost
-the opening words and returned upper case, which reads as a broken preview
-even when the typed text is perfect. `zipformer-streaming-20m` stays
-selectable by name at 122 MB for anyone who wants the smaller download, as
-does the 296 MB `zipformer-streaming`.
+`preview.source = "auto"` loads `nemotron-streaming-en-560ms`, a 442 MB
+download, and `mavor setup` pulls it alongside your main model.
+
+It is the third model in that slot, and each move was decided on the same
+question: **does the preview get the opening words right?** A whole-clip word
+error rate cannot see that, so the comparison is the partial stream itself,
+with the fixture fed in 30 ms chunks the way the daemon feeds it.
+`zipformer-streaming-20m` lost the opening words and returned upper case.
+`fastconformer-streaming` took the slot from it on 2026-09-06 by getting them
+— and on the 2026-09-13 sweep it turned out not to: it emits `lux`, then
+`luxe is`, for a clip that opens with the word "Lux", in lower case with no
+punctuation. `nemotron-streaming-en-560ms` reaches its first partial 240 ms
+later and has `Lux is` already correct, capitalised and punctuated, and never
+takes it back. Across the whole clip that is 1.8% WER against 12.7% — seven
+times fewer word errors — for 51 ms more to first token on the sweep's
+warm-model measurement (433 ms against 382 ms).
 
 > [!IMPORTANT]
-> **The benchmark has since found a far more accurate model in that size class,
-> and the default has not changed.** `nemotron-streaming-en-560ms` scores 1.8%
-> WER where `fastconformer-streaming` scores 12.7% — seven times fewer errors —
-> for 51 ms more to first token (433 ms against 382 ms) and about 420 MB more
-> resident (966 MB against 550 MB). It also punctuates and capitalises, which
-> the incumbent does not do at all, so its partials look like the text that is
-> about to land. Whether that trade is worth making by default is an open
-> decision rather than a settled one; the roadmap carries it as
-> [item 1e](./roadmap.md#-1e-the-preview-companion-default-is-now-a-decision-not-a-measurement).
-> You can make it for yourself today without waiting for that:
-> `source = "nemotron-streaming-en-560ms"` under `[preview]`, then `mavor setup`
-> to fetch it.
+> **The companion costs 966 MB resident, against the 550 MB of the model it
+> replaced.** That is roughly 420 MB more held for the entire time the daemon
+> runs, because the companion loads at daemon start and stays alongside your
+> main model. The download barely moves — 442 MB against 429 MB — so it is
+> memory you are spending, not disk or setup time. If that is the wrong trade
+> on your machine, `preview.source` takes a model name. Measured resident, the
+> alternatives are `fastconformer-streaming` at 550 MB (the previous default),
+> `zipformer-streaming` at 161 MB and `zipformer-streaming-20m` at 112 MB —
+> all three cheaper, and all three worse at formatting. Run `mavor setup` after
+> the edit and it fetches whichever you named.
+
+The Nemotron weights also carry a different licence from the rest of the
+catalog — [see below](#the-nemotron-models-and-a-new-family-in-the-listing) —
+which matters if you redistribute them, and not at all if you dictate with
+them. The roadmap records how the slot was decided as
+[item 1e](./roadmap.md#-1e-the-preview-companion-default-is-nemotron-streaming-en-560ms--resolved-2026-09-13).
 
 So the streaming table above is about a trade you only make deliberately: for
 words on screen while you talk, keep a batch `model` and let the companion do
@@ -293,9 +310,10 @@ The remaining catalogued sherpa models — `parakeet-ctc`, `parakeet-unified-en`
 [`model-benchmarks.md`](./reports/model-benchmarks.md) but are not better than
 something above at any job. The streaming entries are judged on different
 criteria and live in [their own section](#streaming-text-while-you-speak):
-`zipformer-streaming` and `zipformer-streaming-20m` earn their place as preview
-companions rather than as `model`, `fastconformer-streaming` is the least
-accurate model in that section, and `nemotron-streaming-en-560ms` is the one
+`zipformer-streaming` and `zipformer-streaming-20m` earn their place as
+lightweight preview companions rather than as `model`,
+`fastconformer-streaming` is the least accurate model in that section, and
+`nemotron-streaming-en-560ms` is both the default preview companion and the one
 streaming entry that competes with this table on its own terms.
 
 ## The six models added on 2026-09-13
@@ -373,8 +391,9 @@ the same audio, and on this CPU each invocation costs more than the shorter
 chunk saves. It is the less accurate of the two as well.
 
 - `nemotron-streaming-en-560ms` is the one to reach for, whether as your actual
-  `model` or as a
-  [preview companion](#you-do-not-have-to-choose-the-preview-companion).
+  `model` or as the
+  [preview companion](#you-do-not-have-to-choose-the-preview-companion), which
+  is the slot it holds by default.
 - `nemotron-streaming-en-80ms` earns its catalog row as the measured
   counter-example rather than as a recommendation. On this machine there is no
   job it does better than the 560 ms export; a faster machine, where the extra

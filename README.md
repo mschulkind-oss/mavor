@@ -136,9 +136,13 @@ mavor doctor     # what this machine will actually do with that config
 ```
 
 `mavor setup` makes the current config runnable: it downloads the main model
-*and* the small streaming model the live preview runs alongside it, skips
-whatever is already in the cache, and is safe to re-run after you edit
-`config.toml`. `mavor config init` scaffolds the file on its own if you would
+*and* the streaming model the live preview runs alongside it — on a scaffolded
+config, `whisper-base.en` and `nemotron-streaming-en-560ms` — skips whatever is
+already in the cache, and is safe to re-run after you edit `config.toml`. The
+preview companion is the more expensive of the two at runtime: 966 MB resident,
+held for as long as the daemon runs. Set `preview.source` to
+`zipformer-streaming-20m` (112 MB) if you would rather have the memory than the
+punctuated preview, or `preview.enabled = false` for no companion at all. `mavor config init` scaffolds the file on its own if you would
 rather start there.
 
 ## Compositor integration
@@ -287,14 +291,14 @@ cache marked:
 ```
 Model cache: /home/you/.cache/mavor/models
 
-NAME                     ENGINE       SIZE  LANGUAGES            STREAM  STATUS
-whisper-tiny.en          whisper   74.1 MB  en                   no      –
-whisper-base.en          whisper  141.1 MB  en                   no      ✓ 141.1 MB  ★
-whisper-large-v3-turbo   whisper   1.51 GB  multi (99)           no      –
-fastconformer-streaming  sherpa   429.4 MB  en                   yes     –
-parakeet-tdt-0.6b        sherpa   464.6 MB  multi (25)           no      –
-sensevoice-small         sherpa   999.3 MB  zh, en, ja, ko, yue  no      –
-zipformer-streaming-20m  sherpa   122.0 MB  en                   yes     ✓ 130.1 MB
+NAME                         ENGINE       SIZE  LANGUAGES            STREAM  STATUS
+whisper-tiny.en              whisper   74.1 MB  en                   no      –
+whisper-base.en              whisper  141.1 MB  en                   no      ✓ 141.1 MB  ★
+whisper-large-v3-turbo       whisper   1.51 GB  multi (99)           no      –
+nemotron-streaming-en-560ms  sherpa   442.5 MB  en                   yes     –
+parakeet-tdt-0.6b            sherpa   464.6 MB  multi (25)           no      –
+sensevoice-small             sherpa   999.3 MB  zh, en, ja, ko, yue  no      –
+zipformer-streaming-20m      sherpa   122.0 MB  en                   yes     ✓ 130.1 MB
 …
 
 ★ active   ✓ downloaded   – not downloaded
@@ -314,12 +318,12 @@ That is seven of thirty-one rows; `mavor models list` prints them all.
   on disk.
 
 ```bash
-mavor models list                          # the catalog above
-mavor models list --installed              # only what is downloaded
-mavor models list --verbose                # a block per model, with the detail below
-mavor models pull whisper-base.en          # production default
-mavor models pull whisper-tiny.en          # smallest; what the test suite uses
-mavor models pull fastconformer-streaming  # the live-preview companion
+mavor models list                              # the catalog above
+mavor models list --installed                  # only what is downloaded
+mavor models list --verbose                    # a block per model, with the detail below
+mavor models pull whisper-base.en              # production default
+mavor models pull whisper-tiny.en              # smallest; what the test suite uses
+mavor models pull nemotron-streaming-en-560ms  # the live-preview companion
 ```
 
 `--verbose` adds the properties that do not fit a column:

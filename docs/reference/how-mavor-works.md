@@ -235,11 +235,16 @@ Two mechanisms can produce that text, and which one runs is decided **once, at
 daemon start**, by `speech.ResolvePreview` — not per recording and not by a type
 assertion on the main transcriber:
 
-- **Companion model** — a small streaming recognizer loaded *alongside* the main
+- **Companion model** — a streaming recognizer loaded *alongside* the main
   model, fed the same PCM through `StartStream` and then `FeedChunk`, each call
   returning the accumulated partial text. The designated companion is
-  `zipformer-streaming-20m`, which is in the catalog for this job: 20M
-  parameters, small enough that painting an overlay with it is a fair trade.
+  `nemotron-streaming-en-560ms`. What that slot is selected on is not accuracy
+  over a whole clip but **whether the opening words of an utterance survive the
+  first chunks** — a preview that has to take back its first word reads as a
+  bug even when the typed text is perfect — and the 2026-09-13 sweep is where
+  the two previous occupants, `zipformer-streaming-20m` and
+  `fastconformer-streaming`, both lost on it
+  ([`choosing-a-model.md`](../choosing-a-model.md#you-do-not-have-to-choose-the-preview-companion)).
 - **Phrase mode** — no second model. Frames are accumulated,
   `audio.CalculateRMS` classifies each as speech or silence, and a silence run
   of `preview.pause_ms` following at least `preview.min_phrase_ms` of speech
@@ -249,8 +254,9 @@ assertion on the main transcriber:
 `preview.source = "auto"` resolves in this order:
 
 1. **The main model already decodes incrementally** (the catalog's `Streaming`
-   flag — the streaming FastConformer and the streaming zipformers). Its own
-   partials are read directly and no second model is loaded.
+   flag — seven entries, the streaming zipformers, the streaming FastConformer,
+   the Nemotron streaming exports and the streaming Parakeet). Its own partials
+   are read directly and no second model is loaded.
 2. **The companion is installed** — load it and run it alongside.
 3. **Otherwise** fall back to phrase mode, warn, and record the model in
    `PreviewPlan.Missing` — which the daemon logs and `mavor doctor` fails on.
@@ -264,14 +270,20 @@ because a broken preview must never cost the user dictation.
 
 The companion loads at daemon start rather than lazily at the first recording,
 so the first dictation is not the slow one — resident memory traded for
-first-use latency, deliberately.
+first-use latency, deliberately. The bill for that trade is the companion's
+peak resident set, 966 MB for `nemotron-streaming-en-560ms`, held for the whole
+life of the daemon on top of the main model. `preview.source` takes a model
+name, so a smaller companion is one config key away:
+`fastconformer-streaming` is 550 MB and `zipformer-streaming-20m` is 112 MB.
 
 > [!WARNING]
 > The preview never emits. Partial text is provisional, and the text the user
 > receives always comes from the single final `Transcribe` by the **main** model
 > over the whole recording. Do not wire `SetText` into `Emit` to "save a step" —
 > the two disagree by construction, and the companion is deliberately the
-> smaller, worse model.
+> provisional one. It is not necessarily the cheaper one either — the default
+> companion holds more resident memory than `whisper-base.en`, the default
+> `model`, uses to transcribe.
 
 Setting `preview.enabled = false` disables the preview entirely; the level meter
 is unaffected.
@@ -516,8 +528,9 @@ The empty space, verified by search rather than assumed:
 
 ## Current values
 
-Verified at `7e52f94`. The prose above says what each of these is for; this
-table is the only place the values themselves are stated.
+Verified at `7e52f94`, except the preview companion, which has moved twice
+since and is current as of 2026-09-13. The prose above says what each of these
+is for; this table is the only place the values themselves are stated.
 
 | Value | Setting | Defined in |
 | :--- | :--- | :--- |
@@ -538,7 +551,7 @@ table is the only place the values themselves are stated.
 | History retention | 500 entries | `history.DefaultMax` |
 | Default model | `whisper-base.en` | `config.DefaultModel` |
 | Default preview | enabled, `source = "auto"` | `config.Default` |
-| Default preview companion | `zipformer-streaming-20m` | `speech.DefaultCompanionModel` |
+| Default preview companion | `nemotron-streaming-en-560ms` | `speech.DefaultCompanionModel` |
 | Default placement | derived: `local-server` for whisper, `in-process` for sherpa | `models.Select` |
 | Default threads | this machine's physical core count | `config.PhysicalCores` |
 | Default GPU | `auto` (whisper only; sherpa is CPU-only on this build) | `config.Default`, `config.GPUOff` |

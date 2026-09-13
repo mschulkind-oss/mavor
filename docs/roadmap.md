@@ -9,7 +9,7 @@ summary: "Living roadmap for the mavor dictation daemon: open decisions, the rea
 
 # Ongoing Work: `mavor` Voice-to-Text Utility
 
-**Status:** 2 Needs Attention (💬), 7 Ready to Implement (📦), 6 Open Threads (🏗️ 1, 🔒 1, 🛑 1, 🧊 3)
+**Status:** 2 Needs Attention (💬), 6 Ready to Implement (📦), 6 Open Threads (🏗️ 1, 🔒 1, 🛑 1, 🧊 3)
 
 ---
 
@@ -118,10 +118,12 @@ The catalog is 31 entries now. `zipformer-streaming-20m` joined it as the
 preview companion (item 7), `fastconformer-streaming` took that slot from it
 (`08ce3e3`), and six more arrived on 2026-09-13. The sweep of that date
 (`4b1d2d4`) ran over all 31, so every catalog entry has speed, memory and
-accuracy figures. [Item 1d](#-1d-nothing-compares-the-catalog-against-upstream)
-and [item 1e](#-1e-the-preview-companion-default-is-now-a-decision-not-a-measurement)
-below are what that leaves open — comparing the catalog against upstream, and a
-companion default that is now a choice rather than a gap.
+accuracy figures. Two things came out of that.
+[Item 1e](#-1e-the-preview-companion-default-is-nemotron-streaming-en-560ms--resolved-2026-09-13)
+is closed: the sweep priced the companion slot across all seven streaming
+entries and `nemotron-streaming-en-560ms` took it.
+[Item 1d](#-1d-nothing-compares-the-catalog-against-upstream) is still open —
+nothing compares the catalog against upstream.
 
 Fixed. The catalog-wide benchmark
 ([`model-benchmarks.md`](reports/model-benchmarks.md)) now reports **60
@@ -168,8 +170,8 @@ First measurements, from a warm model:
 a look if streaming became a product feature rather than a catalog claim. The
 2026-09-13 sweep supersedes both rows and reverses that second finding — it
 measures every streaming entry, and
-[item 1e](#-1e-the-preview-companion-default-is-now-a-decision-not-a-measurement)
-reads the result.
+[item 1e](#-1e-the-preview-companion-default-is-nemotron-streaming-en-560ms--resolved-2026-09-13)
+is what reading the result decided.
 
 ### 📦 1b. Feed the measured numbers back into the catalog
 
@@ -260,17 +262,13 @@ Three things it has to get right to be worth running:
   should say it is a sherpa check rather than implying coverage it does not
   have.
 
-### 📦 1e. The preview companion default is now a decision, not a measurement
+### ✅ 1e. The preview companion default is `nemotron-streaming-en-560ms` — RESOLVED (2026-09-13)
 
 [`speech.DefaultCompanionModel`](../internal/speech/companion.go) is
-`fastconformer-streaming`, and the doc comment on that constant records the
-measurement that put it there. Against `zipformer-streaming-20m`, same fixture,
-same 30 ms chunks, same decode loop: first output at 1.53 s against 1.68 s and,
-the part that actually decided it, the FastConformer got the opening words and
-returned them in lower case where the zipformer lost them and shouted.
-
-That comparison had two candidates because the catalog had two candidates. It
-now has seven streaming entries, and the 2026-09-13 sweep
+`nemotron-streaming-en-560ms`. It was `fastconformer-streaming`, and that
+choice had been made against a field of one — `zipformer-streaming-20m` was the
+only other streaming entry in the catalog at the time. The catalog now has
+seven, and the 2026-09-13 sweep
 ([`model-benchmarks.md`](reports/model-benchmarks.md)) measured every one of
 them. **The incumbent came last on accuracy, by a wide margin.**
 
@@ -278,48 +276,66 @@ them. **The incumbent came last on accuracy, by a wide margin.**
 |---|---:|---:|---:|---:|---:|
 | `zipformer-streaming` | 107 ms | 7.3% | 0.04 | 0.20 | 161 MB |
 | `zipformer-streaming-20m` | 108 ms | 9.1% | 0.02 | 0.15 | 112 MB |
-| `fastconformer-streaming` (the default) | 382 ms | **12.7%** | 0.00 | 0.00 | 550 MB |
+| `fastconformer-streaming` (the outgoing default) | 382 ms | **12.7%** | 0.00 | 0.00 | 550 MB |
 | `nemotron-streaming-multi-560ms` | 414 ms | 7.3% | 0.09 | 0.80 | 976 MB |
-| `nemotron-streaming-en-560ms` | 433 ms | **1.8%** | 0.15 | 0.91 | 966 MB |
+| `nemotron-streaming-en-560ms` (the new default) | 433 ms | **1.8%** | 0.15 | 0.91 | 966 MB |
 | `nemotron-streaming-en-80ms` | 1.80 s | 3.6% | 0.15 | 0.83 | 958 MB |
 | `parakeet-unified-en-streaming-240ms` | 5.27 s | 3.6% | 0.16 | 0.91 | 1024 MB |
 
 `nemotron-streaming-en-560ms` makes **seven times fewer word errors** than the
-default for **51 ms** more to first token and about 420 MB more resident, and it
-punctuates and capitalises where the default does neither at all — which is the
-same criterion that settled the slot last time, since a preview that disagrees
-with the text that lands reads as a bug. The two entries this item named as
-untried are answered too, and negatively: `nemotron-streaming-en-80ms` needs
-1.80 s to first token and `parakeet-unified-en-streaming-240ms` 5.27 s, so
-neither is a companion at any price.
+outgoing default for **51 ms** more to first token, and it punctuates and
+capitalises where the outgoing default does neither at all — which matters for
+a preview, because partials that disagree with the text about to land read as a
+bug. The two candidates this item once listed as untried are answered too, and
+negatively: `nemotron-streaming-en-80ms` needs 1.80 s to first token and
+`parakeet-unified-en-streaming-240ms` 5.27 s, so neither is a companion at any
+price.
 
-One companion criterion the sweep still does not cover: **whether the opening
-words survive the first chunks.** That is what took the slot from
-`zipformer-streaming-20m` in the first place, and a whole-clip word error rate
-cannot see it. Checking it is a look at the partial stream, not another
-benchmark run.
+**What actually settled it is the criterion the sweep cannot see** — whether
+the opening words survive the first chunks. A whole-clip word error rate
+averages that failure away, and it is the same criterion that settled the slot
+last time. Fed [`real_speech.wav`](../test/fixtures/real_speech.wav) in 30 ms
+chunks, the cadence
+[`daemon.startStreamingMonitoring`](../internal/daemon/daemon.go#L332) uses,
+the first partials are:
 
-**Next step, and it is the user's call rather than an implementation task:**
-decide whether `speech.DefaultCompanionModel` becomes
-`nemotron-streaming-en-560ms`. The download is 442 MB against 429 MB, so
-`mavor setup` costs about the same; the price is roughly 420 MB more resident in
-the daemon for the whole session, and a shipped default whose weights are under
-NVIDIA's OpenMDW-1.1 model-weights licence rather than Apache-2.0 like the rest
-of the catalog
-([what that changes](choosing-a-model.md#the-nemotron-models-and-a-new-family-in-the-listing)). Leaving the default where it is remains a
-legitimate answer — the finding is recorded either way, in
-[`choosing-a-model.md`](choosing-a-model.md#you-do-not-have-to-choose-the-preview-companion),
-and anyone can set `preview.source` to a model name today without waiting for
-the default to move.
+```text
+fastconformer-streaming      1560ms "lux"       1890ms "luxe is"   2040ms "luxe is in the"
+nemotron-streaming-en-560ms  1800ms "Lux is"    2370ms "Lux is in the pit"
+```
 
-**Separately, the docs disagree with the code.** `08ce3e3`
-changed the default companion and updated none of the prose;
-[`choosing-a-model.md`](choosing-a-model.md), [`user-guide.md`](user-guide.md)
-and [`../README.md`](../README.md) were corrected on 2026-09-13, and
-[`quickstart.md`](quickstart.md),
+The 240 ms here and the 51 ms in the table are not the same measurement: the
+table is the report's warm-model time to first token on 100 ms chunks, and
+these are wall-clock offsets into a clip fed in 30 ms chunks from a cold
+stream. Read them separately.
+
+The clip opens with the word "Lux". The FastConformer reaches *something*
+240 ms sooner, gets the word wrong, corrupts it further on the next update, and
+returns lower case with no punctuation. The Nemotron gets it right first time,
+capitalised and punctuated, and never takes it back. That is precisely the
+failure mode the FastConformer was originally chosen for beating in
+`zipformer-streaming-20m` — and it now loses on it.
+
+**The cost, stated plainly.** Peak resident memory goes from 550 MB to 966 MB.
+The companion is held for the life of the daemon alongside the main model, so
+that is roughly **420 MB more resident the entire time mavor runs**. The
+download is 442 MB against 429 MB, so `mavor setup` fetches about as much as
+before. And the weights are under NVIDIA's OpenMDW-1.1 model-weights licence
+rather than Apache-2.0 like the rest of the catalog
+([what that changes](choosing-a-model.md#the-nemotron-models-and-a-new-family-in-the-listing)).
+The escape hatch is `preview.source`, which takes a model name:
+`fastconformer-streaming` at 550 MB resident and `zipformer-streaming-20m` at
+112 MB both stay in the catalog and both stay selectable.
+
+**The prose was brought in line in the same pass.** `08ce3e3` had changed the
+default and updated none of it, which left [`quickstart.md`](quickstart.md),
 [`reference/how-mavor-works.md`](reference/how-mavor-works.md) and
-[`planning/dictation-workflows.md`](planning/dictation-workflows.md) still name
-`zipformer-streaming-20m` as what `preview.source = "auto"` loads.
+[`planning/dictation-workflows.md`](planning/dictation-workflows.md) naming
+`zipformer-streaming-20m` — a default two changes stale. Those three, plus
+[`choosing-a-model.md`](choosing-a-model.md), [`user-guide.md`](user-guide.md),
+[`../README.md`](../README.md) and
+[`design/configuration-surface.md`](design/configuration-surface.md), now name
+`nemotron-streaming-en-560ms`.
 
 ### 📦 2. `mavor doctor` — the checks it still does not do
 
@@ -434,10 +450,13 @@ What landed:
   stale name errors with the nearest entries named. On-disk filenames stay
   upstream's, and `speech.WhisperModelPath` is the only place the two
   vocabularies meet.
-- **A companion model drives the preview.** A 20M streaming zipformer runs
+- **A companion model drives the preview.** A small streaming recognizer runs
   alongside a main model that cannot decode incrementally, replacing the
   re-transcribe-at-every-pause behaviour — which survives as the named
-  fallback, "phrase mode". The preview still never emits.
+  fallback, "phrase mode". The preview still never emits. The model in that
+  slot was the 20M streaming zipformer here and has moved twice since; it is
+  `nemotron-streaming-en-560ms` now
+  ([item 1e](#-1e-the-preview-companion-default-is-nemotron-streaming-en-560ms--resolved-2026-09-13)).
 - **The build is cgo, always.** The pure-Go build and the `sherpa` tag were
   deleted rather than demoted; `build-sherpa` and `bench-sherpa` folded into
   `build` and `bench`; `scripts/sherpa-libs.sh` stages the two shared objects
@@ -607,10 +626,14 @@ The three routes, worst to best:
 
 > [!NOTE]
 > Zipformer has no ggml port that I could find — the third route covers
-> Parakeet and, with more work, Moonshine, but not Zipformer. The streaming
-> Zipformer **is** the preview companion as of `7e52f94` (the 20M variant), so
-> it stays on the CPU regardless of how this workstream lands. That is fine:
-> the companion is small by design and costs about one core.
+> Parakeet and, with more work, Moonshine, but not Zipformer. That used to
+> matter for the preview: the 20M streaming Zipformer was the preview companion
+> as of `7e52f94`. It is not any more — the companion is
+> `nemotron-streaming-en-560ms`
+> ([item 1e](#-1e-the-preview-companion-default-is-nemotron-streaming-en-560ms--resolved-2026-09-13)),
+> a NeMo model, so the second route's Parakeet work is the one that would reach
+> it. Either way it runs on the CPU today, and a preview that keeps up on the
+> CPU is not what this workstream is for.
 
 **Next step:** measure before building. Run the ggml Parakeet against the
 catalog's ONNX Parakeet on this machine, CPU and Vulkan, through `just bench`.
