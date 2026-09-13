@@ -3,6 +3,7 @@ package overlay
 import (
 	"image"
 	"image/color"
+	"math"
 	"strings"
 	"testing"
 )
@@ -232,6 +233,102 @@ func TestLabelsCarryNoEllipsis(t *testing.T) {
 			if strings.Contains(s, bad) {
 				t.Errorf("label %q contains %q; the dots animation is the ellipsis", s, bad)
 			}
+		}
+	}
+}
+
+// relLuminance is the WCAG relative luminance of an 8-bit sRGB colour.
+func relLuminance(r, g, b uint8) float64 {
+	lin := func(c uint8) float64 {
+		v := float64(c) / 255
+		if v <= 0.04045 {
+			return v / 12.92
+		}
+		return math.Pow((v+0.055)/1.055, 2.4)
+	}
+	return 0.2126*lin(r) + 0.7152*lin(g) + 0.0722*lin(b)
+}
+
+// contrastRatio is the WCAG ratio between two colours, from 1 (identical) to
+// 21 (black on white).
+func contrastRatio(l1, l2 float64) float64 {
+	if l1 < l2 {
+		l1, l2 = l2, l1
+	}
+	return (l1 + 0.05) / (l2 + 0.05)
+}
+
+// The preview text is read against whatever the desktop is showing through the
+// strip, so what matters is the backdrop's worst case: composited over pure
+// white. Tuning it against a dark wallpaper is what left the text washed out
+// on a pale one.
+func TestPreviewBackdropStaysReadableOverAnyBackground(t *testing.T) {
+	// Composite the backdrop over white, the brightest thing behind it can be.
+	a := float64(previewBG.A) / 255
+	over := func(c uint8) uint8 {
+		return uint8(math.Round(a*float64(c) + (1-a)*255))
+	}
+	bg := relLuminance(over(previewBG.R), over(previewBG.G), over(previewBG.B))
+	ink := relLuminance(previewInk.R, previewInk.G, previewInk.B)
+
+	if got := contrastRatio(ink, bg); got < 12 {
+		t.Errorf("preview contrast over a white background is %.1f:1, want at least 12:1", got)
+	}
+}
+
+// Opacity alone is not enough: the backdrop must also extend past the glyphs,
+// or the outermost letters are read against the desktop rather than against
+// the strip.
+func TestPreviewBackdropClearsItsText(t *testing.T) {
+	s := Scene{Visual: Recording, Preview: "quick brown foxjumping"}
+	img, err := Render(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := textFaces()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, pillH := pillSize(f, s)
+	pw := previewStripWidth(f, s)
+	ph := previewSize + 2*previewPadY + 4
+	px := (img.Bounds().Dx() - pw) / 2
+	py := pillH + previewGap
+
+	// Inside the strip, the glyphs are the only bright pixels; the fill is
+	// near-black. Halfway between the two is a safe threshold.
+	cut := (relLuminance(previewBG.R, previewBG.G, previewBG.B) + relLuminance(previewInk.R, previewInk.G, previewInk.B)) / 2
+	textBox := image.Rectangle{}
+	for y := py; y < py+ph; y++ {
+		for x := px; x < px+pw; x++ {
+			r, g, b, _ := img.At(x, y).RGBA()
+			if relLuminance(uint8(r>>8), uint8(g>>8), uint8(b>>8)) > cut {
+				p := image.Rect(x, y, x+1, y+1)
+				if textBox.Empty() {
+					textBox = p
+				} else {
+					textBox = textBox.Union(p)
+				}
+			}
+		}
+	}
+	if textBox.Empty() {
+		t.Fatal("no preview glyphs found inside the strip")
+	}
+
+	const wantX, wantY = 22, 10
+	for _, c := range []struct {
+		edge string
+		gap  int
+		want int
+	}{
+		{"left", textBox.Min.X - px, wantX},
+		{"right", px + pw - textBox.Max.X, wantX},
+		{"top", textBox.Min.Y - py, wantY},
+		{"bottom", py + ph - textBox.Max.Y, wantY},
+	} {
+		if c.gap < c.want {
+			t.Errorf("backdrop clears the text by %dpx on the %s, want at least %dpx", c.gap, c.edge, c.want)
 		}
 	}
 }

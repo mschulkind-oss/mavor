@@ -98,6 +98,50 @@ func TestPreviewAutoLoadsTheInstalledCompanion(t *testing.T) {
 	}
 }
 
+// The default companion is a deliberate choice with numbers behind it (see
+// the constant's doc comment), so it is pinned by name here: changing it is
+// allowed, changing it by accident is not. The catalog facts asserted
+// alongside are the ones resolveAutoPreview depends on — a default that does
+// not stream would silently make every "auto" preview useless, and the
+// mismatch would surface as an overlay that never updates rather than as a
+// failing test.
+func TestDefaultCompanionIsTheStreamingNemotron(t *testing.T) {
+	if DefaultCompanionModel != "nemotron-streaming-en-560ms" {
+		t.Errorf("DefaultCompanionModel = %q, want nemotron-streaming-en-560ms", DefaultCompanionModel)
+	}
+
+	spec, ok := models.Lookup(DefaultCompanionModel)
+	if !ok {
+		t.Fatalf("the default companion %q is not in the catalog", DefaultCompanionModel)
+	}
+	if !spec.Streaming {
+		t.Errorf("the default companion %q does not decode incrementally, so it cannot paint a live preview", spec.Name)
+	}
+	if spec.Engine != "sherpa" {
+		t.Errorf("the default companion runs on %q; the companion path builds a sherpa stream transcriber", spec.Engine)
+	}
+}
+
+// The outgoing default stays reachable: preview.source names it and gets it.
+// It is also the catalog entry whose download directory is not its name
+// (TargetDir "parakeet"), so this is the case that catches a resolver which
+// looks up companions by catalog name alone.
+func TestPreviewNamedFastConformerStaysSelectable(t *testing.T) {
+	cfg := previewConfig(t, "whisper-base.en")
+	installWhisperModel(t, cfg, "whisper-base.en")
+	installSherpaModel(t, cfg, "fastconformer-streaming")
+	cfg.Preview.Source = "fastconformer-streaming"
+
+	plan, err := ResolvePreview(cfg)
+	if err != nil {
+		t.Fatalf("ResolvePreview: %v", err)
+	}
+	if plan.Mode != PreviewCompanion || plan.Companion != "fastconformer-streaming" {
+		t.Fatalf("mode = %q companion = %q, want the named fastconformer-streaming companion (%s)",
+			plan.Mode, plan.Companion, plan.Reason)
+	}
+}
+
 // Case 3, and the ONLY case that downgrades: no companion installed under
 // "auto" warns, falls back to phrase mode, and names the model to pull.
 func TestPreviewAutoFallsBackToPhrasesWithNoCompanion(t *testing.T) {

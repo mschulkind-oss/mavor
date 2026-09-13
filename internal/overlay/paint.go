@@ -34,9 +34,16 @@ var (
 	typingInk = color.NRGBA{0xff, 0xe0, 0xa8, 0xff}
 	errInk    = color.NRGBA{0xff, 0xcc, 0xcc, 0xff}
 
-	previewBG   = color.NRGBA{0x0f, 0x17, 0x2a, 0xd9}
+	// The preview strip is the one surface with small text on it, and it
+	// lands on whatever the desktop happens to be showing. Its readability is
+	// therefore a property of its WORST case — the backdrop composited over a
+	// bright background — not of the dark wallpaper it was first tuned
+	// against. Hence a near-black fill at near-full opacity: at 0xd9 over
+	// pale window contents enough of the background came through to wash the
+	// text out.
+	previewBG   = color.NRGBA{0x07, 0x0b, 0x14, 0xf5}
 	previewInk  = color.NRGBA{0xf3, 0xf4, 0xf6, 0xff}
-	previewEdge = color.NRGBA{0xff, 0xff, 0xff, 0x26}
+	previewEdge = color.NRGBA{0xff, 0xff, 0xff, 0x38}
 )
 
 const (
@@ -45,9 +52,12 @@ const (
 	labelSize     = 15
 	previewSize   = 13
 	labelTracking = 0.08 // em, matching the stylesheet's letter-spacing
-	previewPadX   = 18
-	previewPadY   = 6
-	previewGap    = 6
+	// Padding, not just opacity, is what separates the text from the desktop:
+	// the backdrop has to extend past the glyphs far enough that no letter is
+	// read against whatever sits just outside the strip.
+	previewPadX = 24
+	previewPadY = 11
+	previewGap  = 6
 )
 
 // Scene is everything the renderer needs to draw one frame.

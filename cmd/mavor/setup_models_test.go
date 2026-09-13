@@ -134,9 +134,11 @@ func TestSetupRefetchesAnEmptyModelDirectory(t *testing.T) {
 // It asks configuredModels which those are rather than naming files, because
 // configuredModels is what setup itself asks. The test that hardcoded a single
 // whisper file went on passing unchanged when setup started pulling the
-// preview companion as well — and from then on quietly downloaded 429 MB of
-// fastconformer-streaming on every run of the unit suite, on a hook that runs
-// before every commit. Deriving the list is what keeps that silent.
+// preview companion as well — and from then on quietly downloaded the whole
+// companion on every run of the unit suite, on a hook that runs before every
+// commit (429 MB of fastconformer-streaming when that happened; 442 MB of
+// nemotron-streaming-en-560ms today). Deriving the list is what keeps that
+// silent.
 func stubInstalledModels(t *testing.T, modelDir string) {
 	t.Helper()
 	cfg := config.Default()
