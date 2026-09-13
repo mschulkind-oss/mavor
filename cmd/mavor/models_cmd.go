@@ -680,6 +680,19 @@ func dirSize(path string) int64 {
 	return total
 }
 
+// describeSherpaModel names the family a model directory belongs to, for the
+// "Also in the cache" listing — models a user put there by hand, which the
+// catalog knows nothing about.
+//
+// The catalog answers first and settles it. The file-name sniffing below only
+// ever runs for a directory the catalog has no entry for, and it works at all
+// because a sherpa-onnx tarball extracted by hand leaves its own
+// self-describing top-level directory behind: `mavor models pull` strips that
+// level, so for a catalogued model the names it looks for are not even there.
+// This is a best effort at labelling an unknown directory, not detection —
+// speech.DetectSherpaModel is what decides how a model is actually loaded, and
+// it reads the layout rather than the name for exactly the reasons its own
+// comment gives.
 func describeSherpaModel(name, dirPath string) string {
 	if km, ok := cachedModels[name]; ok {
 		if km.Family != "" {
@@ -687,7 +700,6 @@ func describeSherpaModel(name, dirPath string) string {
 		}
 		return fmt.Sprintf("Sherpa ONNX / %s", km.Description)
 	}
-	// Try inspecting directory files
 	entries, err := os.ReadDir(dirPath)
 	if err == nil {
 		for _, e := range entries {
@@ -706,6 +718,12 @@ func describeSherpaModel(name, dirPath string) string {
 			}
 			if strings.Contains(lower, "canary") {
 				return "Sherpa ONNX / NeMo Canary"
+			}
+			if strings.Contains(lower, "nemotron") {
+				return "Sherpa ONNX / Nemotron"
+			}
+			if strings.Contains(lower, "cohere") {
+				return "Sherpa ONNX / Cohere"
 			}
 			if strings.Contains(lower, "paraformer") {
 				return "Sherpa ONNX / Paraformer"

@@ -1000,3 +1000,59 @@ func TestModelsListRejectsJSONWithVerbose(t *testing.T) {
 		t.Errorf("error %q does not explain that the flags are alternatives", err)
 	}
 }
+
+// describeSherpaModel had no test and two blind spots: a hand-installed
+// Nemotron or Cohere Transcribe directory fell through every branch and was
+// labelled with the bare runtime, saying nothing the size column had not
+// already said. It only ever sees directories the catalog does not carry, so
+// these cases are the whole of what it is for.
+func TestDescribeSherpaModelNamesTheFamilyOfAHandInstalledModel(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		leftoverDir string
+		want        string
+	}{
+		{"nemotron", "sherpa-onnx-nemotron-speech-streaming-en-0.6b-80ms-int8-2026-04-25", "Sherpa ONNX / Nemotron"},
+		{"cohere", "sherpa-onnx-cohere-transcribe-14-lang-int8-2026-04-01", "Sherpa ONNX / Cohere"},
+		{"canary", "sherpa-onnx-nemo-canary-1b-v2-int8", "Sherpa ONNX / NeMo Canary"},
+		{"parakeet", "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8", "Sherpa ONNX / NeMo Parakeet"},
+		{"moonshine", "sherpa-onnx-moonshine-tiny-en-int8", "Sherpa ONNX / Moonshine"},
+		{"unrecognised", "some-model-someone-converted", "Sherpa ONNX"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The self-named directory an unstripped tarball leaves behind is
+			// the only evidence this function has; `mavor models pull` strips
+			// that level, which is why a catalogued model never reaches here.
+			dir := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(dir, tc.leftoverDir), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			// A name the catalog does carry must never reach the sniffing at
+			// all, so the name passed here is deliberately not a catalog one.
+			if got := describeSherpaModel("a-name-the-catalog-does-not-have", dir); got != tc.want {
+				t.Errorf("describeSherpaModel = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The catalog is consulted before the directory, so a catalogued model is
+// labelled from its Family even when the files on disk say something else.
+// Without this the listing could disagree with `mavor models list` about what
+// a model is.
+func TestDescribeSherpaModelPrefersTheCatalogOverTheFiles(t *testing.T) {
+	spec, ok := models.Lookup("cohere-transcribe")
+	if !ok {
+		t.Fatal("cohere-transcribe is not in the catalog")
+	}
+	cachedModels = map[string]models.KnownModel{"cohere-transcribe": spec}
+	t.Cleanup(func() { cachedModels = nil })
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "sherpa-onnx-moonshine-tiny-en-int8"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := describeSherpaModel("cohere-transcribe", dir); got != "Sherpa ONNX / Cohere" {
+		t.Errorf("describeSherpaModel = %q, want the catalog's family", got)
+	}
+}
