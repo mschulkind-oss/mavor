@@ -92,6 +92,45 @@ type cgoOnlineRecognizer struct {
 	samples []float32
 }
 
+// streamSampleRate is the rate FeedChunk's callers deliver at: the daemon
+// captures 16 kHz mono PCM and the streaming recognizers are built for it.
+// Named because the tail padding below has to be measured in the same units
+// as the audio it follows, and a literal in one place and not the other is
+// how that goes wrong.
+const streamSampleRate = 16000
+
+// streamTailPaddingSeconds is how much silence is fed to a streaming
+// recognizer before its input is declared finished.
+//
+// Without it every streaming model in the catalog drops the last word of
+// every utterance. A cache-aware streaming encoder only emits the frames for
+// a chunk once it has the chunk's right-context lookahead, and the final
+// chunk of real speech never gets one: InputFinished tells the recognizer no
+// more audio is coming, it does not invent the lookahead that the encoder is
+// still waiting on. Measured on test/fixtures/real_speech.wav, which ends
+// "...runs up the path", the effect was uniform across every streaming model
+// installed here — fastconformer-streaming, both zipformers and all three
+// nemotrons returned a transcript ending "...runs up the" and 300 ms of
+// trailing silence brought "path" back in each one.
+//
+// 0.66 s rather than the 300 ms that sufficed, because sherpa-onnx's own
+// streaming examples pad by that much and the amount actually needed scales
+// with the model's chunk geometry: the 80 ms and 560 ms tiers catalogued here
+// are not the widest ones upstream ships, and a value tuned to the narrowest
+// chunk would quietly under-pad a wider one. It costs 0.66 s of silence
+// through the encoder at the end of an utterance.
+const streamTailPaddingSeconds = 0.66
+
+// feedTailPadding appends the silence described above to a stream. It is the
+// last thing written before InputFinished, and both the batch and the
+// incremental path have to do it — they finish the same kind of stream.
+func feedTailPadding(stream *sherpa_onnx.OnlineStream, sampleRate int) {
+	if sampleRate <= 0 {
+		return
+	}
+	stream.AcceptWaveform(sampleRate, make([]float32, int(float64(sampleRate)*streamTailPaddingSeconds)))
+}
+
 func (r *cgoOnlineRecognizer) DecodeAudio(ctx context.Context, sampleRate int, samples []float32) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -114,6 +153,7 @@ func (r *cgoOnlineRecognizer) DecodeAudio(ctx context.Context, sampleRate int, s
 	defer sherpa_onnx.DeleteOnlineStream(stream)
 
 	stream.AcceptWaveform(sampleRate, samples)
+	feedTailPadding(stream, sampleRate)
 	stream.InputFinished()
 
 	for r.impl.IsReady(stream) {
@@ -176,7 +216,7 @@ func (r *cgoOnlineRecognizer) FeedChunk(ctx context.Context, chunk []byte) (stri
 		samples[i] = float32(val) / 32768.0
 	}
 
-	r.activeStream.AcceptWaveform(16000, samples)
+	r.activeStream.AcceptWaveform(streamSampleRate, samples)
 	for r.impl.IsReady(r.activeStream) {
 		if err := ctx.Err(); err != nil {
 			return "", err
@@ -205,6 +245,10 @@ func (r *cgoOnlineRecognizer) StopStream(ctx context.Context) (string, error) {
 		}
 	}()
 
+	// The stream was fed by FeedChunk, which stops when the speaker stops;
+	// the padding that the encoder needs to emit the last chunk has to be
+	// added here, at the only point that knows the utterance is over.
+	feedTailPadding(r.activeStream, streamSampleRate)
 	r.activeStream.InputFinished()
 	for r.impl.IsReady(r.activeStream) {
 		if err := ctx.Err(); err != nil {
