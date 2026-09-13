@@ -4,7 +4,7 @@ author: "Matthew Schulkind"
 date: 2026-09-13
 status: accepted
 tags: [models, whisper, sherpa, gpu, accuracy, latency, guide]
-summary: "Which of mavor's 31 models to actually use, decided from measurements rather than reputation — including why the largest Whisper models are the wrong choice for dictation, and which six models nothing has measured yet."
+summary: "Which of mavor's 31 models to actually use, decided from measurements rather than reputation — including why the largest Whisper models are the wrong choice for dictation, and which streaming model is finally accurate as well as live."
 vantage:
   status-chip: true
 ---
@@ -39,17 +39,19 @@ where that runtime runs. `mavor doctor` prints what it chose.
 
 | If you want… | Use | Why |
 |---|---|---|
-| **The default** | `whisper-base.en` | Best accuracy measured, 1.6 s for 20 s of speech, 302 MB. Nothing beat it. |
-| **The lightest thing that works** | `whisper-tiny.en` | 1.0 s, 196 MB, and still fully punctuated and capitalised. |
-| **Languages other than English** | `parakeet-tdt-0.6b` | 25 languages, clean formatting. Costs 1.6 GB of RAM. |
-| **A non-English model that stays small** | `canary-180m` | English, Spanish, German, French in 457 MB, formatting as good as `whisper-base.en`. |
+| **The default** | `whisper-base.en` | Best accuracy measured — the only 0.0% word error rate in the run. 1.64 s for 20 s of speech, 308 MB. |
+| **The lightest thing that works** | `whisper-tiny.en` | 856 ms, 198 MB, and still fully punctuated and capitalised. |
+| **Languages other than English** | `parakeet-tdt-0.6b` | 25 languages, clean formatting. Costs 1.54 GB of RAM. |
+| **A non-English model that stays small** | `canary-180m` | English, Spanish, German, French in 460 MB, formatting as good as `whisper-base.en`. |
 | **Words appearing while you speak** | `whisper-base.en`, unchanged | The preview companion paints the overlay live; your typed text still comes from `model`. [Below](#you-do-not-have-to-choose-the-preview-companion). |
+| **A streaming model as your main model** | `nemotron-streaming-en-560ms` | 1.8% word error rate while decoding live, punctuated and capitalised, first words 433 ms in. Costs 964 MB. [Below](#streaming-text-while-you-speak). |
 | **Maximum accuracy** | `whisper-base.en`, still | See below — the large models do not deliver this. |
 
-Six models joined the catalog on 2026-09-13 and are in none of the tables
-on this page, because nothing has measured them yet — what they are, and why
-you might try one anyway, is
-[at the bottom](#the-six-models-nothing-has-measured-yet).
+The six models that joined the catalog on 2026-09-13 were unmeasured when this
+page was first written. The 2026-09-13 benchmark run covers them, so they sit in
+the tables below like everything else; what that run found about them, and the
+three things about them no measurement decides, are
+[at the bottom](#the-six-models-added-on-2026-09-13).
 
 Set it in `~/.config/mavor/config.toml`. One key, whichever family you pick:
 
@@ -82,8 +84,8 @@ recognised words, these models would look identical — and for dictation they
 are not remotely identical, because one produces text you can paste into a
 document and the other produces text you have to re-punctuate by hand.
 
-`whisper-large-v3` is also **20× slower** than `whisper-base.en` on CPU
-(33.6 s against 1.6 s for the same 20 seconds of audio) and wants 3.9 GB of
+`whisper-large-v3` is also **nearly 17× slower** than `whisper-base.en` on CPU
+(27.38 s against 1.64 s for the same 20 seconds of audio) and wants 3.84 GB of
 RAM.
 
 So: the largest Whisper models cost more, take longer, and produce worse
@@ -91,25 +93,34 @@ text for this purpose. Unless you have a specific reason, skip them.
 
 ## Speed and memory
 
-Every model that produced usable output, fastest first. `RTF` is the fraction
-of real time consumed — below 1.0 is faster than speech.
+Every model that produced usable output, fastest first, whisper models on the
+stock CPU build. `RTF` is the fraction of real time consumed — below 1.0 is
+faster than speech. The streaming models have
+[their own table](#streaming-text-while-you-speak), because a total time is not
+what you judge them on.
 
 | Model | Engine | Time (20 s audio) | RTF | Peak RAM |
 |---|---|---:|---:|---:|
-| `whisper-tiny.en` | whisper | 1.05 s | 0.05 | 196 MB |
-| `whisper-base.en` | whisper | 1.63 s | 0.08 | 302 MB |
-| `moonshine-base` | sherpa | 1.98 s | 0.10 | 538 MB |
-| `sensevoice-small` | sherpa | 3.88 s | 0.19 | 1.46 GB |
-| `canary-180m` | sherpa | 4.40 s | 0.22 | 457 MB |
-| `whisper-small.en` | whisper | 5.10 s | 0.26 | 768 MB |
-| `parakeet-tdt-0.6b` | sherpa | 5.82 s | 0.29 | 1.56 GB |
-| `canary-1b` | sherpa | 14.77 s | 0.74 | 2.32 GB |
-| `whisper-medium.en` | whisper | 19.08 s | 0.95 | 2.02 GB |
-| `whisper-large-v3` | whisper | 33.55 s | 1.68 | 3.81 GB |
+| `whisper-tiny.en` | whisper | 856 ms | 0.043 | 198 MB |
+| `whisper-base.en` | whisper | 1.64 s | 0.082 | 308 MB |
+| `moonshine-base` | sherpa | 2.05 s | 0.103 | 541 MB |
+| `sensevoice-small` | sherpa | 2.19 s | 0.109 | 1.43 GB |
+| `canary-180m` | sherpa | 3.73 s | 0.186 | 460 MB |
+| `whisper-small.en` | whisper | 4.89 s | 0.244 | 775 MB |
+| `parakeet-tdt-0.6b-v2` | sherpa | 5.44 s | 0.272 | 1.56 GB |
+| `parakeet-tdt-0.6b` | sherpa | 5.93 s | 0.296 | 1.54 GB |
+| `cohere-transcribe` | sherpa | 9.76 s | 0.488 | 3.38 GB |
+| `canary-1b` | sherpa | 12.09 s | 0.605 | 2.40 GB |
+| `whisper-medium.en` | whisper | 14.70 s | 0.735 | 2.05 GB |
+| `whisper-large-v3` | whisper | 27.38 s | 1.369 | 3.84 GB |
 
-`whisper-medium.en` at RTF 0.95 means a 20-second dictation takes 19 seconds to
-transcribe — you would be waiting. `whisper-large-v3` at 1.68 is **slower than
-speaking**. Neither is usable on CPU without a GPU behind it.
+`whisper-medium.en` at RTF 0.735 means a 20-second dictation takes nearly 15
+seconds to transcribe — you would be waiting. `whisper-large-v3` at 1.369 is
+**slower than speaking**. Neither is usable on CPU without a GPU behind it.
+
+`cohere-transcribe` is the memory outlier: **3.38 GB**, more than twice
+`parakeet-tdt-0.6b`, for the same 1.8% word error rate and the same formatting.
+Nothing in this run pays for that gigabyte and a half.
 
 ## GPU makes the large models possible
 
@@ -119,11 +130,11 @@ measured with the same binary and only whisper.cpp's `-ng` flag differing:
 
 | Model | CPU | GPU | Speed-up | RAM (CPU → GPU) |
 |---|---:|---:|---:|---|
-| `whisper-tiny.en` | 0.91 s | 0.40 s | 2.2× | 221 MB → 107 MB |
-| `whisper-base.en` | 1.87 s | 0.55 s | 3.4× | 327 MB → 118 MB |
-| `whisper-small.en` | 5.37 s | 0.82 s | 6.5× | 785 MB → 147 MB |
-| `whisper-medium.en` | 20.20 s | 1.58 s | **12.8×** | 2.07 GB → 174 MB |
-| `whisper-large-v3` | 41.16 s | 2.91 s | **14.2×** | 3.91 GB → 206 MB |
+| `whisper-tiny.en` | 884 ms | 412 ms | 2.1× | 223 MB → 107 MB |
+| `whisper-base.en` | 1.49 s | 509 ms | 2.9× | 327 MB → 121 MB |
+| `whisper-small.en` | 3.95 s | 757 ms | 5.2× | 800 MB → 148 MB |
+| `whisper-medium.en` | 12.07 s | 1.55 s | **7.8×** | 2.07 GB → 175 MB |
+| `whisper-large-v3` | 23.10 s | 2.49 s | **9.3×** | 3.86 GB → 207 MB |
 
 Two things worth noticing. The speed-up grows with model size, so the GPU
 matters least for the model you were probably going to use anyway. And host
@@ -146,30 +157,74 @@ count to set.
 
 ## Streaming: text while you speak
 
-Seven catalog models decode incrementally rather than waiting for you to
-stop. Three are long-standing — `zipformer-streaming`,
-`zipformer-streaming-20m` and `fastconformer-streaming` — and four arrived on
-2026-09-13 and are covered [below](#the-six-models-nothing-has-measured-yet)
-rather than here, because none of them has a number yet.
+Seven catalog models decode incrementally rather than waiting for you to stop.
+Three are long-standing — `zipformer-streaming`, `zipformer-streaming-20m` and
+`fastconformer-streaming` — and four arrived on 2026-09-13. All seven are
+measured now, and the result changed what this section used to say: **a
+streaming model is no longer automatically an inaccurate one.**
 
-Two of the three have been benchmarked as a main model:
+**Time to first token** is the gap between the first chunk of audio and the
+first text the model emits, with the model already loaded — a daemon holds it
+warm long before you speak. It is what decides whether a preview feels live; a
+total time cannot tell you that. **Punct/word** is punctuation marks per word of
+output and **capitals F1** balances the words a model capitalised correctly
+against the ones it missed or invented, 1.00 being agreement with the reference;
+both are defined with the rest of the method in
+[the report](./reports/model-benchmarks.md#accuracy). Every figure below is that
+report's `sherpa / cpu / streaming` row — audio fed in 100 ms chunks, the way
+the daemon feeds it.
 
-| Model | First token | Total | Accuracy (WER) |
-|---|---:|---:|---:|
-| `zipformer-streaming` | **114 ms** | 4.33 s | 9.1% |
-| `fastconformer-streaming` | 405 ms | 9.28 s | 12.7% |
+| Model | First token | Total | WER | Punct/word | Capitals F1 | Peak RAM |
+|---|---:|---:|---:|---:|---:|---:|
+| `zipformer-streaming` | **107 ms** | 4.05 s | 7.3% | 0.04 | 0.20 | 161 MB |
+| `zipformer-streaming-20m` | 108 ms | 1.46 s | 9.1% | 0.02 | 0.15 | 112 MB |
+| `fastconformer-streaming` | 382 ms | 8.17 s | 12.7% | 0.00 | 0.00 | 550 MB |
+| `nemotron-streaming-multi-560ms` | 414 ms | 7.01 s | 7.3% | 0.09 | 0.80 | 976 MB |
+| `nemotron-streaming-en-560ms` | 433 ms | 7.90 s | **1.8%** | 0.15 | 0.91 | 966 MB |
+| `nemotron-streaming-en-80ms` | 1.80 s | 30.23 s | 3.6% | 0.15 | 0.83 | 958 MB |
+| `parakeet-unified-en-streaming-240ms` | 5.27 s | 101.16 s | 3.6% | 0.16 | 0.91 | 1024 MB |
 
-`zipformer-streaming` genuinely feels live. Both are considerably less
-accurate than any of the batch models above — 9.1% against 1.8% is not a
-rounding difference, it is roughly five times the errors.
+`nemotron-streaming-en-560ms` is the row to know about. Its 1.8% WER ties
+`parakeet-tdt-0.6b`, `canary-180m`, `cohere-transcribe` and every large Whisper
+model in the catalog — one word behind `whisper-base.en`'s 0.0% — and it gets
+there while emitting its first words 433 ms in, punctuated and capitalised. It
+is the first entry in this table that does not ask you to trade accuracy for
+liveness, which makes it a real candidate for `model` and not only for the
+overlay. It costs 966 MB resident, six times `zipformer-streaming`.
 
-Streaming is worth it when watching words appear matters more than getting
-them right first time. For ordinary dictation, where you release a key and
-want correct text, a batch model is the better trade.
+`fastconformer-streaming` sits at the other end: 12.7% WER, the worst of any
+streaming model measured, with **no punctuation and no capitalisation at all**.
+That matters chiefly because it is the model `preview.source = "auto"` loads —
+[below](#you-do-not-have-to-choose-the-preview-companion).
 
-`fastconformer-streaming` is slower streaming than batch and less accurate than
-`zipformer-streaming`, so despite its reputation there is currently no
-configuration in which it is the right pick as your main model.
+Two of the newer entries are far slower than their chunk size suggests:
+
+- **`nemotron-streaming-en-80ms` is not the low-latency one.** The same weights
+  as the 560 ms export, cut into chunks seven times shorter, take **1.80 s** to
+  first token against the 560 ms tier's 433 ms, and RTF 1.511 puts them slower
+  than real time overall. Chunk size is not latency: seven times shorter means
+  seven times as many encoder invocations over the same audio, and on this CPU
+  each invocation costs more than the shorter chunk saves.
+- **`parakeet-unified-en-streaming-240ms` is unusable for dictation.** RTF
+  5.058 — five times slower than the speech it is transcribing — and 5.27 s
+  before the first word appears. Its own non-streaming export,
+  `parakeet-unified-en`, finishes the whole clip in 5.54 s at 1.8% WER.
+
+`zipformer-streaming` still wins on latency and on footprint: first token at
+107 ms in 161 MB, which nothing else here approaches. What it does not do is
+format — 0.04 punctuation marks per word, capitals F1 0.20 — so its text reads
+as a live caption rather than as the sentence about to be typed.
+
+Streaming is worth it when watching words appear matters more than getting them
+right first time. For ordinary dictation, where you release a key and want
+correct text, a batch model is still the better trade — with
+`nemotron-streaming-en-560ms` as the one entry where that reasoning no longer
+obviously holds.
+
+Before ranking any of this on WER alone, read the
+[caveats](#what-these-numbers-do-and-do-not-tell-you): the models tied at 1.8%
+are tied on a single word of a 20-second clip, which is the fixture running out
+of resolution rather than a genuine dead heat.
 
 ### You do not have to choose: the preview companion
 
@@ -189,6 +244,20 @@ even when the typed text is perfect. `zipformer-streaming-20m` stays
 selectable by name at 122 MB for anyone who wants the smaller download, as
 does the 296 MB `zipformer-streaming`.
 
+> [!IMPORTANT]
+> **The benchmark has since found a far more accurate model in that size class,
+> and the default has not changed.** `nemotron-streaming-en-560ms` scores 1.8%
+> WER where `fastconformer-streaming` scores 12.7% — seven times fewer errors —
+> for 51 ms more to first token (433 ms against 382 ms) and about 420 MB more
+> resident (966 MB against 550 MB). It also punctuates and capitalises, which
+> the incumbent does not do at all, so its partials look like the text that is
+> about to land. Whether that trade is worth making by default is an open
+> decision rather than a settled one; the roadmap carries it as
+> [item 1e](./roadmap.md#-1e-the-preview-companion-default-is-now-a-decision-not-a-measurement).
+> You can make it for yourself today without waiting for that:
+> `source = "nemotron-streaming-en-560ms"` under `[preview]`, then `mavor setup`
+> to fetch it.
+
 So the streaming table above is about a trade you only make deliberately: for
 words on screen while you talk, keep a batch `model` and let the companion do
 it.
@@ -200,51 +269,64 @@ rather than shelling out, and the runtime is linked into the binary — there is
 one build and it is cgo, so nothing here needs a build tag or a second
 artifact.
 
+The batch ones worth considering, fastest first:
+
 | Model | Languages | Time | RAM | Formatting | Notes |
 |---|---|---:|---:|---|---|
-| `canary-180m` | en, es, de, fr | 4.40 s | 457 MB | **Excellent** | Best formatting of any sherpa model |
-| `parakeet-tdt-0.6b` | 25 languages | 5.82 s | 1.56 GB | Excellent | The multilingual choice |
-| `sensevoice-small` | zh, en, ja, ko, yue | 3.88 s | 1.46 GB | Good | Chinese and Japanese |
-| `canary-1b` | 25 languages | 14.77 s | 2.32 GB | Excellent | Slow for what it adds over `canary-180m` |
-| `moonshine-base` | en | 1.98 s | 538 MB | None | Fast, but no punctuation or capitals |
-| `zipformer-ctc` | en | 1.59 s | 477 MB | None | Fast, 3.6% WER, no formatting |
+| `zipformer-ctc` | en | 1.39 s | 480 MB | None | Fast, 3.6% WER, no formatting |
+| `moonshine-base` | en | 2.05 s | 541 MB | None | Fast, but no punctuation or capitals |
+| `sensevoice-small` | zh, en, ja, ko, yue | 2.19 s | 1.43 GB | Good | Chinese and Japanese |
+| `canary-180m` | en, es, de, fr | 3.73 s | 460 MB | **Excellent** | Full formatting for a fraction of the memory |
+| `parakeet-tdt-0.6b-v2` | en | 5.44 s | 1.56 GB | Excellent | The English-only sibling of the row below |
+| `parakeet-tdt-0.6b` | 25 languages | 5.93 s | 1.54 GB | Excellent | The multilingual choice |
+| `cohere-transcribe` | 14, English in practice | 9.76 s | 3.38 GB | Excellent | Accuracy `canary-180m` matches in 460 MB |
+| `canary-1b` | 25 languages | 12.09 s | 2.40 GB | Excellent | Slow for what it adds over `canary-180m` |
 
-`canary-180m` is the one to know about: it is the only sherpa model that
-formats its output as well as `whisper-base.en` does, and it does so in
-457 MB while covering four languages.
+`canary-180m` is the one to know about. Four other sherpa models format as well
+as it does — `parakeet-tdt-0.6b`, `parakeet-tdt-0.6b-v2`, `cohere-transcribe`
+and `canary-1b` each pair punctuation with a 1.00 capitals F1 — and the
+lightest of those still wants 1.54 GB. `canary-180m` does it in 460 MB, in less
+than a third of `canary-1b`'s time, across four languages.
 
-The remaining catalogued sherpa models — `fastconformer-streaming`,
-`parakeet-ctc`, `parakeet-unified-en`, `paraformer`, `zipformer-offline`,
-`moonshine-tiny` — are measured in
+The remaining catalogued sherpa models — `parakeet-ctc`, `parakeet-unified-en`,
+`paraformer`, `zipformer-offline`, `moonshine-tiny` — are measured in
 [`model-benchmarks.md`](./reports/model-benchmarks.md) but are not better than
-something above at any job. `zipformer-streaming` and
-`zipformer-streaming-20m` are the exception to that judgement, and only as
-preview companions rather than as `model`.
+something above at any job. The streaming entries are judged on different
+criteria and live in [their own section](#streaming-text-while-you-speak):
+`zipformer-streaming` and `zipformer-streaming-20m` earn their place as preview
+companions rather than as `model`, `fastconformer-streaming` is the least
+accurate model in that section, and `nemotron-streaming-en-560ms` is the one
+streaming entry that competes with this table on its own terms.
 
-The table is every sherpa model the benchmark has run. The six added on
-2026-09-13 are absent from it because there is nothing to put in the columns
-yet; they are next.
+## The six models added on 2026-09-13
 
-## The six models nothing has measured yet
+Six sherpa models joined the catalog on 2026-09-13, and the benchmark run of
+that date was the first to cover them. Their figures are in the tables above
+alongside everything else; this section is what those figures mean, plus the
+three things about these models that no measurement decides — a licence, a
+language key mavor does not have, and a model family that is new to the
+listing.
 
-Six sherpa models joined the catalog on 2026-09-13. **None of them has been
-through `just bench`**, so there is no speed, memory or accuracy figure for any
-of them — not on this page, and not in
-[`model-benchmarks.md`](./reports/model-benchmarks.md). What follows is what
-they are and what they might be for, which is a different claim from how they
-scored.
+Batch rows, fastest first, on the same 20-second clip as the rest of the page:
 
-| Model | What it is | Download | Languages | Streams |
-|---|---|---:|---|---|
-| `parakeet-tdt-0.6b-v2` | NVIDIA Parakeet TDT 0.6B **v2**, INT8 | 460 MB | en | no |
-| `nemotron-streaming-en-80ms` | NVIDIA Nemotron Speech streaming 0.6B, 80 ms chunk, INT8 | 442 MB | en | yes |
-| `nemotron-streaming-en-560ms` | The same weights at a 560 ms chunk | 442 MB | en | yes |
-| `nemotron-streaming-multi-560ms` | NVIDIA Nemotron 3.5 ASR streaming 0.6B, 560 ms chunk, INT8 | 453 MB | multi (35) | yes |
-| `parakeet-unified-en-streaming-240ms` | The streaming export of `parakeet-unified-en`, 240 ms chunk | 478 MB | en | yes |
-| `cohere-transcribe` | Cohere Transcribe 03-2026, INT8 | 1.58 GB | multi (14) | no |
+| Model | What it is | Download | Peak RAM | Total | WER |
+|---|---|---:|---:|---:|---:|
+| `parakeet-tdt-0.6b-v2` | NVIDIA Parakeet TDT 0.6B **v2**, INT8, English | 460 MB | 1.56 GB | 5.44 s | 1.8% |
+| `nemotron-streaming-multi-560ms` | NVIDIA Nemotron 3.5 ASR streaming 0.6B, 560 ms chunk, INT8, 35 languages | 453 MB | 967 MB | 7.67 s | 7.3% |
+| `nemotron-streaming-en-560ms` | NVIDIA Nemotron Speech streaming 0.6B, 560 ms chunk, INT8, English | 442 MB | 964 MB | 7.85 s | **1.8%** |
+| `cohere-transcribe` | Cohere Transcribe 03-2026, INT8, 14 languages | 1.58 GB | **3.38 GB** | 9.76 s | 1.8% |
+| `nemotron-streaming-en-80ms` | The same English Nemotron weights at an 80 ms chunk | 442 MB | 954 MB | 30.83 s | 3.6% |
+| `parakeet-unified-en-streaming-240ms` | The streaming export of `parakeet-unified-en`, 240 ms chunk | 478 MB | 1019 MB | 101.67 s | 3.6% |
 
 Download sizes are the archive, as `mavor models list` prints them; a sherpa
-archive expands to roughly twice that on disk.
+archive expands to roughly twice that on disk. The four streaming entries carry
+a second set of figures — time to first token above all — in
+[the streaming table](#streaming-text-while-you-speak).
+
+One row is the best news in the run and one is the worst.
+`nemotron-streaming-en-560ms` is the first streaming model in this catalog that
+is also accurate. `parakeet-unified-en-streaming-240ms`, at 101.67 s to
+transcribe 20 s of audio, is the slowest row in the entire report.
 
 ### `parakeet-tdt-0.6b-v2`, beside the v3 that was already there
 
@@ -252,11 +334,17 @@ archive expands to roughly twice that on disk.
 multilingual recommendation at the top of this page. `parakeet-tdt-0.6b-v2` is
 the previous generation of the same model, and it is English-only.
 
-That sounds like a downgrade and is not necessarily one. NVIDIA reports v2
-ahead of v3 on English — a claim about the weights, made upstream, which this
-project has not tested against its own fixture. If you dictate only in
-English, v2 is the one of the pair worth a try; if you switch languages
-mid-sentence, v3 is the only one that can follow you.
+That sounds like a downgrade and is not one. On this fixture the pair are
+indistinguishable on quality — both 1.8% WER, both 0.16 punctuation marks per
+word, both a 1.00 capitals F1 — and v2 is the faster of the two, 5.44 s against
+5.93 s, for 1.56 GB of peak memory against 1.54 GB. NVIDIA reports v2 ahead of
+v3 on English generally; this run neither confirms nor contradicts that,
+because a clip on which each model makes exactly one error cannot separate
+them. That is the fixture running out of resolution rather than a real tie —
+see the [caveats](#what-these-numbers-do-and-do-not-tell-you).
+
+So: if you dictate only in English, v2 is the one of the pair worth a try; if
+you switch languages mid-sentence, v3 is the only one that can follow you.
 
 ### The Nemotron models, and a new family in the listing
 
@@ -266,23 +354,35 @@ mistype one. Three of the six add a family that was not there before,
 `Nemotron`, alongside Whisper, NeMo, Moonshine, SenseVoice, Paraformer and
 Zipformer; `cohere-transcribe` adds a `Cohere` family of one.
 
-All three Nemotron entries decode incrementally, and what separates them is
-**chunk size**: the block of audio the recognizer takes in before it will emit
-anything. A short chunk puts words on screen sooner and gives the model less
-audio after each word to reconsider it with; a long chunk does the reverse.
-80 ms and 560 ms are the two ends the catalog carries, and *nothing here has
-measured what that trade costs in accuracy* — that is the whole reason both
-are in the catalog rather than one.
+All three Nemotron entries decode incrementally, and what separates two of them
+is **chunk size**: the block of audio the recognizer takes in before it will
+emit anything. A short chunk puts words on screen sooner and gives the model
+less audio after each word to reconsider it with; a long chunk does the reverse.
+80 ms and 560 ms are the two ends the catalog carries, and the run measured what
+that trade costs — with an answer that runs the opposite way from the theory:
 
-- `nemotron-streaming-en-80ms` is the low-latency end, and the obvious
-  candidate to try as a [preview companion](#you-do-not-have-to-choose-the-preview-companion),
-  where latency is the point and the text is thrown away.
-- `nemotron-streaming-en-560ms` is the same weights waiting longer before it
-  commits, which is the sensible end to try first if you are picking a
-  streaming model as your actual `model`.
+| Model | First token | RTF (streaming) | WER | Capitals F1 |
+|---|---:|---:|---:|---:|
+| `nemotron-streaming-en-560ms` | 433 ms | 0.395 | 1.8% | 0.91 |
+| `nemotron-streaming-en-80ms` | 1.80 s | 1.511 | 3.6% | 0.83 |
+
+The 80 ms export is **slower to its first word than the 560 ms one**, by well
+over a second, and slower than real time overall. Chunk size is not latency: a
+chunk seven times shorter means seven times as many encoder invocations over
+the same audio, and on this CPU each invocation costs more than the shorter
+chunk saves. It is the less accurate of the two as well.
+
+- `nemotron-streaming-en-560ms` is the one to reach for, whether as your actual
+  `model` or as a
+  [preview companion](#you-do-not-have-to-choose-the-preview-companion).
+- `nemotron-streaming-en-80ms` earns its catalog row as the measured
+  counter-example rather than as a recommendation. On this machine there is no
+  job it does better than the 560 ms export; a faster machine, where the extra
+  encoder invocations are cheaper, could read it differently.
 - `nemotron-streaming-multi-560ms` is the multilingual Nemotron 3.5 export,
   35 languages, and the only streaming model in the catalog that is not
-  English-only.
+  English-only. It pays for that in accuracy: 7.3% WER against the English
+  export's 1.8%, on English audio.
 
 > [!IMPORTANT]
 > **The Nemotron weights are not Apache-2.0.** NVIDIA licenses them under
@@ -301,19 +401,27 @@ carries that as work to do.
 
 ### `parakeet-unified-en-streaming-240ms`
 
-The same model as the catalog's `parakeet-unified-en`, exported for
-incremental decoding instead of one-shot. Picking between them is picking
-whether you want partial text at all: the non-streaming export sees the whole
-utterance before it answers, the streaming one answers as you go, at a 240 ms
-chunk. Neither has been benchmarked, so there is no accuracy gap here to quote
-— only the structural one that a model which has heard the whole sentence has
-more to work with than one that has heard 240 ms of it.
+The same model as the catalog's `parakeet-unified-en`, exported for incremental
+decoding instead of one-shot — and the measurement settles the choice between
+them rather than leaving it to taste. The streaming export runs at **RTF
+5.058**, five times slower than the speech it is transcribing: 101.16 s of work
+for 20 s of audio, with the first word appearing 5.27 s in. The non-streaming
+export finishes the same clip in 5.54 s, and scores 1.8% WER against the
+streaming one's 3.6%.
+
+Nothing about dictation survives those numbers. Treat the 240 ms entry as the
+tier being present for completeness, not as a live-preview option.
 
 ### `cohere-transcribe` takes no vocabulary biasing
 
-Fourteen languages in 1.58 GB, the largest non-Whisper entry in the catalog,
-and the one that most directly competes with `parakeet-tdt-0.6b` for the
-multilingual slot once somebody measures them against each other.
+Fourteen languages in a 1.58 GB download — and **3.38 GB resident, the largest
+peak of any sherpa model in the catalog, second across the whole catalog only
+to `whisper-large-v3`**. What that buys is 1.8% WER with full punctuation and
+capitalisation, which `canary-180m` also scores in 460 MB and
+`parakeet-tdt-0.6b` in 1.54 GB. It was the entry most likely to take the
+multilingual slot from `parakeet-tdt-0.6b` once the two were measured against
+each other; measured, it is slower (9.76 s against 5.93 s), more than twice as
+heavy, and no more accurate.
 
 Thirteen of those fourteen are out of reach today, though, and that is mavor's
 doing rather than the model's: sherpa-onnx refuses to load Cohere Transcribe
@@ -341,8 +449,10 @@ comes at 80, 160, 560 and 1120 ms; the multilingual Nemotron 3.5 export adds a
 560 and 1120 ms. That is twelve exports, and the catalog carries four of them.
 
 This is deliberate. The catalog is a curated shortlist — every row is a row
-each user reads past — not a mirror of the upstream release. A tier it skips is
-still perfectly usable: download and unpack the archive into
+each user reads past — not a mirror of the upstream release. The 80 ms result
+above is also a reason to be sparing with the short tiers in particular: on
+this CPU the shortest chunk was the slowest to its first word. A tier the
+catalog skips is still perfectly usable: download and unpack the archive into
 `paths.models/sherpa/<name>/` and set `model` to that directory name, which is
 [§8.4 of the user guide](./user-guide.md#84-installing-a-custom-sherpa-model).
 Two things you give up by doing that are named there, and one of them matters
@@ -388,11 +498,6 @@ $ just bench            # every model, on whisper.cpp and in-process sherpa-onnx
 
 It writes [`model-benchmarks.md`](./reports/model-benchmarks.md) and the raw
 results beside it. A model absent from your cache is reported as absent
-rather than silently skipped, and a backend that cannot run says why.
-
-> [!NOTE]
-> The published report was generated before the catalog rename, so its model
-> column still prints the old bare names — `base.en` where this page writes
-> `whisper-base.en`. The numbers are the same measurements; the next `just
-> bench` run regenerates the report with current names. The report is
-> generated, never hand-edited.
+rather than silently skipped, and a backend that cannot run says why. Every
+number on this page comes from the run of 2026-09-13, which covers all 31
+catalog entries and prints them under their current names.

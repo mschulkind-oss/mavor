@@ -667,9 +667,10 @@ machine-readably.
 
 Six of those rows are new as of 2026-09-13 — `parakeet-tdt-0.6b-v2`,
 `parakeet-unified-en-streaming-240ms`, the three `nemotron-streaming-*` entries
-and `cohere-transcribe` — and no benchmark run has covered any of them.
-[`choosing-a-model.md`](./choosing-a-model.md#the-six-models-nothing-has-measured-yet)
-says what they are, what they might be for, and what is not yet known.
+and `cohere-transcribe` — and the benchmark run of that date covers them along
+with the rest of the catalog.
+[`choosing-a-model.md`](./choosing-a-model.md#the-six-models-added-on-2026-09-13)
+says what they are and how they scored.
 
 ### 8.2 Supported model matrix
 
@@ -678,36 +679,39 @@ returns punctuated, capitalised text or a bare lowercase word stream.
 
 | Model | Runtime | Architecture | Time | RAM | Format | Use it for |
 |---|---|---|---:|---:|---|---|
-| `whisper-base.en` | whisper.cpp | Whisper GGML | 1.63 s | 302 MB | Full | **The default.** Best accuracy measured. |
-| `whisper-tiny.en` | whisper.cpp | Whisper GGML | 1.05 s | 196 MB | Full | The lightest option that still formats. |
-| `whisper-small.en` | whisper.cpp | Whisper GGML | 5.10 s | 768 MB | Full | Little gain over `whisper-base.en` here. |
-| `whisper-large-v3-turbo` | whisper.cpp | Whisper GGML | 21.01 s | 1.81 GB | **None** | Not recommended — see the warning below. |
-| `canary-180m` | sherpa-onnx | NeMo Canary | 4.40 s | 457 MB | Full | Best sherpa model; en/es/de/fr. |
-| `parakeet-tdt-0.6b` | sherpa-onnx | NeMo transducer | 5.82 s | 1.56 GB | Full | 25 languages, and hotwords work on it. |
-| `sensevoice-small` | sherpa-onnx | SenseVoice | 3.88 s | 1.46 GB | Good | zh, en, ja, ko, yue. |
-| `zipformer-streaming` | sherpa-onnx | Zipformer (online) | 4.65 s | 150 MB | Minimal | Streaming: first token in 107 ms. |
+| `whisper-base.en` | whisper.cpp | Whisper GGML | 1.64 s | 308 MB | Full | **The default.** Best accuracy measured. |
+| `whisper-tiny.en` | whisper.cpp | Whisper GGML | 856 ms | 198 MB | Full | The lightest option that still formats. |
+| `whisper-small.en` | whisper.cpp | Whisper GGML | 4.89 s | 775 MB | Full | Little gain over `whisper-base.en` here. |
+| `whisper-large-v3-turbo` | whisper.cpp | Whisper GGML | 16.11 s | 1.79 GB | **None** | Not recommended — see the warning below. |
+| `canary-180m` | sherpa-onnx | NeMo Canary | 3.73 s | 460 MB | Full | Best sherpa model for its size; en/es/de/fr. |
+| `parakeet-tdt-0.6b` | sherpa-onnx | NeMo transducer | 5.93 s | 1.54 GB | Full | 25 languages, and hotwords work on it. |
+| `sensevoice-small` | sherpa-onnx | SenseVoice | 2.19 s | 1.43 GB | Good | zh, en, ja, ko, yue. |
+| `zipformer-streaming` | sherpa-onnx | Zipformer (online) | 4.05 s | 161 MB | Minimal | Streaming: first token in 107 ms. |
+| `nemotron-streaming-en-560ms` | sherpa-onnx | NVIDIA Nemotron (online) | 7.90 s | 966 MB | Full | Streaming *and* accurate: 1.8% word error rate, first token in 433 ms. |
 
 > [!WARNING]
 > **The largest Whisper models return unpunctuated lowercase text.**
 > `whisper-large-v3`, `whisper-large-v3-turbo`, `whisper-distil-large-v3` and
 > `whisper-medium.en` all emit `lux is in the pit he cannot sit still` where
 > `whisper-base.en` emits `Lux is in the pit. He cannot sit still.` Word error
-> rate is the same; the output is not. `whisper-large-v3` is also 20x slower
-> than `whisper-base.en` on CPU and wants 3.9 GB of RAM.
+> rate is the same; the output is not. `whisper-large-v3` is also nearly 17x
+> slower than `whisper-base.en` on CPU and wants 3.84 GB of RAM.
 > [Details](./choosing-a-model.md#do-not-reach-for-the-biggest-model).
 
-Six catalog models are missing from that matrix rather than omitted from it:
-`parakeet-tdt-0.6b-v2`, the three Nemotron streaming entries,
-`parakeet-unified-en-streaming-240ms` and `cohere-transcribe` were added on
-2026-09-13 and no benchmark run has covered them, so there is no time, no
-memory figure and no formatting verdict to print. One of them is already known
-to be limited by mavor rather than by the model: `cohere-transcribe` is built
-with English pinned, because sherpa-onnx refuses to load it without a language
+The matrix is a shortlist, not the catalog: every one of the 31 entries has
+been measured, the six added on 2026-09-13 included, and
+[`choosing-a-model.md`](./choosing-a-model.md) ranks them all. Two of those six
+results are worth carrying here. `nemotron-streaming-en-560ms` is in the matrix
+above because it is the first streaming entry in the catalog that is also
+accurate. `cohere-transcribe` is not, because it is the heaviest model in the
+sherpa half — 3.38 GB resident — for a 1.8% word error rate that `canary-180m`
+matches in 460 MB; it is also limited by mavor rather than by the model, built
+with English pinned because sherpa-onnx refuses to load it without a language
 and mavor has no key that sets one.
 
 GPU changes the calculation for the larger models but not their formatting: a
-Vulkan build (`just bench-gpu-build`) runs `whisper-medium.en` **12.8x** faster
-and drops host memory from 2.07 GB to 174 MB, because the weights move to the
+Vulkan build (`just bench-gpu-build`) runs `whisper-medium.en` **7.8x** faster
+and drops host memory from 2.07 GB to 175 MB, because the weights move to the
 card. Sherpa models have no GPU path — the vendored ONNX Runtime ships no
 execution providers.
 

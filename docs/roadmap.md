@@ -23,21 +23,22 @@ On an RX 9060 XT via Vulkan, comparing **the same binary with and without
 
 | Model | CPU | GPU | Speed-up |
 |---|---:|---:|---:|
-| `tiny.en` | 920 ms | 408 ms | 2.3× |
-| `base.en` | 1.56 s | 508 ms | 3.1× |
-| `small.en` | 4.35 s | 743 ms | 5.9× |
-| `medium.en` | 15.12 s | 1.57 s | 9.6× |
-| `large-v3` | 34.62 s | 5.01 s | 6.9× |
+| `whisper-tiny.en` | 884 ms | 412 ms | 2.1× |
+| `whisper-base.en` | 1.49 s | 509 ms | 2.9× |
+| `whisper-small.en` | 3.95 s | 757 ms | 5.2× |
+| `whisper-medium.en` | 12.07 s | 1.55 s | 7.8× |
+| `whisper-large-v3` | 23.10 s | 2.49 s | 9.3× |
 
-GPU also *lowers* host memory — 174 MB against 1.55 GB for `medium` — because
-the weights live on the card instead.
+GPU also *lowers* host memory — 175 MB against 2.07 GB for `whisper-medium.en`
+— because the weights live on the card instead.
 
-What this changes: the earlier framing was "`base.en` is already fast enough
-on CPU, so who cares." That holds for `base.en`. It does not hold for the
-accurate models. `medium.en` is 1.3× real time on CPU — a 20-second dictation
-takes 15 seconds to transcribe, which is unusable — and 12.7× real time on
-GPU, which is comfortable. **GPU is what makes the large models viable at
-all**, so the question is really whether mavor wants to offer them.
+What this changes: the earlier framing was "`whisper-base.en` is already fast
+enough on CPU, so who cares." That holds for `whisper-base.en`. It does not
+hold for the accurate models. `whisper-medium.en` runs at 1.7× real time on
+CPU — a 20-second dictation takes 12 seconds to transcribe, which is unusable
+— and 12.9× real time on GPU, which is comfortable. **GPU is what makes the
+large models viable at all**, so the question is really whether mavor wants to
+offer them.
 
 The cost is unchanged and it is packaging, not code: distro whisper.cpp
 builds are CPU-only, so this means shipping or documenting a Vulkan build
@@ -115,11 +116,15 @@ Ordered by what unblocks other work first, then by cost.
 
 The catalog is 31 entries now. `zipformer-streaming-20m` joined it as the
 preview companion (item 7), `fastconformer-streaming` took that slot from it
-(`08ce3e3`), and six more arrived on 2026-09-13 — none of those seven has been
-through a benchmark run. Items 1d and 1e below are what that leaves open.
+(`08ce3e3`), and six more arrived on 2026-09-13. The sweep of that date
+(`4b1d2d4`) ran over all 31, so every catalog entry has speed, memory and
+accuracy figures. [Item 1d](#-1d-nothing-compares-the-catalog-against-upstream)
+and [item 1e](#-1e-the-preview-companion-default-is-now-a-decision-not-a-measurement)
+below are what that leaves open — comparing the catalog against upstream, and a
+companion default that is now a choice rather than a gap.
 
 Fixed. The catalog-wide benchmark
-([`model-benchmarks.md`](reports/model-benchmarks.md)) now reports **48
+([`model-benchmarks.md`](reports/model-benchmarks.md)) now reports **60
 measured rows and no failures**, against 38 rows and 12 failed cells before.
 
 The ten sherpa models that could not be loaded shared one root cause and
@@ -156,11 +161,15 @@ First measurements, from a warm model:
 | Model | First token | Streaming total | Batch total |
 |---|---:|---:|---:|
 | `zipformer-streaming` | 114 ms | 4.33 s | 4.65 s |
-| `parakeet` | 405 ms | 9.28 s | 8.12 s |
+| `fastconformer-streaming` (then named `parakeet`) | 405 ms | 9.28 s | 8.12 s |
 
 `zipformer-streaming` at 114 ms is comfortably inside what reads as live.
-`parakeet` is slower streaming than batch, which is worth a look if
-streaming becomes a product feature rather than a catalog claim.
+`fastconformer-streaming` was slower streaming than batch here, which was worth
+a look if streaming became a product feature rather than a catalog claim. The
+2026-09-13 sweep supersedes both rows and reverses that second finding — it
+measures every streaming entry, and
+[item 1e](#-1e-the-preview-companion-default-is-now-a-decision-not-a-measurement)
+reads the result.
 
 ### 📦 1b. Feed the measured numbers back into the catalog
 
@@ -170,12 +179,11 @@ every loadable one, so the field can stop being a placeholder — and
 have been measured.
 
 > [!NOTE]
-> [`model-benchmarks.md`](reports/model-benchmarks.md) was generated before the
-> catalog rename, so its model column still says `base.en` where the catalog
-> now says `whisper-base.en`, and `parakeet` where it says
-> `fastconformer-streaming`. Every table on this page quoting it uses the names
-> as the report prints them, so the citation resolves. `just bench` regenerates
-> the report with current names; do not hand-edit it.
+> [`model-benchmarks.md`](reports/model-benchmarks.md) was regenerated on
+> 2026-09-13 and prints current catalog names — `whisper-base.en`, not
+> `base.en`. Item 1a's table above is the exception on this page: it records an
+> older run, and its numbers are superseded by the 2026-09-13 sweep. `just
+> bench` regenerates the report; do not hand-edit it.
 
 ### 📦 1c. The accurate whisper models return worse text than `base.en`
 
@@ -184,12 +192,12 @@ audio:
 
 | Model | Transcript | Punct/word | Capitals F1 |
 |---|---|---:|---:|
-| `base.en` | `Lux is in the pit. He cannot sit still...` | 0.16 | 1.00 |
-| `medium.en` | `Lux is in the pit he cannot sit still...` | 0.00 | 0.57 |
-| `large-v3` | `lux is in the pit he cannot sit still...` | 0.00 | 0.00 |
+| `whisper-base.en` | `Lux is in the pit. He cannot sit still...` | 0.16 | 1.00 |
+| `whisper-medium.en` | `Lux is in the pit he cannot sit still...` | 0.00 | 0.57 |
+| `whisper-large-v3` | `lux is in the pit he cannot sit still...` | 0.00 | 0.00 |
 
-`large-v3`, `large-v3-turbo` and `distil-large-v3` all return **lowercase,
-unpunctuated** text. Word error rate is essentially identical across the
+`whisper-large-v3`, `whisper-large-v3-turbo` and `whisper-distil-large-v3` all
+return **lowercase, unpunctuated** text. Word error rate is essentially identical across the
 whole family — the fixture is easy — so a report that measured only WER
 would call these models equivalent, and for dictation they are not: one
 produces text you can paste into a document, the others produce text you
@@ -202,16 +210,19 @@ from WER rather than normalizing them away.
 mechanism now exists** — `[vocabulary]` became whisper's `--prompt` in
 `7e52f94`, so a prompt reaches the model on every placement — and what is
 untested is whether *punctuated prose* in that prompt coaxes formatted output
-out of `large-v3`. That is a benchmark run, not a code change: put a punctuated
-sentence in `vocabulary.words`, rerun `just bench`, and compare the punctuation
-and capitalization columns.
+out of `whisper-large-v3`. That is a benchmark run, not a code change: put a
+punctuated sentence in `vocabulary.words`, rerun `just bench`, and compare the
+punctuation and capitalization columns.
 
 There is now also a way around it rather than through it. With every sherpa
 model loading, `canary-180m` scores 1.8% WER with **punctuation 0.18 and
-capitalisation 1.00** — the same formatting quality as `base.en` — in 457 MB
-and 4.4 s. It is the only model in the catalog that combines large-model
-accuracy with usable formatting, and it is a candidate for the accurate
-preset that `large-v3` currently cannot fill.
+capitalisation 1.00** — the same formatting quality as `whisper-base.en` — in
+460 MB and 3.73 s. The 2026-09-13 sweep found four more sherpa models that pair
+that accuracy with a 1.00 capitals F1 (`parakeet-tdt-0.6b`,
+`parakeet-tdt-0.6b-v2`, `cohere-transcribe`, `canary-1b`), so `canary-180m` is
+no longer the only one — but the lightest of the others costs 1.54 GB, so it is
+still the candidate for the accurate preset that `whisper-large-v3` cannot
+fill.
 
 ### 📦 1d. Nothing compares the catalog against upstream
 
@@ -249,7 +260,7 @@ Three things it has to get right to be worth running:
   should say it is a sherpa check rather than implying coverage it does not
   have.
 
-### 📦 1e. The default preview companion has not been re-measured
+### 📦 1e. The preview companion default is now a decision, not a measurement
 
 [`speech.DefaultCompanionModel`](../internal/speech/companion.go) is
 `fastconformer-streaming`, and the doc comment on that constant records the
@@ -259,20 +270,49 @@ the part that actually decided it, the FastConformer got the opening words and
 returned them in lower case where the zipformer lost them and shouted.
 
 That comparison had two candidates because the catalog had two candidates. It
-now has more. `nemotron-streaming-en-80ms` (442 MB) and
-`parakeet-unified-en-streaming-240ms` (478 MB) are the same size class as the
-429 MB incumbent, both decode incrementally, and **neither has been compared
-against it for anything**. This is not a claim that either is better. It is
-that the slot was settled by a two-way test that is now out of date.
+now has seven streaming entries, and the 2026-09-13 sweep
+([`model-benchmarks.md`](reports/model-benchmarks.md)) measured every one of
+them. **The incumbent came last on accuracy, by a wide margin.**
 
-**Next step:** rerun that comparison with the new entries in it. The criteria
-are the companion's rather than `just bench`'s — time to first output, whether
-the opening words survive, and whether the partials are cased and punctuated
-like the final transcript they sit in front of, because a preview that
-disagrees with the text that lands reads as a bug. Measuring and then leaving
-the default alone is a result too.
+| Model | First token | WER | Punct/word | Capitals F1 | Peak RSS |
+|---|---:|---:|---:|---:|---:|
+| `zipformer-streaming` | 107 ms | 7.3% | 0.04 | 0.20 | 161 MB |
+| `zipformer-streaming-20m` | 108 ms | 9.1% | 0.02 | 0.15 | 112 MB |
+| `fastconformer-streaming` (the default) | 382 ms | **12.7%** | 0.00 | 0.00 | 550 MB |
+| `nemotron-streaming-multi-560ms` | 414 ms | 7.3% | 0.09 | 0.80 | 976 MB |
+| `nemotron-streaming-en-560ms` | 433 ms | **1.8%** | 0.15 | 0.91 | 966 MB |
+| `nemotron-streaming-en-80ms` | 1.80 s | 3.6% | 0.15 | 0.83 | 958 MB |
+| `parakeet-unified-en-streaming-240ms` | 5.27 s | 3.6% | 0.16 | 0.91 | 1024 MB |
 
-**Until that runs, note that the docs disagree with the code.** `08ce3e3`
+`nemotron-streaming-en-560ms` makes **seven times fewer word errors** than the
+default for **51 ms** more to first token and about 420 MB more resident, and it
+punctuates and capitalises where the default does neither at all — which is the
+same criterion that settled the slot last time, since a preview that disagrees
+with the text that lands reads as a bug. The two entries this item named as
+untried are answered too, and negatively: `nemotron-streaming-en-80ms` needs
+1.80 s to first token and `parakeet-unified-en-streaming-240ms` 5.27 s, so
+neither is a companion at any price.
+
+One companion criterion the sweep still does not cover: **whether the opening
+words survive the first chunks.** That is what took the slot from
+`zipformer-streaming-20m` in the first place, and a whole-clip word error rate
+cannot see it. Checking it is a look at the partial stream, not another
+benchmark run.
+
+**Next step, and it is the user's call rather than an implementation task:**
+decide whether `speech.DefaultCompanionModel` becomes
+`nemotron-streaming-en-560ms`. The download is 442 MB against 429 MB, so
+`mavor setup` costs about the same; the price is roughly 420 MB more resident in
+the daemon for the whole session, and a shipped default whose weights are under
+NVIDIA's OpenMDW-1.1 model-weights licence rather than Apache-2.0 like the rest
+of the catalog
+([what that changes](choosing-a-model.md#the-nemotron-models-and-a-new-family-in-the-listing)). Leaving the default where it is remains a
+legitimate answer — the finding is recorded either way, in
+[`choosing-a-model.md`](choosing-a-model.md#you-do-not-have-to-choose-the-preview-companion),
+and anyone can set `preview.source` to a model name today without waiting for
+the default to move.
+
+**Separately, the docs disagree with the code.** `08ce3e3`
 changed the default companion and updated none of the prose;
 [`choosing-a-model.md`](choosing-a-model.md), [`user-guide.md`](user-guide.md)
 and [`../README.md`](../README.md) were corrected on 2026-09-13, and
@@ -556,7 +596,7 @@ The three routes, worst to best:
 |---|---|---|
 | **MIGraphX EP** | Write the provider plumbing sherpa-onnx does not have (a few hundred lines of C++, modelled on the CUDA provider), build ORT against ROCm, vendor the result into a forked Go module, then maintain that version matrix forever. Multi-day to multi-week. | Plausible, unmerged, and yours to own indefinitely |
 | **WebGPU EP** | ONNX Runtime's WebGPU provider runs natively on Linux through Dawn, which dispatches to Vulkan — vendor-neutral, no ROCm at all. But sherpa-onnx has no plumbing for it, op coverage is unpublished, and the only prototype anyone claims is macOS/Metal. | Most interesting long-term, least evidence |
-| **Leave ONNX entirely** | [`parakeet.cpp`](https://github.com/mudler/parakeet.cpp) reimplements Parakeet in ggml, validated at WER-0 against NeMo, with published GGUF weights. ggml already has the Vulkan backend giving whisper its 9.6×, so a ggml Parakeet **inherits RDNA4 acceleration for free**. | The only route with a live working precedent on this hardware |
+| **Leave ONNX entirely** | [`parakeet.cpp`](https://github.com/mudler/parakeet.cpp) reimplements Parakeet in ggml, validated at WER-0 against NeMo, with published GGUF weights. ggml already has the Vulkan backend giving whisper its 7.8×, so a ggml Parakeet **inherits RDNA4 acceleration for free**. | The only route with a live working precedent on this hardware |
 
 > [!WARNING]
 > A trap that applies to both ONNX routes: PR #2370's own author reports that
@@ -585,8 +625,8 @@ evaluates ahead-of-time compiled inference against the graph interpreters mavor
 uses today.
 
 Genuinely uncertain this is worth building. The premise is that compilation buys
-latency, but `base.en` at 12.2× real time on CPU — 36.6× on a Vulkan build —
-is already far past what dictation needs, and both runtimes would add a
+latency, but `whisper-base.en` at 12.2× real time on CPU — 39.3× on a Vulkan
+build — is already far past what dictation needs, and both runtimes would add a
 heavyweight toolchain to the build.
 
 **Next step:** revisit once item 1 produces catalog-wide numbers. If the fast
