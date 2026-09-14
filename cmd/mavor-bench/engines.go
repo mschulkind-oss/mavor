@@ -80,6 +80,26 @@ type runResult struct {
 	// live while you speak, which total latency cannot tell you.
 	FirstTokenMS float64 `json:"first_token_ms,omitempty"`
 
+	// The preview cadence figures, streaming backends only: how many times
+	// the preview text changed, and how far apart those changes were.
+	//
+	// First token says when the preview starts and nothing about what happens
+	// next, and a model can score well on it while delivering the text in
+	// visible lumps — which is how an accurate but chunky companion became
+	// the default and was caught by a user rather than by this report. The
+	// gaps are in audio time and the slowest chunk is wall clock; see
+	// streamCadence in sherpa.go for why those units differ.
+	Updates        int     `json:"stream_updates,omitempty"`
+	MeanGapMS      float64 `json:"stream_mean_gap_ms,omitempty"`
+	MaxGapMS       float64 `json:"stream_max_gap_ms,omitempty"`
+	SlowestChunkMS float64 `json:"stream_slowest_chunk_ms,omitempty"`
+
+	// SlowChunks is JSON-only on purpose. The slowest call is what predicts a
+	// felt stall and belongs in the table; how many calls overran the tick is
+	// what tells whoever is diagnosing whether it was one hiccup or a model
+	// that can never keep up, and that reader has the JSON open.
+	SlowChunks int `json:"stream_slow_chunks,omitempty"`
+
 	Transcript string  `json:"transcript"`
 	WER        float64 `json:"wer"`
 	CER        float64 `json:"cer"`

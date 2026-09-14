@@ -308,8 +308,10 @@ func writeStreamingSection(b *strings.Builder, r *report) {
 	fmt.Fprintf(b, "The streaming rows feed the same audio in %d ms chunks — the daemon's own\n", r.StreamChunkMS)
 	b.WriteString("preview tick — rather than handing over a finished file, so the per-call\n")
 	b.WriteString("cost the user actually waits through is inside these numbers.\n")
-	b.WriteString("file. **Time to first token** is what decides whether a model feels live;\n")
-	b.WriteString("total time cannot tell you that.\n\n")
+	b.WriteString("**Time to first token** is what decides whether a model starts feeling\n")
+	b.WriteString("live; total time cannot tell you that, and neither can it tell you\n")
+	b.WriteString("whether the preview kept coming — see [Preview cadence](#preview-cadence)\n")
+	b.WriteString("below for that half of the answer.\n\n")
 	b.WriteString("Only models the catalog marks as streaming appear here. Whisper is absent\n")
 	b.WriteString("by architecture, not by omission: it is encoder-decoder over 30-second\n")
 	b.WriteString("windows and has no incremental decode to measure.\n\n")
@@ -340,6 +342,162 @@ func writeStreamingSection(b *strings.Builder, r *report) {
 	b.WriteString("\nA dash under **first token** means the recognizer returned no partial text\n")
 	b.WriteString("before the stream closed — it accepted the chunks but decoded only at the\n")
 	b.WriteString("end, which is worth knowing about a model the catalog calls streaming.\n\n")
+
+	writeCadenceTable(b, r, streaming)
+}
+
+// lumpyMeanGapMS is where a preview stops reading as continuous and starts
+// reading as text arriving a phrase at a time.
+//
+// It is a judgement, not a perceptual constant, and the honest provenance is
+// this: the two companions that have been used as the default sit around
+// 260-360 ms between repaints and nobody has complained about them, while the
+// one measured at ~720 ms was reported as chunky within a day of shipping.
+// The line is drawn between those two. It gates nothing — the harness still
+// publishes every number — it only decides whether the report says out loud
+// that a row is a preview a user will notice.
+const lumpyMeanGapMS = 500
+
+// writeCadenceTable answers the question time to first token cannot: once the
+// preview has started, does it keep coming?
+//
+// This exists because nothing did. An accurate streaming model was made the
+// default companion, scored well here on first token, and a user reported the
+// preview "comes in chunks rather than continuously" the next day. The report
+// had no column that could have said so, and a benchmark that scores a
+// regression well is worse than one that is silent about it.
+func writeCadenceTable(b *strings.Builder, r *report, streaming []runResult) {
+	measured := false
+	for _, s := range streaming {
+		if s.Updates > 0 {
+			measured = true
+			break
+		}
+	}
+	b.WriteString("### Preview cadence\n\n")
+	if !measured {
+		b.WriteString("**Not measured.** No streaming row produced a single mid-stream update,\n")
+		b.WriteString("so there are no intervals to report. That is itself the worst possible\n")
+		b.WriteString("cadence result: the overlay would show nothing at all until the\n")
+		b.WriteString("utterance ended.\n\n")
+		return
+	}
+
+	b.WriteString("Time to first token says when the preview *starts*. It says nothing about\n")
+	b.WriteString("whether the text then flows or arrives in lumps — and that is the half a\n")
+	b.WriteString("user notices. An **update** is a chunk whose returned text differs from\n")
+	b.WriteString("the previous chunk's: one repaint of the overlay.\n\n")
+
+	b.WriteString("| Model | Updates | Mean gap | Longest gap | Slowest chunk |\n")
+	b.WriteString("|---|---:|---:|---:|---:|\n")
+	tick := float64(r.StreamChunkMS)
+	overrun := false
+	for _, s := range streaming {
+		if s.Updates == 0 {
+			fmt.Fprintf(b, "| `%s` | 0 | — | — | %s |\n", s.Model, msString(s.SlowestChunkMS))
+			continue
+		}
+		slow := msString(s.SlowestChunkMS)
+		if tick > 0 && s.SlowestChunkMS > tick {
+			// Bold rather than a symbol: the warning below names the models,
+			// and a reader scanning the column still needs the cell itself to
+			// stand out.
+			slow = "**" + slow + "**"
+			overrun = true
+		}
+		fmt.Fprintf(b, "| `%s` | %d | %s | %s | %s |\n",
+			s.Model, s.Updates, msString(s.MeanGapMS), msString(s.MaxGapMS), slow)
+	}
+	b.WriteString("\n")
+
+	b.WriteString("**Mean gap** and **longest gap** are distances in *audio time* — position\n")
+	b.WriteString("in the stream — not wall clock. The harness feeds chunks as fast as the\n")
+	b.WriteString("recognizer accepts them, so a wall-clock gap would report how fast this\n")
+	b.WriteString("CPU is rather than how the model behaves, and would shrink on a faster\n")
+	b.WriteString("machine while the lumpiness a user sees stayed exactly the same. The wait\n")
+	b.WriteString("*before* the first update is excluded — that is first token, above — and\n")
+	b.WriteString("the silence *after* the last one is included, so a model that emits a few\n")
+	b.WriteString("partials early, goes quiet, and delivers the rest at the end of the\n")
+	b.WriteString("stream cannot score a clean mean.\n\n")
+
+	b.WriteString("**Slowest chunk** is the exception: it is wall clock, because it is the\n")
+	fmt.Fprintf(b, "longest single `FeedChunk` call and the daemon has only %d ms before the\n", r.StreamChunkMS)
+	b.WriteString("next chunk is due.\n\n")
+
+	b.WriteString("How to read the update count: it is repaints across the whole fixture, so\n")
+	fmt.Fprintf(b, "divide by the %.1f s of audio. Three or four repaints a second reads as\n", r.AudioSeconds)
+	fmt.Fprintf(b, "continuous text appearing as you speak. A mean gap past about %d ms does\n", lumpyMeanGapMS)
+	b.WriteString("not: the overlay sits still and then jumps a phrase at a time, which is\n")
+	b.WriteString("what a user reports as \"it comes in chunks rather than continuously\".\n")
+	b.WriteString("**Longest gap** is the worst of those freezes and is the number that\n")
+	b.WriteString("predicts the complaint — a healthy mean with a 1.3 s worst case still\n")
+	b.WriteString("feels to the speaker like the preview stopped.\n\n")
+
+	writeLumpyPreviewWarning(b, r, streaming)
+	writeTickOverrunWarning(b, r, streaming, overrun)
+}
+
+// writeLumpyPreviewWarning states the conclusion instead of leaving the reader
+// to derive it. "26 updates" is not self-interpreting; "a repaint every
+// 716 ms, which is a preview arriving in visible lumps" is, and a table nobody
+// can read is how the last regression got shipped.
+func writeLumpyPreviewWarning(b *strings.Builder, r *report, streaming []runResult) {
+	var lumpy []runResult
+	for _, s := range streaming {
+		if s.Updates > 0 && s.MeanGapMS > lumpyMeanGapMS {
+			lumpy = append(lumpy, s)
+		}
+	}
+	if len(lumpy) == 0 {
+		return
+	}
+	b.WriteString("> [!WARNING]\n")
+	b.WriteString("> **These models paint the preview in lumps, whatever their first-token\n")
+	b.WriteString("> figure says.** Do not pick one as `preview.source` on the strength of\n")
+	b.WriteString("> the latency table alone.\n>\n")
+	for _, s := range lumpy {
+		fmt.Fprintf(b, "> - `%s` — %d updates over %.1f s of audio: a repaint\n", s.Model, s.Updates, r.AudioSeconds)
+		fmt.Fprintf(b, ">   every %s on average, with a longest freeze of %s. The overlay holds\n",
+			msString(s.MeanGapMS), msString(s.MaxGapMS))
+		b.WriteString(">   still, then jumps a phrase at a time.\n")
+	}
+	b.WriteString("\n")
+}
+
+// writeTickOverrunWarning flags a model whose slowest FeedChunk exceeded the
+// daemon's preview tick. That is not a slow row, it is a model the daemon
+// cannot drive: the preview goroutine is still inside the recognizer when the
+// next chunk is due, so captured audio queues up behind it and the overlay
+// falls further behind the speaker the longer the utterance runs.
+func writeTickOverrunWarning(b *strings.Builder, r *report, streaming []runResult, overrun bool) {
+	if !overrun || r.StreamChunkMS <= 0 {
+		return
+	}
+	b.WriteString("> [!CAUTION]\n")
+	fmt.Fprintf(b, "> **A bold slowest-chunk figure overran the daemon's %d ms preview tick.**\n", r.StreamChunkMS)
+	b.WriteString("> The daemon feeds the preview from a ticker on one goroutine, so a\n")
+	b.WriteString("> `FeedChunk` that takes longer than the interval cannot be absorbed:\n")
+	b.WriteString("> captured audio backs up behind the recognizer and the overlay drifts\n")
+	b.WriteString("> further behind the speaker the longer the utterance runs. Unlike the gap\n")
+	b.WriteString("> columns this one is wall clock, so it is a claim about this machine —\n")
+	b.WriteString("> a slower CPU pushes more models over the line, and that is the point:\n")
+	b.WriteString("> it is measured where the daemon would run. `stream_slow_chunks` in the\n")
+	b.WriteString("> JSON says how many calls overran, which separates one hiccup from a\n")
+	b.WriteString("> model that can never keep up.\n>\n")
+	for _, s := range streaming {
+		if s.SlowestChunkMS > float64(r.StreamChunkMS) {
+			detail := ""
+			if s.SlowChunks > 0 {
+				calls := "calls"
+				if s.SlowChunks == 1 {
+					calls = "call"
+				}
+				detail = fmt.Sprintf(", %d %s over the tick", s.SlowChunks, calls)
+			}
+			fmt.Fprintf(b, "> - `%s` — worst call %s%s.\n", s.Model, msString(s.SlowestChunkMS), detail)
+		}
+	}
+	b.WriteString("\n")
 }
 
 // writeThreadScalingSection answers the `threads` config key. It is a

@@ -73,6 +73,7 @@ func benchSherpa(ctx context.Context, s sherpaRunner, self string, m catalogMode
 	}
 
 	var totals, loads, firsts []float64
+	var updates, meanGaps, maxGaps, slowest, slowCounts []float64
 	var text string
 	var peak int64
 	for i := 0; i < o.runs; i++ {
@@ -91,6 +92,16 @@ func benchSherpa(ctx context.Context, s sherpaRunner, self string, m catalogMode
 		if resp.FirstTokenMS > 0 {
 			firsts = append(firsts, resp.FirstTokenMS)
 		}
+		if streaming {
+			// Collected unconditionally, zeros included: a run in which the
+			// preview never updated is a result about the model, and dropping
+			// it would let one lucky run out of three stand for all three.
+			updates = append(updates, float64(resp.Updates))
+			meanGaps = append(meanGaps, resp.MeanGapMS)
+			maxGaps = append(maxGaps, resp.MaxGapMS)
+			slowest = append(slowest, resp.SlowestChunkMS)
+			slowCounts = append(slowCounts, float64(resp.SlowChunks))
+		}
 		text = resp.Text
 	}
 
@@ -98,6 +109,15 @@ func benchSherpa(ctx context.Context, s sherpaRunner, self string, m catalogMode
 	res.TotalMS = median(totals)
 	res.LoadMS = median(loads)
 	res.FirstTokenMS = median(firsts)
+	// Median across runs, like every other figure here — including the
+	// slowest chunk. Taking the max across runs would let a single scheduler
+	// stall anywhere in the sweep define the column, which is the same reason
+	// the timings are not reported best-case either.
+	res.Updates = int(median(updates))
+	res.MeanGapMS = median(meanGaps)
+	res.MaxGapMS = median(maxGaps)
+	res.SlowestChunkMS = median(slowest)
+	res.SlowChunks = int(median(slowCounts))
 	res.PeakRSSKB = peak
 	res.RTF = res.TotalMS / 1000 / audioSec
 	scoreAccuracy(&res, reference, text)

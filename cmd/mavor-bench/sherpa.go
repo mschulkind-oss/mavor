@@ -82,25 +82,157 @@ func (s sherpaRunner) batchOnce(ctx context.Context, model, wavPath string) (tex
 // Keep this equal to that ticker. If the daemon's tick changes, this changes.
 const streamChunkMS = 30
 
-// runStreaming feeds the file in chunks, as the daemon does while you speak,
-// and records when the first partial text comes back. This is the only
-// measurement that answers "does this model feel live", and it is why
-// streaming and batch are separate rows rather than one number per model.
+// streamCadence describes how the preview text arrived rather than when it
+// started. Time to first token answers "did anything appear"; nothing in this
+// harness used to answer "and did it then keep coming".
+//
+// It had to. The default preview companion was changed to a more accurate
+// model, the report scored it well on first token, and a user reported within
+// a day that the preview "comes in chunks rather than continuously" — a
+// regression the benchmark had no column for. These are that column.
+type streamCadence struct {
+	// Updates is the number of FeedChunk calls whose text differed from the
+	// previous one, i.e. the number of times the overlay would repaint.
+	Updates int
+
+	// MeanGapMS and MaxGapMS are distances in AUDIO time — position in the
+	// stream — not wall clock. See cadenceTracker for why that is the only
+	// honest unit here.
+	MeanGapMS float64
+	MaxGapMS  float64
+
+	// SlowestChunkMS is the one wall-clock figure, because it is the one that
+	// stalls the daemon: FeedChunk runs on the preview goroutine between
+	// 30 ms ticks, so a call longer than a tick means captured audio queues up
+	// behind the recognizer.
+	SlowestChunkMS float64
+
+	// SlowChunks counts how many calls overran that tick. JSON only: the
+	// slowest call is what predicts a felt stall, but one slow call is a
+	// hiccup and four hundred is a model that can never keep up, and only
+	// whoever is diagnosing needs to tell those apart.
+	SlowChunks int
+}
+
+// cadenceTracker accumulates the cadence figures one chunk at a time. It is a
+// separate type from the feed loop so the arithmetic can be tested without a
+// 600 MB model on disk — the gap accounting has three edge cases (no updates
+// at all, the wait before the first one, the silence after the last one) and
+// getting any of them wrong yields a plausible-looking number.
+//
+// Gaps are measured in audio time because the harness deliberately feeds as
+// fast as the recognizer accepts (see streamOnce). A wall-clock gap would
+// therefore report how fast this CPU is, not how this model behaves, and
+// would shrink on a faster machine while the user's experience of lumpiness
+// stayed identical.
+type cadenceTracker struct {
+	tickMS float64
+
+	prevText  string
+	seenFirst bool
+	lastPosMS float64
+
+	gapSum float64
+	gapMax float64
+	cad    streamCadence
+}
+
+func newCadenceTracker() *cadenceTracker {
+	return &cadenceTracker{tickMS: streamChunkMS}
+}
+
+// observe records one FeedChunk call: posMS is how far into the audio the
+// stream now is, text is what came back, and callMS is how long the call took
+// on the wall clock.
+func (c *cadenceTracker) observe(posMS float64, text string, callMS float64) {
+	if callMS > c.cad.SlowestChunkMS {
+		c.cad.SlowestChunkMS = callMS
+	}
+	if callMS > c.tickMS {
+		c.cad.SlowChunks++
+	}
+
+	text = strings.TrimSpace(text)
+	if text == c.prevText {
+		return
+	}
+	// A change back to empty counts: the recognizer clearing its hypothesis
+	// is a repaint the user sees, and skipping it would credit a model for
+	// text that vanished.
+	c.cad.Updates++
+	if c.seenFirst {
+		gap := posMS - c.lastPosMS
+		c.gapSum += gap
+		if gap > c.gapMax {
+			c.gapMax = gap
+		}
+	}
+	c.seenFirst = true
+	c.lastPosMS = posMS
+	c.prevText = text
+}
+
+// finish closes the last gap against the end of the audio and returns the
+// figures. audioMS is the length of the stream that was fed.
+//
+// The wait BEFORE the first update is excluded — that is time to first token,
+// which has its own column, and folding it in here would report the same
+// latency twice. The silence AFTER the last update is included, and that is
+// deliberate: a model that emits a few partials early, goes quiet, and
+// delivers everything from StopStream is precisely the lumpy preview this
+// measures, and it would otherwise score a flawless mean and max. On a
+// fixture with trailing silence this adds the same constant to every model,
+// so the rows stay comparable with each other.
+func (c *cadenceTracker) finish(audioMS float64) streamCadence {
+	if !c.seenFirst {
+		return c.cad
+	}
+	if tail := audioMS - c.lastPosMS; tail > 0 {
+		c.gapSum += tail
+		if tail > c.gapMax {
+			c.gapMax = tail
+		}
+	}
+	c.cad.MaxGapMS = c.gapMax
+	c.cad.MeanGapMS = c.gapSum / float64(c.cad.Updates)
+	return c.cad
+}
+
+// streamResult is one streaming run. It is a struct rather than a fifth and
+// sixth return value because the cadence figures travel with the timings
+// everywhere they go, and a six-value signature is where a caller starts
+// mixing up two adjacent time.Durations.
+type streamResult struct {
+	Text       string
+	Load       time.Duration
+	FirstToken time.Duration
+	Total      time.Duration
+	Cadence    streamCadence
+}
+
+// streamOnce feeds the file in chunks, as the daemon does while you speak,
+// and records both when the first partial text comes back and how steadily
+// the text kept coming after that. This is the only measurement that answers
+// "does this model feel live", and it is why streaming and batch are separate
+// rows rather than one number per model.
 //
 // Audio is fed as fast as the recognizer accepts it rather than paced to
 // real time: the question is whether the model can keep up with speech, and
-// pacing the feed to wall-clock would measure the sleep, not the model.
-func (s sherpaRunner) streamOnce(ctx context.Context, model, wavPath string) (text string, load, firstToken, total time.Duration, err error) {
+// pacing the feed to wall-clock would measure the sleep, not the model. That
+// is also why the gap figures are in audio time — see cadenceTracker.
+func (s sherpaRunner) streamOnce(ctx context.Context, model, wavPath string) (streamResult, error) {
+	var res streamResult
+
 	cfg := s.config(model)
 	t, err := speech.NewSherpaTranscriber(cfg, quietLogger())
 	if err != nil {
-		return "", 0, 0, 0, fmt.Errorf("build transcriber: %w", err)
+		return res, fmt.Errorf("build transcriber: %w", err)
 	}
 	defer t.Close()
 
 	sampleRate, samples, err := speech.ReadWAVAudio(wavPath)
 	if err != nil {
-		return "", 0, 0, 0, fmt.Errorf("read wav: %w", err)
+		return res, fmt.Errorf("read wav: %w", err)
 	}
 
 	// Load before the clock starts. Time to first token is meant to answer
@@ -110,33 +242,47 @@ func (s sherpaRunner) streamOnce(ctx context.Context, model, wavPath string) (te
 	// never experiences. Load is measured, just separately.
 	loadStart := time.Now()
 	if err := t.Start(ctx); err != nil {
-		return "", 0, 0, 0, fmt.Errorf("load model: %w", err)
+		return res, fmt.Errorf("load model: %w", err)
 	}
-	load = time.Since(loadStart)
+	res.Load = time.Since(loadStart)
 
 	start := time.Now()
 	if err := t.StartStream(ctx); err != nil {
-		return "", load, 0, 0, fmt.Errorf("start stream: %w", err)
+		return res, fmt.Errorf("start stream: %w", err)
 	}
 
+	tracker := newCadenceTracker()
 	samplesPerChunk := sampleRate * streamChunkMS / 1000
 	for i := 0; i < len(samples); i += samplesPerChunk {
 		end := min(i+samplesPerChunk, len(samples))
-		partial, err := t.FeedChunk(ctx, pcm16LE(samples[i:end]))
-		if err != nil {
-			return "", load, 0, time.Since(start), fmt.Errorf("feed chunk: %w", err)
-		}
-		if firstToken == 0 && strings.TrimSpace(partial) != "" {
-			firstToken = time.Since(start)
-		}
-	}
 
-	text, err = t.StopStream(ctx)
-	total = time.Since(start)
-	if err != nil {
-		return "", load, firstToken, total, fmt.Errorf("stop stream: %w", err)
+		callStart := time.Now()
+		partial, err := t.FeedChunk(ctx, pcm16LE(samples[i:end]))
+		call := time.Since(callStart)
+		if err != nil {
+			res.Total = time.Since(start)
+			return res, fmt.Errorf("feed chunk: %w", err)
+		}
+
+		// Position in the audio, computed from samples actually fed rather
+		// than from the chunk index, so the short final chunk does not push
+		// every gap out by a few milliseconds.
+		posMS := float64(end) / float64(sampleRate) * 1000
+		tracker.observe(posMS, partial, float64(call)/float64(time.Millisecond))
+
+		if res.FirstToken == 0 && strings.TrimSpace(partial) != "" {
+			res.FirstToken = time.Since(start)
+		}
 	}
-	return strings.TrimSpace(text), load, firstToken, total, nil
+	res.Cadence = tracker.finish(float64(len(samples)) / float64(sampleRate) * 1000)
+
+	text, err := t.StopStream(ctx)
+	res.Total = time.Since(start)
+	if err != nil {
+		return res, fmt.Errorf("stop stream: %w", err)
+	}
+	res.Text = strings.TrimSpace(text)
+	return res, nil
 }
 
 // pcm16LE converts the float samples ReadWAVAudio returns back to the

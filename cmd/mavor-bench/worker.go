@@ -50,6 +50,16 @@ type workerResponse struct {
 	TotalMS      float64 `json:"total_ms"`
 	FirstTokenMS float64 `json:"first_token_ms"`
 	Error        string  `json:"error,omitempty"`
+
+	// Preview cadence, streaming runs only. These have to cross the process
+	// boundary with the timings rather than being recomputed in the parent:
+	// the parent never sees a partial result, because the whole stream lives
+	// and dies inside the worker.
+	Updates        int     `json:"updates,omitempty"`
+	MeanGapMS      float64 `json:"mean_gap_ms,omitempty"`
+	MaxGapMS       float64 `json:"max_gap_ms,omitempty"`
+	SlowestChunkMS float64 `json:"slowest_chunk_ms,omitempty"`
+	SlowChunks     int     `json:"slow_chunks,omitempty"`
 }
 
 // runWorkerIfRequested handles the child side. It returns true when this
@@ -70,13 +80,18 @@ func runWorkerIfRequested() bool {
 	ctx := context.Background()
 
 	if req.Streaming {
-		text, load, first, total, err := s.streamOnce(ctx, req.Model, req.Audio)
+		sr, err := s.streamOnce(ctx, req.Model, req.Audio)
 		emit(workerResponse{
-			Text:         text,
-			LoadMS:       float64(load) / float64(time.Millisecond),
-			TotalMS:      float64(load+total) / float64(time.Millisecond),
-			FirstTokenMS: float64(first) / float64(time.Millisecond),
-			Error:        errString(err),
+			Text:           sr.Text,
+			LoadMS:         float64(sr.Load) / float64(time.Millisecond),
+			TotalMS:        float64(sr.Load+sr.Total) / float64(time.Millisecond),
+			FirstTokenMS:   float64(sr.FirstToken) / float64(time.Millisecond),
+			Updates:        sr.Cadence.Updates,
+			MeanGapMS:      sr.Cadence.MeanGapMS,
+			MaxGapMS:       sr.Cadence.MaxGapMS,
+			SlowestChunkMS: sr.Cadence.SlowestChunkMS,
+			SlowChunks:     sr.Cadence.SlowChunks,
+			Error:          errString(err),
 		})
 		return true
 	}

@@ -34,7 +34,8 @@ func sampleReport() *report {
 			{Model: "zipformer", Backend: backend{Engine: "sherpa", Device: "cpu", Mode: "batch"},
 				Runs: 3, TotalMS: 400, RTF: 0.02, PeakRSSKB: 200 * 1024, WER: 0.1},
 			{Model: "zipformer", Backend: backend{Engine: "sherpa", Device: "cpu", Mode: "streaming"},
-				Runs: 3, TotalMS: 450, FirstTokenMS: 120, RTF: 0.022, PeakRSSKB: 200 * 1024, WER: 0.1},
+				Runs: 3, TotalMS: 450, FirstTokenMS: 120, RTF: 0.022, PeakRSSKB: 200 * 1024, WER: 0.1,
+				Updates: 53, MeanGapMS: 357, MaxGapMS: 660, SlowestChunkMS: 23},
 			{Model: "canary-1b", Backend: backend{Engine: "sherpa", Device: "cpu", Mode: "batch"},
 				Failed: true, Error: "model type detection failed"},
 		},
@@ -313,5 +314,155 @@ func TestReportOmitsTheLoadRowWhenItCouldNotBeRead(t *testing.T) {
 
 	if strings.Contains(renderToString(t, r), "Load average") {
 		t.Error("an unreadable load average was rendered as a measurement")
+	}
+}
+
+// streamingSection is the whole "Streaming vs batch" block, cadence subsection
+// included, so a cadence assertion cannot accidentally pass on text from the
+// speed table.
+func streamingSection(out string) string {
+	return section(out, "## Streaming vs batch", "## Thread scaling")
+}
+
+// The regression that produced all of this: the default preview companion was
+// swapped for a more accurate streaming model, it scored well here because
+// time to first token was the only liveness number the report had, and a user
+// reported the preview "comes in chunks rather than continuously" the next
+// day. A model can start instantly and then paint in lumps, and until these
+// columns existed the report could not tell the two apart.
+func TestStreamingSectionMeasuresCadenceAndNotJustFirstToken(t *testing.T) {
+	out := streamingSection(renderReport(t))
+	for _, want := range []string{"Preview cadence", "Updates", "Mean gap", "Longest gap", "Slowest chunk"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("cadence table omits %q", want)
+		}
+	}
+	for _, want := range []string{"| 53 |", "357 ms", "660 ms", "23 ms"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("cadence table omits the measured value %q", want)
+		}
+	}
+	// A number the reader has to convert themselves is a number they will
+	// read wrong: the gaps are audio-time, and the slowest call is not.
+	if !strings.Contains(out, "audio time") {
+		t.Error("cadence section does not say the gaps are audio time, not wall clock")
+	}
+	if !strings.Contains(out, "wall clock") {
+		t.Error("cadence section does not say the slowest chunk is the one wall-clock figure")
+	}
+}
+
+// A table of gap figures that leaves the reader to decide what counts as
+// lumpy is how the last regression shipped. The report has to say it.
+func TestReportCallsOutAPreviewThatArrivesInLumps(t *testing.T) {
+	r := sampleReport()
+	for i := range r.Results {
+		if r.Results[i].Backend.Mode == "streaming" {
+			r.Results[i].Model = "nemotron-streaming-en-560ms"
+			r.Results[i].Updates = 26
+			r.Results[i].MeanGapMS = 716
+			r.Results[i].MaxGapMS = 1140
+		}
+	}
+	out := streamingSection(renderToString(t, r))
+
+	if !strings.Contains(out, "[!WARNING]") {
+		t.Fatal("a 716 ms mean gap raises no warning; it is reported as a bare number")
+	}
+	if !strings.Contains(out, "in lumps") {
+		t.Error("the warning does not say what a 716 ms mean gap means: a preview arriving in lumps")
+	}
+	if !strings.Contains(out, "nemotron-streaming-en-560ms") {
+		t.Error("the lumpy-preview warning does not name the model it is about")
+	}
+	if !strings.Contains(out, "716 ms") {
+		t.Error("the lumpy-preview warning does not quote the mean gap it is based on")
+	}
+
+	// And the converse, which matters just as much: a model that paints
+	// smoothly must not be warned about, or the warning stops being read.
+	if smooth := streamingSection(renderReport(t)); strings.Contains(smooth, "[!WARNING]") {
+		t.Error("a 357 ms mean gap is flagged as lumpy; that is the cadence of the companion nobody has complained about")
+	}
+}
+
+// A FeedChunk longer than the daemon's tick is not a slow row, it is a model
+// the daemon cannot drive: the preview goroutine is still in the recognizer
+// when the next chunk is due, so audio queues up behind it.
+func TestReportFlagsAFeedChunkThatOverrunsTheDaemonsTick(t *testing.T) {
+	r := sampleReport()
+	r.StreamChunkMS = 30
+	for i := range r.Results {
+		if r.Results[i].Backend.Mode == "streaming" {
+			r.Results[i].SlowestChunkMS = 504
+			r.Results[i].SlowChunks = 12
+		}
+	}
+	out := streamingSection(renderToString(t, r))
+
+	if !strings.Contains(out, "[!CAUTION]") {
+		t.Fatal("a 504 ms FeedChunk against a 30 ms tick raises no warning")
+	}
+	if !strings.Contains(out, "**504 ms**") {
+		t.Error("the overrunning cell is not marked in the table, so the warning cannot be traced to a row")
+	}
+	if !strings.Contains(out, "backs up") {
+		t.Error("the warning does not say what an overrun does to the daemon")
+	}
+
+	// The sample's 23 ms worst call is inside the tick and must stay unmarked.
+	clean := sampleReport()
+	clean.StreamChunkMS = 30
+	if got := streamingSection(renderToString(t, clean)); strings.Contains(got, "[!CAUTION]") {
+		t.Error("a 23 ms worst call is flagged against a 30 ms tick; the flag would then fire on every model")
+	}
+}
+
+// A streaming row that never produced a mid-stream update has no intervals to
+// average, and a table of dashes reads as a measurement the harness forgot.
+// It is the worst cadence there is and has to be named as one.
+func TestCadenceSectionSaysSoWhenThePreviewNeverUpdated(t *testing.T) {
+	r := sampleReport()
+	for i := range r.Results {
+		if r.Results[i].Backend.Mode == "streaming" {
+			r.Results[i].Updates = 0
+			r.Results[i].MeanGapMS = 0
+			r.Results[i].MaxGapMS = 0
+		}
+	}
+	out := streamingSection(renderToString(t, r))
+	if !strings.Contains(out, "### Preview cadence") {
+		t.Fatal("the cadence subsection vanished when no model updated")
+	}
+	if !strings.Contains(out, "Not measured") {
+		t.Error("a cadence section with nothing to report does not say so")
+	}
+}
+
+// The table carries what a reader can act on; the JSON carries everything,
+// including the count of overrunning calls that tells a diagnostician whether
+// it was one hiccup or a model that can never keep up.
+func TestCadenceJSONCarriesTheFieldsTheTableLeavesOut(t *testing.T) {
+	r := sampleReport()
+	for i := range r.Results {
+		if r.Results[i].Backend.Mode == "streaming" {
+			r.Results[i].SlowChunks = 12
+		}
+	}
+	path := filepath.Join(t.TempDir(), "out.json")
+	if err := writeJSON(path, r); err != nil {
+		t.Fatalf("writeJSON: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"stream_updates", "stream_mean_gap_ms", "stream_max_gap_ms",
+		"stream_slowest_chunk_ms", "stream_slow_chunks",
+	} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("JSON omits %q, so a future run cannot be diffed on cadence", want)
+		}
 	}
 }
