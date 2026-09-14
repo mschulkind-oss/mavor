@@ -74,8 +74,8 @@ Two terms recur, and both are defined in
    ✅ All required system runtime tools (parec, wtype, wl-copy) are available
    📥 Downloading model "whisper-base.en" into ~/.cache/mavor/models...
    ✅ Downloaded and verified model "whisper-base.en"
-   📥 Downloading model "nemotron-streaming-en-560ms" into ~/.cache/mavor/models...
-   ✅ Downloaded and verified model "nemotron-streaming-en-560ms"
+   📥 Downloading model "zipformer-streaming" into ~/.cache/mavor/models...
+   ✅ Downloaded and verified model "zipformer-streaming"
 
    ⚙️  Setting up systemd user service...
    ✅ Created symlink ~/.config/systemd/user/graphical-session.target.wants/mavor.service → ~/.config/systemd/user/mavor.service.
@@ -100,7 +100,7 @@ Two terms recur, and both are defined in
    ✅ GPU acceleration:            CPU only (whisper-cli loaded no GPU backend — the stock build ships CPU backends only; install a whisper.cpp built with -DGGML_VULKAN=ON for acceleration)
    ✅ Configuration file:          valid config (model=whisper-base.en, preview=auto)
    ✅ Voice model availability:    whisper-base.en found at ~/.cache/mavor/models/ggml-base.en.bin
-   ✅ Live preview source:         companion (nemotron-streaming-en-560ms) — "whisper-base.en" does not decode incrementally, so the streaming companion "nemotron-streaming-en-560ms" runs alongside it
+   ✅ Live preview source:         companion (zipformer-streaming) — "whisper-base.en" does not decode incrementally, so the streaming companion "zipformer-streaming" runs alongside it
    ✅ Vocabulary biasing:          no [vocabulary] configured — nothing is biased
    ✅ Daemon socket status:        daemon is active (state: idle)
    ✅ Systemd user service:        systemd unit installed and active (active)
@@ -126,7 +126,7 @@ Two terms recur, and both are defined in
 7. While holding the hotkey, Maya speaks:
    *"Implement exponential backoff retry policy for transient RPC timeouts."*
    Words appear in the overlay as she says them — the
-   `nemotron-streaming-en-560ms` companion decoding the same audio alongside
+   `zipformer-streaming` companion decoding the same audio alongside
    `whisper-base.en`. **None of that text is typed.**
 
 8. Maya releases `$mod+grave`. The HUD overlay crossfades to amber:
@@ -141,9 +141,12 @@ Two terms recur, and both are defined in
     model you keep. The preview companion closed it without that trade: a
     second streaming recognizer paints the overlay while the accurate batch
     model still produces the text. The bill is memory rather than accuracy —
-    `nemotron-streaming-en-560ms` holds 966 MB resident for the life of the
-    daemon, on top of the main model — and `preview.source` names a cheaper
-    companion for anyone who would rather not pay it. See
+    `zipformer-streaming` holds 161 MB resident for the life of the daemon, on
+    top of the main model — and `preview.source` names a different companion
+    for anyone who wants one. The overlay text is the companion's, so it is
+    less accurate than what lands (7.3% word error rate against
+    `whisper-base.en`'s 0.0%), and that is the deliberate trade: the companion
+    is chosen for how continuously it updates, not for being right. See
     [§7.2 of the user guide](../user-guide.md#72-preview--text-in-the-overlay-while-you-speak).
 
 10. Maya pauses for 3 seconds holding `$mod+grave` without speaking, then releases.
@@ -165,15 +168,15 @@ Two terms recur, and both are defined in
     whisper-base.en              whisper  141.1 MB  en                   no      ✓ 141.1 MB  ★
     whisper-small.en             whisper  465.0 MB  en                   no      –
     whisper-large-v3-turbo       whisper   1.51 GB  multi (99)           no      –
-    nemotron-streaming-en-560ms  sherpa   442.5 MB  en                   yes     ✓ 632.0 MB
     fastconformer-streaming      sherpa   429.4 MB  en                   yes     –
+    zipformer-streaming          sherpa   296.0 MB  en                   yes     ✓ 320.2 MB
     zipformer-streaming-20m      sherpa   122.0 MB  en                   yes     –
 
     ★ active   ✓ downloaded   – not downloaded
     SIZE is the download; sherpa archives expand to roughly twice that on disk.
     Download one with `mavor models pull <name>`.
     ```
-    (Abridged — the catalog is 31 models. `nemotron-streaming-en-560ms` is the
+    (Abridged — the catalog is 31 models. `zipformer-streaming` is the
     preview companion `mavor setup` pulled alongside `whisper-base.en`; it is
     shown here because it is the reason two models are downloaded.)
 
@@ -270,7 +273,7 @@ Two terms recur, and both are defined in
    ✅ GPU acceleration:            CPU only (whisper-cli loaded no GPU backend)
    ✅ Configuration file:          valid config (model=whisper-base.en, preview=auto)
    ❌ Voice model availability:    speech: model "whisper-base.en" is in the catalog but not installed — run `mavor models pull whisper-base.en`, or `mavor setup` to install everything this config names
-   ✅ Live preview source:         phrases — no companion model is installed; pull "nemotron-streaming-en-560ms" for a live preview
+   ✅ Live preview source:         phrases — no companion model is installed; pull "zipformer-streaming" for a live preview
    ✅ Vocabulary biasing:          no [vocabulary] configured — nothing is biased
    ❌ Daemon socket status:        daemon is not running at /run/user/1000/mavor.sock (run 'mavor daemon' or 'mavor service start')
    ✅ Systemd user service:        systemd unit not installed (optional; run 'mavor service install' to enable)
@@ -396,8 +399,8 @@ Two terms recur, and both are defined in
    ✅ All required system runtime tools (parec, wtype, wl-copy) are available
    📥 Downloading model "whisper-base.en" into ~/.cache/mavor/models...
    ✅ Downloaded and verified model "whisper-base.en"
-   📥 Downloading model "nemotron-streaming-en-560ms" into ~/.cache/mavor/models...
-   ✅ Downloaded and verified model "nemotron-streaming-en-560ms"
+   📥 Downloading model "zipformer-streaming" into ~/.cache/mavor/models...
+   ✅ Downloaded and verified model "zipformer-streaming"
    ⚙️  Setting up systemd user service...
    ✅ Created symlink ~/.config/systemd/user/graphical-session.target.wants/mavor.service → ~/.config/systemd/user/mavor.service.
    ================================================================
@@ -424,7 +427,7 @@ Two terms recur, and both are defined in
    ✅ GPU acceleration:            CPU only (whisper-cli loaded no GPU backend)
    ✅ Configuration file:          valid config (model=whisper-base.en, preview=auto)
    ✅ Voice model availability:    whisper-base.en found at ~/.cache/mavor/models/ggml-base.en.bin
-   ✅ Live preview source:         companion (nemotron-streaming-en-560ms) — "whisper-base.en" does not decode incrementally, so the streaming companion "nemotron-streaming-en-560ms" runs alongside it
+   ✅ Live preview source:         companion (zipformer-streaming) — "whisper-base.en" does not decode incrementally, so the streaming companion "zipformer-streaming" runs alongside it
    ✅ Vocabulary biasing:          no [vocabulary] configured — nothing is biased
    ✅ Daemon socket status:        daemon is active (state: idle)
    ✅ Systemd user service:        systemd unit installed and active (active)
@@ -472,14 +475,14 @@ Two terms recur, and both are defined in
     canary-180m                  sherpa   146.6 MB  en, es, de, fr       no      –
     parakeet-tdt-0.6b            sherpa   464.6 MB  multi (25)           no      –
     sensevoice-small             sherpa   999.3 MB  zh, en, ja, ko, yue  no      –
-    nemotron-streaming-en-560ms  sherpa   442.5 MB  en                   yes     ✓ 632.0 MB
+    zipformer-streaming          sherpa   296.0 MB  en                   yes     ✓ 320.2 MB
     zipformer-streaming-20m      sherpa   122.0 MB  en                   yes     –
 
     ★ active   ✓ downloaded   – not downloaded
     SIZE is the download; sherpa archives expand to roughly twice that on disk.
     Download one with `mavor models pull <name>`.
     ```
-    (Abridged. `nemotron-streaming-en-560ms` is the preview companion, pulled
+    (Abridged. `zipformer-streaming` is the preview companion, pulled
     by `mavor setup` alongside the main model.)
 
 13. `whisper-large-v3-turbo` covers 99 languages, but the measured warning in [`../choosing-a-model.md`](../choosing-a-model.md) rules it out for a writer: it returns unpunctuated lowercase text, and Lisa's whole workflow is punctuation. She picks `canary-180m` instead — English, Spanish, German and French, 146.6 MB to download, 457 MB resident, and a capitals F1 of 1.00 with 0.18 punctuation marks per word — formatting as good as `whisper-base.en`'s. Four other sherpa models now match that score; `canary-180m` is by far the cheapest of them, the next costing 464.6 MB.
@@ -493,7 +496,7 @@ Two terms recur, and both are defined in
     $ mavor setup
     📥 Downloading model "canary-180m" into ~/.cache/mavor/models...
     ✅ Downloaded and verified model "canary-180m"
-    ✅ Model "nemotron-streaming-en-560ms" is already installed (~/.cache/mavor/models/sherpa/nemotron-streaming-en-560ms)
+    ✅ Model "zipformer-streaming" is already installed (~/.cache/mavor/models/sherpa/zipformer-streaming)
     ```
 
 15. She restarts the background service and reads what changed underneath her one-line edit:
@@ -504,7 +507,7 @@ Two terms recur, and both are defined in
     ...
     ✅ Runtime and placement:       sherpa-onnx, in-process — sherpa models are linked into the daemon and stay resident
     ✅ Voice model availability:    canary-180m found at ~/.cache/mavor/models/sherpa/canary-180m
-    ✅ Live preview source:         companion (nemotron-streaming-en-560ms) — "canary-180m" does not decode incrementally, so the streaming companion "nemotron-streaming-en-560ms" runs alongside it
+    ✅ Live preview source:         companion (zipformer-streaming) — "canary-180m" does not decode incrementally, so the streaming companion "zipformer-streaming" runs alongside it
     ...
     ```
     She wrote one word. The runtime changed from whisper.cpp to sherpa-onnx, the
@@ -567,7 +570,7 @@ Two terms recur, and both are defined in
    ✅ GPU acceleration:            CPU (sherpa models run on the CPU in this build — the ONNX Runtime vendored by the sherpa-onnx Go binding is CPU-only and ships no execution-provider libraries)
    ✅ Configuration file:          valid config (model=whisper-base.en, preview=auto)
    ✅ Voice model availability:    whisper-base.en found at ~/.cache/mavor/models/ggml-base.en.bin
-   ✅ Live preview source:         companion (nemotron-streaming-en-560ms) — "whisper-base.en" does not decode incrementally, so the streaming companion "nemotron-streaming-en-560ms" runs alongside it
+   ✅ Live preview source:         companion (zipformer-streaming) — "whisper-base.en" does not decode incrementally, so the streaming companion "zipformer-streaming" runs alongside it
    ✅ Vocabulary biasing:          no [vocabulary] configured — nothing is biased
    ✅ Daemon socket status:        daemon is active (state: idle)
    ✅ Systemd user service:        systemd unit installed and active (active)
@@ -600,12 +603,13 @@ Two terms recur, and both are defined in
     speaking was to make a streaming recognizer the model that produces your
     text, and accept its accuracy for everything you dictate. The **preview
     companion** removed that trade. `preview.source = "auto"` runs
-    `nemotron-streaming-en-560ms` alongside `whisper-base.en`, paints its
-    partial output in the overlay, and throws it away: the typed text is still
-    the batch model's, produced once, on release. Sam had this working before
-    reading step 7, without editing a single key — at a cost of 966 MB
-    resident, which `preview.source = "zipformer-streaming-20m"` brings down to
-    112 MB for a preview that formats worse.
+    `zipformer-streaming` alongside `whisper-base.en`, paints its partial
+    output in the overlay, and throws it away: the typed text is still the
+    batch model's, produced once, on release. Sam had this working before
+    reading step 7, without editing a single key — at a cost of 161 MB
+    resident. What Sam sees in the overlay is a live caption, not a draft: the
+    companion is picked for updating continuously rather than for accuracy,
+    because none of its words survive the recording.
 
 7. Sam wants more than a preview, though: the *final* text streamed, so the transcript is finished the instant the key comes up. That means a streaming model as `model`. Sam inspects the verbose specification:
    ```console
@@ -730,8 +734,8 @@ Two terms recur, and both are defined in
    ✅ All required system runtime tools (parec, wtype, wl-copy) are available
    📥 Downloading model "whisper-base.en" into ~/.cache/mavor/models...
    ✅ Downloaded and verified model "whisper-base.en"
-   📥 Downloading model "nemotron-streaming-en-560ms" into ~/.cache/mavor/models...
-   ✅ Downloaded and verified model "nemotron-streaming-en-560ms"
+   📥 Downloading model "zipformer-streaming" into ~/.cache/mavor/models...
+   ✅ Downloaded and verified model "zipformer-streaming"
    ================================================================
    🎉 Setup complete! mavor is configured and ready.
    ```
@@ -750,7 +754,7 @@ Two terms recur, and both are defined in
    ✅ GPU acceleration:            CPU only (whisper-cli loaded no GPU backend)
    ✅ Configuration file:          valid config (model=whisper-base.en, preview=auto)
    ✅ Voice model availability:    whisper-base.en found at ~/.cache/mavor/models/ggml-base.en.bin
-   ✅ Live preview source:         companion (nemotron-streaming-en-560ms) — "whisper-base.en" does not decode incrementally, so the streaming companion "nemotron-streaming-en-560ms" runs alongside it
+   ✅ Live preview source:         companion (zipformer-streaming) — "whisper-base.en" does not decode incrementally, so the streaming companion "zipformer-streaming" runs alongside it
    ✅ Vocabulary biasing:          no [vocabulary] configured — nothing is biased
    ❌ Daemon socket status:        daemon is not running at /run/user/1000/mavor.sock (run 'mavor daemon' or 'mavor service start')
    ✅ Systemd user service:        systemd unit not installed (optional; run 'mavor service install' to enable)

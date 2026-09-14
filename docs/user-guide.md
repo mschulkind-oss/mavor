@@ -206,7 +206,7 @@ $ mavor setup      # scaffolds config.toml and pulls every model it names
 
 `mavor setup` is idempotent and config-driven: it downloads the main model and
 the preview companion — on a scaffolded config that is `whisper-base.en` at
-141.1 MB and `nemotron-streaming-en-560ms` at 442.5 MB — skips whatever is
+141.1 MB and `zipformer-streaming` at 296.0 MB — skips whatever is
 already present, and can be re-run after any edit to `config.toml`. After it exits zero, `mavor daemon` starts
 with that config and needs no further downloads.
 
@@ -259,7 +259,7 @@ mavor doctor — system and environment verification
 ✅ GPU acceleration:            CPU only (whisper-cli loaded no GPU backend — the stock build ships CPU backends only; install a whisper.cpp built with -DGGML_VULKAN=ON for acceleration)
 ✅ Configuration file:          valid config (model=whisper-base.en, preview=auto)
 ✅ Voice model availability:    whisper-base.en found at /home/you/.cache/mavor/models/ggml-base.en.bin
-✅ Live preview source:         companion (nemotron-streaming-en-560ms) — "whisper-base.en" does not decode incrementally, so the streaming companion "nemotron-streaming-en-560ms" runs alongside it
+✅ Live preview source:         companion (zipformer-streaming) — "whisper-base.en" does not decode incrementally, so the streaming companion "zipformer-streaming" runs alongside it
 ✅ Vocabulary biasing:          no [vocabulary] configured — nothing is biased
 ❌ Daemon socket status:        daemon is not running at /run/user/1000/mavor.sock (run 'mavor daemon' or 'mavor service start')
 ✅ Systemd user service:        systemd unit not installed (optional; run 'mavor service install' to enable)
@@ -468,7 +468,7 @@ are provisional, and typing them would insert the same words twice.
 2. **The companion model is installed.** A **companion model** is a streaming
    recognizer loaded alongside the main model, fed the same audio, emitting
    partial text continuously; it never contributes to the final transcript. The
-   designated one is `nemotron-streaming-en-560ms`, and `mavor setup` pulls it.
+   designated one is `zipformer-streaming`, and `mavor setup` pulls it.
 3. **Otherwise, phrase mode.** No second model: when you pause, the audio since
    the last pause is transcribed with the main model and appended to the
    preview. `mavor doctor` names the model to pull for a better preview.
@@ -488,17 +488,38 @@ Explicit values override the order:
 > it warns, falls back to phrase mode, and tells you what to pull. A name you
 > wrote is a request, and mavor never substitutes something else for it.
 
-**What the default companion costs.** `nemotron-streaming-en-560ms` is a
-442.5 MB download and **966 MB of peak resident memory, held for the whole life
-of the daemon** on top of your main model, because the companion loads at
-daemon start rather than at the first recording. It earns that: 1.8% word error
-rate where the previous default, `fastconformer-streaming`, scored 12.7%, and
-it punctuates and capitalises where that one did neither at all, so its
-partials look like the text about to land. If the memory is the wrong trade on
-your machine, name a smaller companion instead: `fastconformer-streaming` is
-550 MB resident and `zipformer-streaming-20m` is 112 MB. Write one of those as
-`preview.source`, run `mavor setup` to fetch it, and restart the daemon. Both
-stay in the catalog.
+**What the default companion costs, and what it was chosen for.**
+`zipformer-streaming` is a 296.0 MB download (320.2 MB unpacked) and **161 MB
+of peak resident memory, held for the whole life of the daemon** on top of your
+main model, because the companion loads at daemon start rather than at the
+first recording.
+
+It was picked on **update cadence** — how often the painted text changes, and
+how long the longest gap between two changes lasts. (The term is this project's
+own; it names what a reader of the preview perceives, and what the benchmark
+report has no column for.) That is the right criterion because a preview never
+emits: the text you keep always comes from `model`, so a companion's word error
+rate is spent on words that are thrown away, while a stall in the overlay is
+not. Measured directly — the fixture fed in 30 ms chunks through the daemon's
+own preview tick, with every repaint timed — the Zipformer updates 53 times
+across the 20-second clip, mean gap 357 ms and worst gap 660 ms, for 23 ms of
+CPU per call and 0.06× of the real-time budget. Its two predecessors both cost
+more and stalled longer at their worst: `fastconformer-streaming` 960 ms and
+`nemotron-streaming-en-560ms` 1140 ms, the latter emitting only 26 times in
+total because a 560 ms cache-aware chunk emits about twice a second however
+often you feed it.
+
+**Its partials arrive in upper case with almost no punctuation** (0.04 marks
+per word, capitals F1 0.20). The daemon lowercases an all-upper-case partial
+before painting it, so what you see is a lower-case live caption rather than
+shouting.
+
+Other companions stay selectable by name. `nemotron-streaming-en-560ms` is the
+accurate one — 1.8% word error rate against the Zipformer's 7.3%, punctuated
+and capitalised — at 966 MB resident and text that arrives in lumps;
+`fastconformer-streaming` is 550 MB resident and `zipformer-streaming-20m` is
+112 MB. Write one as `preview.source`, run `mavor setup` to fetch it, and
+restart the daemon.
 [`choosing-a-model.md`](./choosing-a-model.md#you-do-not-have-to-choose-the-preview-companion)
 carries the measurements.
 
@@ -700,8 +721,8 @@ returns punctuated, capitalised text or a bare lowercase word stream.
 | `canary-180m` | sherpa-onnx | NeMo Canary | 3.73 s | 460 MB | Full | Best sherpa model for its size; en/es/de/fr. |
 | `parakeet-tdt-0.6b` | sherpa-onnx | NeMo transducer | 5.93 s | 1.54 GB | Full | 25 languages, and hotwords work on it. |
 | `sensevoice-small` | sherpa-onnx | SenseVoice | 2.19 s | 1.43 GB | Good | zh, en, ja, ko, yue. |
-| `zipformer-streaming` | sherpa-onnx | Zipformer (online) | 4.05 s | 161 MB | Minimal | Streaming: first token in 107 ms. |
-| `nemotron-streaming-en-560ms` | sherpa-onnx | NVIDIA Nemotron (online) | 7.90 s | 966 MB | Full | Streaming *and* accurate: 1.8% word error rate, first token in 433 ms. **The default preview companion.** |
+| `zipformer-streaming` | sherpa-onnx | Zipformer (online) | 4.05 s | 161 MB | Minimal | Streaming: first token in 107 ms. **The default preview companion**, where updating smoothly beats being right. |
+| `nemotron-streaming-en-560ms` | sherpa-onnx | NVIDIA Nemotron (online) | 7.90 s | 966 MB | Full | Streaming *and* accurate: 1.8% word error rate, first token in 433 ms. |
 
 > [!WARNING]
 > **The largest Whisper models return unpunctuated lowercase text.**
@@ -742,7 +763,7 @@ $ mavor models pull whisper-base.en
 $ mavor models pull canary-180m
 
 # The preview companion, which `mavor setup` also pulls
-$ mavor models pull nemotron-streaming-en-560ms
+$ mavor models pull zipformer-streaming
 ```
 
 See [`choosing-a-model.md`](./choosing-a-model.md) before pulling one of the
@@ -867,8 +888,8 @@ There is one build and it is cgo, so there is no `build-sherpa` recipe and no
 | `toggle: connect: no such file or directory` | Daemon is not running or socket mismatch | Run `mavor daemon -v` or `mavor doctor` to inspect status |
 | Overlay does not appear | Compositor does not implement `wlr-layer-shell` | Ensure a wlroots session (sway, hyprland, river) is active; `mavor daemon -v` logs the reason it fell back to a silent overlay |
 | Audio volume does not duck | Ducking is off by default | Set `enabled = true` under `[ducking]`, and check `apps` if you narrowed it |
-| No text in the overlay while speaking | The preview is off, or fell back to phrase mode | `mavor doctor`'s `Live preview source` line names the mode and the reason; pull `nemotron-streaming-en-560ms` for the live preview |
-| Preview shows words that were never said | Phrase mode feeding whisper short clips, which it fills with plausible text | Pull `nemotron-streaming-en-560ms` so `auto` uses the companion instead, or turn the preview off with `enabled = false` |
+| No text in the overlay while speaking | The preview is off, or fell back to phrase mode | `mavor doctor`'s `Live preview source` line names the mode and the reason; pull `zipformer-streaming` for the live preview |
+| Preview shows words that were never said | Phrase mode feeding whisper short clips, which it fills with plausible text | Pull `zipformer-streaming` so `auto` uses the companion instead, or turn the preview off with `enabled = false` |
 | Vocabulary words still misheard | The model cannot be biased at all | `mavor doctor`'s `Vocabulary biasing` line says which mechanism applies; CTC, paraformer, moonshine and sensevoice have none |
 | Ghost words typed during silence | Speech quiet enough to pass the energy gate, then hallucinated by whisper | Raise the input gain, or move closer to the microphone; the gate is an RMS threshold and cannot tell quiet speech from room noise |
 | Text typed in wrong window | Focus shifted during transcription | Keep window focused until overlay closes |

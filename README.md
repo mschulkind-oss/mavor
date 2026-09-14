@@ -137,12 +137,13 @@ mavor doctor     # what this machine will actually do with that config
 
 `mavor setup` makes the current config runnable: it downloads the main model
 *and* the streaming model the live preview runs alongside it — on a scaffolded
-config, `whisper-base.en` and `nemotron-streaming-en-560ms` — skips whatever is
+config, `whisper-base.en` and `zipformer-streaming` — skips whatever is
 already in the cache, and is safe to re-run after you edit `config.toml`. The
-preview companion is the more expensive of the two at runtime: 966 MB resident,
-held for as long as the daemon runs. Set `preview.source` to
-`zipformer-streaming-20m` (112 MB) if you would rather have the memory than the
-punctuated preview, or `preview.enabled = false` for no companion at all. `mavor config init` scaffolds the file on its own if you would
+preview companion adds 161 MB resident, held for as long as the daemon runs; it
+is picked for how continuously it updates rather than for accuracy, because the
+text you keep always comes from the main model. Set `preview.source` to
+`zipformer-streaming-20m` (112 MB) if you want that smaller still, or
+`preview.enabled = false` for no companion at all. `mavor config init` scaffolds the file on its own if you would
 rather start there.
 
 ## Compositor integration
@@ -295,10 +296,10 @@ NAME                         ENGINE       SIZE  LANGUAGES            STREAM  STA
 whisper-tiny.en              whisper   74.1 MB  en                   no      –
 whisper-base.en              whisper  141.1 MB  en                   no      ✓ 141.1 MB  ★
 whisper-large-v3-turbo       whisper   1.51 GB  multi (99)           no      –
-nemotron-streaming-en-560ms  sherpa   442.5 MB  en                   yes     –
 parakeet-tdt-0.6b            sherpa   464.6 MB  multi (25)           no      –
 sensevoice-small             sherpa   999.3 MB  zh, en, ja, ko, yue  no      –
-zipformer-streaming-20m      sherpa   122.0 MB  en                   yes     ✓ 130.1 MB
+zipformer-streaming          sherpa   296.0 MB  en                   yes     ✓ 320.2 MB
+zipformer-streaming-20m      sherpa   122.0 MB  en                   yes     –
 …
 
 ★ active   ✓ downloaded   – not downloaded
@@ -323,23 +324,23 @@ mavor models list --installed                  # only what is downloaded
 mavor models list --verbose                    # a block per model, with the detail below
 mavor models pull whisper-base.en              # production default
 mavor models pull whisper-tiny.en              # smallest; what the test suite uses
-mavor models pull nemotron-streaming-en-560ms  # the live-preview companion
+mavor models pull zipformer-streaming          # the live-preview companion
 ```
 
 `--verbose` adds the properties that do not fit a column:
 
 ```
-zipformer-streaming-20m
-  Streaming Zipformer transducer, 20M parameters — small enough to run alongside another model as the live-preview source
+zipformer-streaming
+  Streaming Zipformer transducer — decodes while you speak
   engine      sherpa (in-process sherpa-onnx, CGO)
-  download    122.0 MB
+  download    296.0 MB
   languages   en
   streaming   yes — decodes incrementally while you speak
   speed       fast (relative tier, not measured)
   vocabulary  hotwords supported (transducer)
   gpu         none in practice — the bundled ONNX Runtime is a CPU-only build
-  status      ✓ downloaded (130.1 MB)
-  source      https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2
+  status      ✓ downloaded (320.2 MB)
+  source      https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2
 ```
 
 - **speed** is a relative tier across the catalog, estimated from architecture
