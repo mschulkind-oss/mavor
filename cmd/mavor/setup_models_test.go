@@ -97,12 +97,14 @@ func TestSetupPullsAModelNamedByAnEditedPreviewSource(t *testing.T) {
 		t.Fatalf("first setup: %v", err)
 	}
 
-	cfg.Preview.Source = "zipformer-streaming"
+	// Not the default, which the first setup above already pulled — the
+	// assertion is that editing preview.source fetches the newly named model.
+	cfg.Preview.Source = "nemotron-streaming-en-560ms"
 	var afterEdit []string
 	if _, err := ensureModels(cfg, configuredModels(cfg), false, fakePull(t, cfg, &afterEdit)); err != nil {
 		t.Fatalf("setup after edit: %v", err)
 	}
-	if len(afterEdit) != 1 || afterEdit[0] != "zipformer-streaming" {
+	if len(afterEdit) != 1 || afterEdit[0] != "nemotron-streaming-en-560ms" {
 		t.Fatalf("setup pulled %v, want just the newly named model", afterEdit)
 	}
 }

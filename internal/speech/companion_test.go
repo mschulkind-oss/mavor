@@ -105,9 +105,9 @@ func TestPreviewAutoLoadsTheInstalledCompanion(t *testing.T) {
 // not stream would silently make every "auto" preview useless, and the
 // mismatch would surface as an overlay that never updates rather than as a
 // failing test.
-func TestDefaultCompanionIsTheStreamingNemotron(t *testing.T) {
-	if DefaultCompanionModel != "nemotron-streaming-en-560ms" {
-		t.Errorf("DefaultCompanionModel = %q, want nemotron-streaming-en-560ms", DefaultCompanionModel)
+func TestDefaultCompanionIsTheStreamingZipformer(t *testing.T) {
+	if DefaultCompanionModel != "zipformer-streaming" {
+		t.Errorf("DefaultCompanionModel = %q, want zipformer-streaming", DefaultCompanionModel)
 	}
 
 	spec, ok := models.Lookup(DefaultCompanionModel)
@@ -168,13 +168,15 @@ func TestPreviewNamedModelMissingIsFatal(t *testing.T) {
 	cfg := previewConfig(t, "whisper-base.en")
 	installWhisperModel(t, cfg, "whisper-base.en")
 	installSherpaModel(t, cfg, DefaultCompanionModel) // available, and irrelevant
-	cfg.Preview.Source = "zipformer-streaming"
+	// Deliberately NOT the default, which the line above just installed: the
+	// point of this test is a model the user named and does not have.
+	cfg.Preview.Source = "nemotron-streaming-en-560ms"
 
 	_, err := ResolvePreview(cfg)
 	if err == nil {
 		t.Fatal("a named model that is not installed must be fatal, not a downgrade")
 	}
-	if !strings.Contains(err.Error(), "zipformer-streaming") {
+	if !strings.Contains(err.Error(), "nemotron-streaming-en-560ms") {
 		t.Errorf("error does not name the model: %v", err)
 	}
 	if !strings.Contains(err.Error(), cfg.Paths.Models) {

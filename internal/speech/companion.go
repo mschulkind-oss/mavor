@@ -29,37 +29,49 @@ import (
 // DefaultCompanionModel is the recognizer `preview.source = "auto"` loads
 // alongside a main model that cannot decode incrementally.
 //
-// The 560 ms streaming Nemotron, not the NeMo streaming FastConformer that
-// held this slot before it. From the 2026-09-13 sweep
-// (docs/reports/model-benchmarks.md — the 20.0 s fixture, 6 threads, sherpa
-// on CPU):
+// The streaming Zipformer. Two earlier choices for this slot were made on
+// accuracy and time-to-first-token, and both were wrong about what a preview
+// is for, so the reasoning matters more than usual here.
 //
-//	                              first token     WER   punct/word   capitals F1   peak RSS
-//	fastconformer-streaming            382 ms   12.7%         0.00          0.00     550 MB
-//	nemotron-streaming-en-560ms        433 ms    1.8%         0.15          0.91     966 MB
+// A preview never emits. The text that gets typed always comes from the main
+// model's single final Transcribe, so the companion's job is not to be right
+// — it is to show, continuously, that speech is being heard. The number that
+// decides that is how often the text on screen changes, and no measurement in
+// the benchmark report captures it. Time to first token says when the preview
+// starts; it says nothing about whether it then arrives smoothly or in lumps.
 //
-// And the criterion the sweep cannot see, which is what decided the previous
-// choice too: what the first partials look like as the audio arrives. Fed
-// test/fixtures/real_speech.wav in 30 ms chunks, the cadence the daemon uses:
+// Fed test/fixtures/real_speech.wav in 30 ms chunks — the daemon's own
+// PreviewTick — the three candidates behave like this:
 //
-//	fastconformer-streaming       1560ms "lux"      1890ms "luxe is"   2040ms "luxe is in the"
-//	nemotron-streaming-en-560ms   1800ms "Lux is"   2370ms "Lux is in the pit"
+//	                              updates  mean gap  max gap  slowest call  CPU     WER    peak RSS  download
+//	zipformer-streaming                53    357 ms   660 ms         23 ms  0.06x   7.3%     161 MB    296 MB
+//	fastconformer-streaming            72    259 ms   960 ms        122 ms  0.30x  12.7%     550 MB    429 MB
+//	nemotron-streaming-en-560ms        26    716 ms  1140 ms        139 ms  0.20x   1.8%     966 MB    442 MB
 //
-// The clip opens with the word "Lux". The FastConformer is 240 ms earlier to
-// something, but it has the word wrong, corrupts it further on the next
-// update, and comes back lower case with no punctuation. The Nemotron gets
-// "Lux" right the first time, capitalised, and punctuates its sentences. That
-// is the same failure the FastConformer was chosen for beating in
-// zipformer-streaming-20m, and it is now the one losing on it.
+// The Nemotron held this slot briefly on the strength of that 1.8%, and it
+// was a regression a user noticed within a day: 26 updates over 20 seconds
+// arrive as visible lumps, because a 560 ms cache-aware chunk emits about
+// twice a second whatever cadence you feed it at. Accuracy bought with
+// smoothness is a bad trade for text that is thrown away.
 //
-// The cost is resident memory, and it is not small: peak RSS 550 MB -> 966 MB.
-// The companion is loaded once at daemon start and held for the daemon's life
-// (§10.3), so that is ~420 MB more resident the whole time mavor runs, not a
-// per-dictation cost. The download barely moves, 429 MB -> 442 MB.
+// Against the FastConformer it replaces, the Zipformer is better on every
+// axis that matters here except mean gap: a worst-case gap of 660 ms against
+// 960 ms — and the worst case is what a user perceives as a stall — 23 ms per
+// call against 122 ms, a twentieth of the real-time budget, half the word
+// error rate, and a smaller download and footprint.
 //
-// fastconformer-streaming and zipformer-streaming-20m both stay selectable by
-// name via `preview.source`.
-const DefaultCompanionModel = "nemotron-streaming-en-560ms"
+// It shouts. Its output is upper case with almost no punctuation (capitals F1
+// 0.20, 0.04 marks per word), and it opens this clip with "LOOK" then "LOOKS
+// IS" where the word was "Lux". Neither is disqualifying: daemon.soften()
+// already lowercases an all-upper-case partial precisely so a model like this
+// one reads as a preview rather than as shouting, and the FastConformer got
+// that same opening word wrong too ("lux", then "luxe"). What no candidate in
+// this size class does is get the opening words right AND update smoothly.
+//
+// nemotron-streaming-en-560ms stays selectable by name via `preview.source`
+// for anyone who would rather read accurate text in lumps, and so do
+// fastconformer-streaming and zipformer-streaming-20m.
+const DefaultCompanionModel = "zipformer-streaming"
 
 // PreviewMode is which of the mechanisms above produces the preview text.
 type PreviewMode string
