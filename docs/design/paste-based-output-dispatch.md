@@ -154,7 +154,7 @@ Users can configure the output driver, the paste chord, and the underlying copy 
 
 ```toml
 [output]
-# Output dispatch strategy: "typing" (default) | "paste"
+# Output dispatch strategy: "paste" (default) | "typing"
 driver = "paste"
 
 # Keystroke chord synthesized to trigger a paste (default: "shift+insert")
@@ -164,11 +164,11 @@ paste_chord = "shift+insert"
 # Supports custom tools (e.g. xclip, pbcopy, custom scripts).
 copy_command = ["wl-copy", "--type", "text/plain"]
 
-# Automatically restore previous clipboard/primary selections after paste
+# Automatically restore previous clipboard/primary selections after paste (default: true)
 restore_selection = true
 
-# Also maintain transcription on clipboard after typing (legacy setting)
-clipboard = true
+# Also maintain transcription on clipboard after dispatch (default: false)
+clipboard = false
 ```
 
 ---
@@ -196,12 +196,12 @@ clipboard = true
 
 1. 💬 **OQ-PST1: Output driver configuration.** Should `mavor` introduce an explicit `driver` setting under `[output]`?
 
-   <!-- vantage: oq id=OQ-PST1 leaning="Yes — support driver = 'typing' | 'paste' in config.toml, defaulting to 'typing' initially, with 'paste' opt-in." -->
+   <!-- vantage: oq id=OQ-PST1 leaning="Yes — support driver = 'paste' | 'typing' in config.toml, making 'paste' with Shift+Insert the default." -->
 
-   _Leaning:_ Yes — support `driver = "typing" | "paste"` in `config.toml`, defaulting to `"typing"` initially, with `"paste"` opt-in.
+   _Leaning:_ Yes — support `driver = "paste" | "typing"` in `config.toml`, making `"paste"` with `Shift+Insert` the default.
 
    **Answer:**
-   > _(empty — fill in when decided)_
+   > Settled. `driver = "paste"` is the default output driver in `mavor`, using `paste_chord = "shift+insert"`. Users can opt into traditional synthetic keyboard typing by configuring `driver = "typing"` in `config.toml`.
 
 2. 💬 **OQ-PST2: Default clipboard restoration.** Should selection restoration (restoring what was previously copied after a paste) be enabled by default?
 
@@ -210,7 +210,7 @@ clipboard = true
    _Leaning:_ Yes — preserving user clipboard state prevents dictation from destroying in-flight user data.
 
    **Answer:**
-   > _(empty — fill in when decided)_
+   > Settled. `restore_selection = true` is enabled by default. `mavor` preserves the user's pre-existing clipboard and primary selections via `wl-paste` before emission, serves the transcript via `wl-copy --paste-once`, and restores pre-existing selections immediately after consumption finishes.
 
 3. 💬 **OQ-PST3: Dual buffer population.** When `driver = "paste"`, should `mavor` populate both `CLIPBOARD` and `PRIMARY` simultaneously by default?
 
@@ -219,5 +219,5 @@ clipboard = true
    _Leaning:_ Yes — populating both buffers makes `Shift+Insert` work universally in Kitty without requiring manual terminal remapping.
 
    **Answer:**
-   > _(empty — fill in when decided)_
+   > Settled. When `driver = "paste"`, `mavor` populates both `CLIPBOARD` and `PRIMARY` simultaneously using the First-Exit Wins supervisor pattern. This ensures `Shift+Insert` succeeds universally across Kitty (reading `PRIMARY`) and standard GUI applications (reading `CLIPBOARD`).
 

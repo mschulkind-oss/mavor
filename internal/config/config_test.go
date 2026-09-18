@@ -47,8 +47,8 @@ func TestDefaultsAreTheDocumentedOnes(t *testing.T) {
 	if d.Overlay.TopMargin != 8 {
 		t.Errorf("Overlay.TopMargin = %d, want 8", d.Overlay.TopMargin)
 	}
-	if d.Output.Driver != "typing" {
-		t.Errorf("Output.Driver = %q, want typing", d.Output.Driver)
+	if d.Output.Driver != "paste" {
+		t.Errorf("Output.Driver = %q, want paste", d.Output.Driver)
 	}
 	if d.Output.PasteChord != "shift+insert" {
 		t.Errorf("Output.PasteChord = %q, want shift+insert", d.Output.PasteChord)

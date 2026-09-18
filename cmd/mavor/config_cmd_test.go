@@ -81,7 +81,7 @@ func TestTemplateExamplesStateTheDefaults(t *testing.T) {
 		"boost = 1.5",
 		`placement = "auto"`,
 		`gpu = "auto"`,
-		`driver = "typing"`,
+		`driver = "paste"`,
 		`paste_chord = "shift+insert"`,
 		"restore_selection = true",
 		"models = " + quote(d.Paths.Models),

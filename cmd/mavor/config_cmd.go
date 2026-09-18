@@ -99,10 +99,10 @@ enabled = %t
 verbose = %t
 
 [output]
-# Dispatch strategy: "typing" (default) or "paste".
-# "typing" sends keystrokes into the focused window (in-process or via wtype).
+# Dispatch strategy: "paste" (default) or "typing".
 # "paste" places text on selection buffers and synthesizes a paste chord,
 # rendering long dictations in a single frame via terminal bracketed paste.
+# "typing" sends keystrokes into the focused window (in-process or via wtype).
 # driver = %q
 
 # Keystroke chord synthesized to trigger a paste when driver is "paste".

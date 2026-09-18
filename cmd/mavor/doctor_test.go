@@ -205,10 +205,8 @@ func TestPreviewVerdict(t *testing.T) {
 
 func TestOutputVerdict(t *testing.T) {
 	defaultCfg := config.Default()
-	pasteCfg := config.Default()
-	pasteCfg.Output.Driver = "paste"
-	pasteCfg.Output.PasteChord = "shift+insert"
-	pasteCfg.Output.RestoreSelection = true
+	typingCfg := config.Default()
+	typingCfg.Output.Driver = "typing"
 
 	tests := []struct {
 		name               string
@@ -223,21 +221,21 @@ func TestOutputVerdict(t *testing.T) {
 	}{
 		{
 			name:    "typing mode with wtype present passes",
-			cfg:     defaultCfg,
+			cfg:     typingCfg,
 			wtype:   true,
 			wantOK:  true,
 			wantMsg: "typing driver",
 		},
 		{
 			name:    "typing mode missing wtype fails",
-			cfg:     defaultCfg,
+			cfg:     typingCfg,
 			wtype:   false,
 			wantOK:  false,
 			wantMsg: "virtual typing requires wtype",
 		},
 		{
 			name:               "paste mode all tools present passes",
-			cfg:                pasteCfg,
+			cfg:                defaultCfg,
 			wtype:              true,
 			wlCopy:             true,
 			wlPaste:            true,
@@ -248,7 +246,7 @@ func TestOutputVerdict(t *testing.T) {
 		},
 		{
 			name:               "paste mode missing wl-paste fails",
-			cfg:                pasteCfg,
+			cfg:                defaultCfg,
 			wtype:              true,
 			wlCopy:             true,
 			wlPaste:            false,
@@ -258,7 +256,7 @@ func TestOutputVerdict(t *testing.T) {
 		},
 		{
 			name:               "paste mode missing wtype fails",
-			cfg:                pasteCfg,
+			cfg:                defaultCfg,
 			wtype:              false,
 			wlCopy:             true,
 			wlPaste:            true,
@@ -268,7 +266,7 @@ func TestOutputVerdict(t *testing.T) {
 		},
 		{
 			name:               "paste mode wl-copy missing paste-once fails",
-			cfg:                pasteCfg,
+			cfg:                defaultCfg,
 			wtype:              true,
 			wlCopy:             true,
 			wlPaste:            true,

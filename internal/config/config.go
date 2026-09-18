@@ -47,7 +47,7 @@ const (
 	DefaultOSCTimeoutMS = 200
 	DefaultBoost        = 1.5
 
-	DefaultOutputDriver     = "typing"
+	DefaultOutputDriver     = "paste"
 	DefaultPasteChord       = "shift+insert"
 	DefaultRestoreSelection = true
 )
