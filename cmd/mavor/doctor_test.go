@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mschulkind-oss/mavor/internal/config"
 	"github.com/mschulkind-oss/mavor/internal/speech"
 )
 
@@ -199,5 +200,143 @@ func TestPreviewVerdict(t *testing.T) {
 				t.Errorf("previewVerdict() msg = %q, a passing check must not prompt for setup", msg)
 			}
 		})
+	}
+}
+
+func TestOutputVerdict(t *testing.T) {
+	defaultCfg := config.Default()
+	pasteCfg := config.Default()
+	pasteCfg.Output.Driver = "paste"
+	pasteCfg.Output.PasteChord = "shift+insert"
+	pasteCfg.Output.RestoreSelection = true
+
+	tests := []struct {
+		name               string
+		cfg                config.Config
+		wtype              bool
+		wlCopy             bool
+		wlPaste            bool
+		pasteOnceSupported bool
+		kittyBinding       string
+		wantOK             bool
+		wantMsg            string
+	}{
+		{
+			name:    "typing mode with wtype present passes",
+			cfg:     defaultCfg,
+			wtype:   true,
+			wantOK:  true,
+			wantMsg: "typing driver",
+		},
+		{
+			name:    "typing mode missing wtype fails",
+			cfg:     defaultCfg,
+			wtype:   false,
+			wantOK:  false,
+			wantMsg: "virtual typing requires wtype",
+		},
+		{
+			name:               "paste mode all tools present passes",
+			cfg:                pasteCfg,
+			wtype:              true,
+			wlCopy:             true,
+			wlPaste:            true,
+			pasteOnceSupported: true,
+			kittyBinding:       "paste_from_selection",
+			wantOK:             true,
+			wantMsg:            "paste driver (shift+insert, dual-buffer, restore: true) — Kitty: paste_from_selection",
+		},
+		{
+			name:               "paste mode missing wl-paste fails",
+			cfg:                pasteCfg,
+			wtype:              true,
+			wlCopy:             true,
+			wlPaste:            false,
+			pasteOnceSupported: true,
+			wantOK:             false,
+			wantMsg:            "wl-clipboard tools missing",
+		},
+		{
+			name:               "paste mode missing wtype fails",
+			cfg:                pasteCfg,
+			wtype:              false,
+			wlCopy:             true,
+			wlPaste:            true,
+			pasteOnceSupported: true,
+			wantOK:             false,
+			wantMsg:            "paste driver requires wtype",
+		},
+		{
+			name:               "paste mode wl-copy missing paste-once fails",
+			cfg:                pasteCfg,
+			wtype:              true,
+			wlCopy:             true,
+			wlPaste:            true,
+			pasteOnceSupported: false,
+			wantOK:             false,
+			wantMsg:            "wl-copy does not support --paste-once",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ok, msg := outputVerdict(tc.cfg, tc.wtype, tc.wlCopy, tc.wlPaste, tc.pasteOnceSupported, tc.kittyBinding)
+			if ok != tc.wantOK {
+				t.Errorf("outputVerdict() ok = %v, want %v", ok, tc.wantOK)
+			}
+			if !strings.Contains(msg, tc.wantMsg) {
+				t.Errorf("outputVerdict() msg = %q, want containing %q", msg, tc.wantMsg)
+			}
+		})
+	}
+}
+
+func TestInspectKittyConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "empty config returns default",
+			content: "",
+			want:    "default (paste_from_selection, covered by dual-buffer)",
+		},
+		{
+			name:    "commented map shift+insert returns default",
+			content: "# map shift+insert paste_from_clipboard\n",
+			want:    "default (paste_from_selection, covered by dual-buffer)",
+		},
+		{
+			name:    "explicit paste_from_clipboard mapped",
+			content: "map shift+insert paste_from_clipboard\n",
+			want:    "paste_from_clipboard",
+		},
+		{
+			name:    "explicit paste_from_selection mapped with extra spaces",
+			content: "  map   shift+insert   paste_from_selection  \n",
+			want:    "paste_from_selection",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := inspectKittyConfig(tc.content)
+			if got != tc.want {
+				t.Errorf("inspectKittyConfig() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCheckPasteOnceSupport(t *testing.T) {
+	if !checkPasteOnceSupport("Options:\n  -o, --paste-once  Only serve one paste\n") {
+		t.Error("expected true when --paste-once is in help text")
+	}
+	if !checkPasteOnceSupport("Options:\n  -o  Only serve one paste\n") {
+		t.Error("expected true when -o is in help text")
+	}
+	if checkPasteOnceSupport("Options:\n  -c, --clear  Clear clipboard\n") {
+		t.Error("expected false when paste-once is absent")
 	}
 }

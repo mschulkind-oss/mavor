@@ -74,6 +74,7 @@ func runDoctor() error {
 	checks := []Check{
 		{"Wayland session", checkWayland},
 		{"Audio capture (parec/Pulse)", checkAudio},
+		{"Output dispatch", checkOutput},
 		{"Virtual typing (wtype)", checkWtype},
 		{"Clipboard (wl-clipboard)", checkClipboard},
 		{"Runtime and placement", checkRuntime},
@@ -259,6 +260,11 @@ func getMissingTools(cfg config.Config) []string {
 	}
 	if _, err := exec.LookPath("wl-copy"); err != nil {
 		missing = append(missing, "wl-copy")
+	}
+	if cfg.Output.Driver == "paste" {
+		if _, err := exec.LookPath("wl-paste"); err != nil {
+			missing = append(missing, "wl-paste")
+		}
 	}
 	if models.RuntimeFor(cfg.Model) == models.RuntimeWhisper {
 		if _, err := exec.LookPath("whisper-cli"); err != nil {
@@ -495,6 +501,76 @@ func checkClipboard() (bool, string) {
 		return true, "wl-copy and wl-paste installed"
 	}
 	return false, "wl-clipboard tools missing (fix: install wl-clipboard)"
+}
+
+func checkOutput() (bool, string) {
+	cfg, _ := config.Load("")
+	_, wtypeErr := exec.LookPath("wtype")
+	_, copyErr := exec.LookPath("wl-copy")
+	_, pasteErr := exec.LookPath("wl-paste")
+
+	pasteOnce := false
+	if copyErr == nil {
+		out, _ := exec.Command("wl-copy", "--help").CombinedOutput()
+		pasteOnce = checkPasteOnceSupport(string(out))
+	}
+
+	kittyBinding := detectKittyShiftInsert()
+	return outputVerdict(cfg, wtypeErr == nil, copyErr == nil, pasteErr == nil, pasteOnce, kittyBinding)
+}
+
+func outputVerdict(cfg config.Config, wtypeFound, copyFound, pasteFound bool, pasteOnceSupported bool, kittyBinding string) (bool, string) {
+	if cfg.Output.Driver == "paste" {
+		if !copyFound || !pasteFound {
+			return false, "paste driver requires wl-copy and wl-paste (wl-clipboard tools missing)"
+		}
+		if !wtypeFound {
+			return false, "paste driver requires wtype to synthesize paste chord (wtype not found)"
+		}
+		if !pasteOnceSupported {
+			return false, "wl-copy does not support --paste-once (upgrade wl-clipboard)"
+		}
+		msg := fmt.Sprintf("paste driver (%s, dual-buffer, restore: %t)", cfg.Output.PasteChord, cfg.Output.RestoreSelection)
+		if kittyBinding != "" {
+			msg += " — Kitty: " + kittyBinding
+		}
+		return true, msg
+	}
+
+	if !wtypeFound {
+		return false, "virtual typing requires wtype (or compositor with zwp_virtual_keyboard_v1)"
+	}
+	return true, "typing driver (in-process zwp_virtual_keyboard_v1 with wtype fallback)"
+}
+
+func checkPasteOnceSupport(helpText string) bool {
+	return strings.Contains(helpText, "--paste-once") || strings.Contains(helpText, "-o")
+}
+
+func inspectKittyConfig(confContent string) string {
+	scanner := bufio.NewScanner(strings.NewReader(confContent))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 3 && strings.EqualFold(fields[0], "map") && strings.EqualFold(fields[1], "shift+insert") {
+			return fields[2]
+		}
+	}
+	return "default (paste_from_selection, covered by dual-buffer)"
+}
+
+func detectKittyShiftInsert() string {
+	confPath := filepath.Join(config.ConfigHome(), "kitty", "kitty.conf")
+	if data, err := os.ReadFile(confPath); err == nil {
+		return inspectKittyConfig(string(data))
+	}
+	if _, err := exec.LookPath("kitty"); err == nil {
+		return "default (paste_from_selection, covered by dual-buffer)"
+	}
+	return ""
 }
 
 // checkRuntime reports the two derived facts a user cannot read off the
