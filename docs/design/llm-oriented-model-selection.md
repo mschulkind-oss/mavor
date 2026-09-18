@@ -80,27 +80,28 @@ Inference was run with 6 CPU threads on host `terrapin` (12-thread CPU, AVX2/FMA
 
 | Model | Engine / Architecture | Time (67.9s audio) | RTF | Content Preserved? | Repetition Loops? | Technical Jargon Accuracy |
 |---|---|---:|---:|:---:|:---:|---|
-| **`whisper-base.en`** | whisper.cpp (Subprocess) | 7.25 s | 0.107 | Yes (Partial) | **Yes** (Doubled token `"records records"`) | Missed `PAREC` $\to$ *"Parach"*; missed `ripgrep` $\to$ *"ripgrap"*; inserted extra word *"just to check CI"*. |
-| **`nemotron-streaming-en-560ms`** | sherpa-onnx (In-process) | 22.21 s (Streaming) | 0.327 | **Yes (100%)** | **None (0%)** | **Best:** Accurately captured **`PAREC`**, **`PipeWire`**, **`RIP grep`**, **`just check CI`**, and preserved spoken hesitation *"records uh records"*. |
+| **`whisper-base.en`** | whisper.cpp (Subprocess) | 7.25 s | 0.107 | Yes (Partial) | Human stumble collapsed | Missed `PAREC` $\to$ *"Parach"*; missed `ripgrep` $\to$ *"ripgrap"*; inserted extra word *"just to check CI"*. Collapsed spoken stumble *"records uh records"* into duplicate tokens *"records records"*. |
+| **`nemotron-streaming-en-560ms`** | sherpa-onnx (In-process) | 22.21 s (Streaming) | 0.327 | **Yes (100%)** | **None (0%)** | **Best:** Accurately captured **`PAREC`**, **`PipeWire`**, **`RIP grep`**, **`just check CI`**, and faithfully preserved the spoken hesitation stumble *"records uh records"*. |
 | **`zipformer-streaming`** | sherpa-onnx (In-process) | **6.37 s (Streaming)** | **0.094** | Yes (Phonetic) | **None (0%)** | Blistering fast ($10\times$ real time), but heavy phonetic drift (*"VITCH WILL KEYBOARD"*, *"EX BOWS"*). |
 
 ### Qualitative Analysis
 
-#### 1. Whisper Autoregressive Token Doubling
-Whisper collapsed the natural pause into a duplicate token:
-> *"make sure the JSON L history log records records every turn without truncation or deja vu repetition loops."*
+#### 1. Human Disfluency Handling: Spoken Stumble vs. Decoder Hallucination
+During recording, the speaker stumbled on the word "records" and repeated themselves (*"records... uh records"*).
+- **Nemotron** captured the disfluency faithfully: *"records uh records every turn"*.
+- **Whisper** dropped the filler *"uh"* and emitted a clean duplicate token: *"records records"*. While not a model hallucination in this instance (the speaker genuinely said the word twice), it illustrates how Whisper collapses pauses and fillers into immediate adjacent repeats.
 
-It also misrecognized plurals and technical tools:
+Whisper also misrecognized domain technical tools:
 - `PAREC` became *"Parach"*
 - `swaymsg` became *"Sway message"*
 - `ripgrep` became *"ripgrap"*
-- Inserted *"to"* into CLI invocation: *"Run just to check CI"*
+- Inserted *"to"* into the CLI flag: *"Run just to check CI"*
 
 #### 2. Nemotron Precision
 Nemotron accurately transcribed domain technical terms that Whisper mangled:
 - Captured **`PAREC`** verbatim.
 - Retained camelCase in **`PipeWire`**.
-- Preserved the actual spoken phrasing: *"records uh records every turn"*.
+- Faithfully preserved the spoken phrasing: *"records uh records every turn"*.
 - Zero repetition loops or dropped text across all 68 seconds.
 
 ---

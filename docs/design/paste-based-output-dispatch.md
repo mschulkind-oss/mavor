@@ -108,61 +108,79 @@ fi
 
 ---
 
-## 4. Active Application Detection via Sway IPC
+## 4. Universal Paste Architecture: Dual-Buffer Copy + `Shift+Insert`
 
-Because there is no single universal paste chord across all desktop environments (`Ctrl+Shift+V` in Kitty/Foot, `Ctrl+V` in GUI apps, `p` in Vim), `mavor` can query compositor state before dispatching.
+Rather than requiring complex window sniffing upfront, `mavor`'s core paste strategy relies on a robust universal default:
 
-```mermaid
-flowchart TD
-    Emit["Daemon: Dispatch Output"] --> Query["Query Sway IPC: swaymsg -t get_tree"]
-    Query --> Check["Inspect Focused Node: app_id & window_properties"]
-    Check -->|app_id == 'kitty' or terminal| Term["Strategy: Ctrl+Shift+V (or Kitty socket)"]
-    Check -->|app_id == 'code' or GUI| GUI["Strategy: Ctrl+V or Shift+Insert"]
-    Check -->|Unknown / Unreachable| Fallback["Strategy: zwp_virtual_keyboard_v1 Typing"]
+1. **Default Paste Chord (`Shift+Insert`):**
+   `Shift+Insert` is recognized natively across X11 and Wayland toolkits (GTK, Qt, Chromium, Electron, terminal emulators).
+2. **Dual-Buffer Emission (`CLIPBOARD` + `PRIMARY`):**
+   When paste dispatch is enabled, `mavor` copies the transcript to **both** `CLIPBOARD` and `PRIMARY` selections:
+   ```bash
+   wl-copy <text> && wl-copy --primary <text>
+   ```
+   Because `PRIMARY` is populated alongside `CLIPBOARD`, `Shift+Insert` in Kitty immediately receives the transcript without requiring the user to remap `kitty.conf`. In GUI applications, `Shift+Insert` reads `CLIPBOARD` and also succeeds.
+3. **Selection Restoration with `wl-copy --paste-once`:**
+   To ensure existing user data is not destroyed:
+   - Before setting selections, `mavor` reads the current `CLIPBOARD` and `PRIMARY` contents via `wl-paste`.
+   - The transcript is emitted using `wl-copy --paste-once`.
+   - Once the paste is consumed by the application, `mavor` restores the previous buffers.
+4. **Contextual Routing Deferred:**
+   Dynamic per-application detection (e.g. sniffing `app_id` via Sway IPC to choose between `Ctrl+Shift+V` and `Ctrl+V`) is detailed in a dedicated specification: [`active-application-output-routing.md`](./active-application-output-routing.md).
+
+---
+
+## 5. Configuration Surface for Paste Dispatch
+
+Users can configure the output driver, the paste chord, and the underlying copy utility:
+
+```toml
+[output]
+# Output dispatch strategy: "typing" (default) | "paste"
+driver = "paste"
+
+# Keystroke chord synthesized to trigger a paste (default: "shift+insert")
+paste_chord = "shift+insert"
+
+# Custom copying command. Defaults to wl-copy with dual buffer support.
+# Supports custom tools (e.g. xclip, pbcopy, custom scripts).
+copy_command = ["wl-copy", "--type", "text/plain"]
+
+# Automatically restore previous clipboard/primary selections after paste
+restore_selection = true
+
+# Also maintain transcription on clipboard after typing (legacy setting)
+clipboard = true
 ```
 
-### Detection Implementation
-`mavor` connects to `$SWAYSOCK` and calls `swaymsg -t get_tree`. Traversal finds the node where `focused == true`:
-- If `app_id` matches known terminals (`"kitty"`, `"foot"`, `"alacritty"`, `"wezterm"`):
-  The daemon dispatches **`Ctrl+Shift+V`**.
-- If `app_id` matches standard desktop apps (`"chromium"`, `"google-chrome"`, `"firefox"`, `"code"`):
-  The daemon dispatches **`Ctrl+V`**.
-- If the target window is in terminal Vim/Neovim (detectable via window title or process tree), or if compositor IPC fails:
-  The daemon safely falls back to native virtual keyboard typing (`output.Native`).
-
 ---
 
-## 5. Diagnostic Verification in `mavor doctor`
+## 6. Diagnostic Verification in `mavor doctor`
 
-Rather than silently failing when a terminal or clipboard configuration is incompatible, `mavor doctor` should verify the environment:
+`mavor doctor` verifies the paste environment and warns about potential misconfigurations:
 
-### Proposed Doctor Checks
-1. **Wayland Selection Protocols:**
-   - Verify presence of `wl-copy` and `wl-paste`.
-   - Verify `zwp_primary_selection_v1` support on the compositor connection.
+### Doctor Diagnostic Checks
+1. **Wayland Selection Utilities:**
+   - Checks that `wl-copy` and `wl-paste` exist on `PATH`.
+   - Probes the compositor connection for `zwp_primary_selection_v1` protocol support.
 2. **Terminal Configuration Check (Kitty):**
-   - If Kitty is detected as the active terminal, inspect `~/.config/kitty/kitty.conf`.
-   - Check if `shift+insert` is mapped to `paste_from_clipboard`.
-   - If unmapped, print a diagnostic hint:
-     ```text
-     ℹ Terminal (Kitty): Shift+Insert is bound to primary selection by default.
-       To paste transcripts with Shift+Insert, add to ~/.config/kitty/kitty.conf:
-         map shift+insert paste_from_clipboard
-     ```
-3. **Clipboard Restoration Health:**
-   - Verify that `wl-copy --paste-once` functions without hanging.
+   - If Kitty is detected, inspects `~/.config/kitty/kitty.conf`.
+   - Verifies whether `shift+insert` is bound to `paste_from_selection` (default) or `paste_from_clipboard`.
+   - Notes that dual-buffer emission ensures compatibility even if unmapped.
+3. **Single-Paste Consumption Test:**
+   - Verifies that `wl-copy --paste-once` functions without blocking indefinitely.
 
 ---
 
-## 6. Open Questions & Decision Ledger
+## 7. Open Questions & Decision Ledger
 
 ### Open Questions
 
 1. 💬 **OQ-PST1: Output driver configuration.** Should `mavor` introduce an explicit `driver` setting under `[output]`?
 
-   <!-- vantage: oq id=OQ-PST1 leaning="Yes — support driver = 'auto' | 'paste' | 'typing' in config.toml, defaulting to 'auto' (paste for terminals, typing fallback)." -->
+   <!-- vantage: oq id=OQ-PST1 leaning="Yes — support driver = 'typing' | 'paste' in config.toml, defaulting to 'typing' initially, with 'paste' opt-in." -->
 
-   _Leaning:_ Yes — support `driver = "auto" | "paste" | "typing"` in `config.toml`, defaulting to `"auto"` (paste for terminals, typing fallback).
+   _Leaning:_ Yes — support `driver = "typing" | "paste"` in `config.toml`, defaulting to `"typing"` initially, with `"paste"` opt-in.
 
    **Answer:**
    > _(empty — fill in when decided)_
@@ -176,11 +194,12 @@ Rather than silently failing when a terminal or clipboard configuration is incom
    **Answer:**
    > _(empty — fill in when decided)_
 
-3. 💬 **OQ-PST3: Dual buffer population.** When `output.clipboard = true`, should `mavor` populate both `CLIPBOARD` and `PRIMARY` simultaneously?
+3. 💬 **OQ-PST3: Dual buffer population.** When `driver = "paste"`, should `mavor` populate both `CLIPBOARD` and `PRIMARY` simultaneously by default?
 
-   <!-- vantage: oq id=OQ-PST3 leaning="Populate both only when driver = 'paste' without active restoration, otherwise keep independent." -->
+   <!-- vantage: oq id=OQ-PST3 leaning="Yes — populating both buffers makes Shift+Insert work universally in Kitty without requiring manual terminal remapping." -->
 
-   _Leaning:_ Populate both only when `driver = "paste"` without active restoration, otherwise keep independent.
+   _Leaning:_ Yes — populating both buffers makes `Shift+Insert` work universally in Kitty without requiring manual terminal remapping.
 
    **Answer:**
    > _(empty — fill in when decided)_
+

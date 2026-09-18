@@ -9,7 +9,7 @@ summary: "Living roadmap for the mavor dictation daemon: open decisions, the rea
 
 # Ongoing Work: `mavor` Voice-to-Text Utility
 
-**Status:** 2 Needs Attention (💬), 6 Ready to Implement (📦), 6 Open Threads (🏗️ 1, 🔒 1, 🛑 1, 🧊 3)
+**Status:** 2 Needs Attention (💬), 6 Ready to Implement (📦), 7 Open Threads (🏗️ 1, 🔒 1, 🛑 1, 🧊 4)
 
 ---
 
@@ -717,3 +717,20 @@ launch on nearly every Mac in service.
 **Next step:** answer [`OQ-MAC2`](design/porting-to-macos.md#OQ-MAC2) — whether
 anyone will own an Apple Developer Program membership — because a "no" there is
 a "no" to the whole port rather than a smaller version of it.
+
+### 🧊 Active-application output routing (design complete, deferred execution)
+
+[`active-application-output-routing.md`](design/active-application-output-routing.md)
+specifies dynamic active-window detection via Sway IPC (`swaymsg -t get_tree`) to
+route transcripts contextually between terminal emulators (`Ctrl+Shift+V` or Kitty
+socket), GUI applications (`Ctrl+V` or `Shift+Insert`), and modal terminal editors
+like Neovim/Vim (safe virtual keyboard typing fallback).
+
+Design is complete and agreed. Execution is deferred while universal dual-buffer
+paste (`Shift+Insert` with `CLIPBOARD` + `PRIMARY` population) is tested first.
+
+**Next step:** implement the universal `Shift+Insert` dual-buffer driver in
+[`paste-based-output-dispatch.md`](design/paste-based-output-dispatch.md); revisit
+dynamic IPC window sniffing only if modal editor conflicts or terminal-specific
+issues require granular routing.
+
