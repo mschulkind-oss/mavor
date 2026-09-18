@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+// Architecture and invariants: docs/reference/paste-based-output-dispatch.md
+
 // CommandLauncher abstracts process execution for the paste supervisor and tests.
 type CommandLauncher interface {
 	Run(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error)

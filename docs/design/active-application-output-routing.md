@@ -15,7 +15,7 @@ vantage:
 
 **The short version.** Dictated text cannot be dispatched identically to all desktop windows. Terminal emulators require `Ctrl+Shift+V` (or Bracketed Paste) to avoid per-keystroke TUI redraw loops; graphical applications require `Ctrl+V` or `Shift+Insert`; and modal text editors (such as terminal Neovim, Vim, or Helix) will execute destructive normal-mode commands if a synthetic paste or raw typing sequence arrives while the editor is not in insert mode. While universal defaults (`Shift+Insert` paired with dual-buffer clipboard population) resolve simple cases, full desktop harmony requires `mavor` to **detect the focused application** and select the optimal dispatch strategy dynamically. This document specifies active-window inspection via Sway IPC (`swaymsg -t get_tree`), defines an application routing table, establishes safety fallbacks for modal editors, and outlines user-configurable application overrides in `config.toml`.
 
-**Reads with:** [`paste-based-output-dispatch.md`](./paste-based-output-dispatch.md) (paste driver and Wayland clipboard semantics), [`active-window-context-and-vocabulary-prompting.md`](./active-window-context-and-vocabulary-prompting.md) (Sway IPC tree traversal for vocabulary biasing), [`how-mavor-works.md`](../reference/how-mavor-works.md) (daemon architecture).
+**Reads with:** [`paste-based-output-dispatch.md`](../reference/paste-based-output-dispatch.md) (paste driver and Wayland clipboard semantics), [`active-window-context-and-vocabulary-prompting.md`](./active-window-context-and-vocabulary-prompting.md) (Sway IPC tree traversal for vocabulary biasing), [`how-mavor-works.md`](../reference/how-mavor-works.md) (daemon architecture).
 
 ---
 
@@ -110,7 +110,7 @@ When a developer is editing in Neovim, Emacs, or Helix inside a terminal, `app_i
 
 ### 4. IPC Failure / Unrecognized Window
 If `$SWAYSOCK` is unavailable or the window is unrecognized:
-- Fall back to universal **`Shift+Insert`** with dual-buffer copy ([`paste-based-output-dispatch.md`](./paste-based-output-dispatch.md#4-universal-paste-architecture-dual-buffer-copy--shiftinsert)).
+- Fall back to universal **`Shift+Insert`** with dual-buffer copy ([`paste-based-output-dispatch.md`](../reference/paste-based-output-dispatch.md#universal-paste-architecture-dual-buffer-copy--shiftinsert)).
 
 ---
 

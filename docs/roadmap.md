@@ -729,8 +729,8 @@ like Neovim/Vim (safe virtual keyboard typing fallback).
 Design is complete and agreed. Execution is deferred while universal dual-buffer
 paste (`Shift+Insert` with `CLIPBOARD` + `PRIMARY` population) is tested first.
 
-**Next step:** implement the universal `Shift+Insert` dual-buffer driver in
-[`paste-based-output-dispatch.md`](design/paste-based-output-dispatch.md); revisit
-dynamic IPC window sniffing only if modal editor conflicts or terminal-specific
+**Status:** Universal `Shift+Insert` dual-buffer paste driver is **built and verified**
+([`paste-based-output-dispatch.md`](reference/paste-based-output-dispatch.md)). Dynamic
+IPC window sniffing remains deferred unless modal editor conflicts or terminal-specific
 issues require granular routing.
 

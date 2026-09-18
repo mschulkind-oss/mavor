@@ -41,7 +41,7 @@ own tests run in milliseconds with no compositor and no audio server.
 | Speech recognition, every runtime | `internal/speech` (`Transcriber`, `StreamTranscriber`, `Resolve`, `Factory`) |
 | The model catalog, and the runtime and placement it implies | `internal/models` (`Catalog`, `RuntimeFor`, `Select`) |
 | The config file, and the defaults `config init` scaffolds | `internal/config` (`Config`, `Default`, `Resolve`) |
-| Typing and clipboard | `internal/output` (`Dispatcher`, `Wayland`) |
+| Output dispatch (paste and typing) | `internal/output` (`Dispatcher`, `Paste`, `Wayland`) — see [`paste-based-output-dispatch.md`](paste-based-output-dispatch.md) |
 | The HUD | `internal/overlay` (`Overlay`, `Visual`, `Scene`) — `paint.go` is pixels, `overlay_wl.go` is the compositor |
 | Wayland wire protocol, layer-shell, shm | `internal/wayland` — hand-written, no cgo in this package |
 | Transcript recovery log | `internal/history` (`Store`, `Entry`) |
@@ -440,8 +440,8 @@ Every row was traced through the code.
 | Whisper decodes near-silence to `[BLANK_AUDIO]` or `(machine whirring)` | `speech.StripNonSpeech` cuts the annotation; what is left is empty, so this becomes the empty-transcript row | Pill vanishes, nothing typed |
 | A dictation longer than ~30s | whisper-cli writes one line per window; `output.CleanText` joins them before the transcript is recorded or typed | One flowing line, and `mavor history` recovers the same string that was typed |
 | Empty transcript | Logged at Warn, `Emit` never called | Pill vanishes, nothing typed |
-| `wtype` fails | `wl-copy` still runs; the joined error is logged at Warn and the cycle completes | Nothing typed — **but the text is on the clipboard and in the history log** |
-| Both `wtype` and `wl-copy` fail | Identical to the above from the FSM's side | Nothing typed; recover with `mavor history --copy` |
+| Output dispatch fails (paste supervisor times out or chord synthesis fails) | Error is logged at Warn and the cycle completes | Nothing pasted — **but the transcript is preserved in the history log** (recover with `mavor history --pick`) |
+| Typing driver fails (`wtype` / virtual keyboard fails under `driver = "typing"`) | Error is logged at Warn and the cycle completes | Nothing typed — **but the text is on clipboard and history log** |
 | No whisper server on `$PATH` under a derived `local-server` placement | `AdjustForEnvironment` downgrades to `subprocess` and warns | The model reloads per utterance — slower, otherwise identical |
 | The model named in the config is not installed | `speech.Resolve` fails; the daemon never starts | An error naming the model, the directory searched, and the `models pull` to run |
 | `preview.source` names a model that is not installed | `speech.ResolvePreview` fails; the daemon never starts | The same shape of error. A *named* model is a request, never a hint |
