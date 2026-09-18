@@ -99,6 +99,18 @@ enabled = %t
 verbose = %t
 
 [output]
+# Dispatch strategy: "typing" (default) or "paste".
+# "typing" sends keystrokes into the focused window (in-process or via wtype).
+# "paste" places text on selection buffers and synthesizes a paste chord,
+# rendering long dictations in a single frame via terminal bracketed paste.
+# driver = %q
+
+# Keystroke chord synthesized to trigger a paste when driver is "paste".
+# paste_chord = %q
+
+# Automatically restore previous clipboard and primary selections after paste.
+# restore_selection = %t
+
 # Your transcript is always typed into the focused window. This also copies
 # it to the clipboard, replacing whatever was there. Off by default: it
 # makes a keystroke that landed in the wrong window recoverable, but it
@@ -148,6 +160,9 @@ preview_width = %v
 		d.Ducking.OSC.TimeoutMS,
 		strconv.FormatFloat(float64(d.Vocabulary.Boost), 'f', -1, 32),
 		d.Logging.Verbose,
+		d.Output.Driver,
+		d.Output.PasteChord,
+		d.Output.RestoreSelection,
 		d.Output.Clipboard,
 		d.Overlay.TopMargin,
 		d.Overlay.PreviewWidth,

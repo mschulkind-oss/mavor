@@ -47,6 +47,15 @@ func TestDefaultsAreTheDocumentedOnes(t *testing.T) {
 	if d.Overlay.TopMargin != 8 {
 		t.Errorf("Overlay.TopMargin = %d, want 8", d.Overlay.TopMargin)
 	}
+	if d.Output.Driver != "typing" {
+		t.Errorf("Output.Driver = %q, want typing", d.Output.Driver)
+	}
+	if d.Output.PasteChord != "shift+insert" {
+		t.Errorf("Output.PasteChord = %q, want shift+insert", d.Output.PasteChord)
+	}
+	if !d.Output.RestoreSelection {
+		t.Error("Output.RestoreSelection = false, want true")
+	}
 	if d.Advanced.Placement != "auto" || d.Advanced.GPU != "auto" {
 		t.Errorf("Advanced placement/gpu = %q/%q, want auto/auto", d.Advanced.Placement, d.Advanced.GPU)
 	}
@@ -483,5 +492,35 @@ func TestGPUOffIgnoresCaseAndSpacing(t *testing.T) {
 		if !(Config{Advanced: Advanced{GPU: v}}).GPUOff() {
 			t.Errorf("GPUOff() = false for gpu = %q, want true", v)
 		}
+	}
+}
+
+func TestOutputPasteConfiguration(t *testing.T) {
+	body := `
+[output]
+driver = "paste"
+paste_chord = "ctrl+shift+v"
+copy_command = ["wl-copy", "--type", "text/plain"]
+restore_selection = false
+clipboard = true
+`
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Output.Driver != "paste" {
+		t.Errorf("Driver = %q, want paste", cfg.Output.Driver)
+	}
+	if cfg.Output.PasteChord != "ctrl+shift+v" {
+		t.Errorf("PasteChord = %q, want ctrl+shift+v", cfg.Output.PasteChord)
+	}
+	if len(cfg.Output.CopyCommand) != 3 || cfg.Output.CopyCommand[0] != "wl-copy" {
+		t.Errorf("CopyCommand = %v, want ['wl-copy', '--type', 'text/plain']", cfg.Output.CopyCommand)
+	}
+	if cfg.Output.RestoreSelection {
+		t.Error("RestoreSelection = true, want false")
+	}
+	if !cfg.Output.Clipboard {
+		t.Error("Clipboard = false, want true")
 	}
 }

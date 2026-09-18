@@ -46,6 +46,10 @@ const (
 	DefaultOSCPort      = 10024
 	DefaultOSCTimeoutMS = 200
 	DefaultBoost        = 1.5
+
+	DefaultOutputDriver     = "typing"
+	DefaultPasteChord       = "shift+insert"
+	DefaultRestoreSelection = true
 )
 
 // Config is the whole configuration. Field order follows the scaffolded file.
@@ -85,10 +89,25 @@ type Logging struct {
 	Verbose bool `toml:"verbose"`
 }
 
-// Output configures what mavor does with a finished transcript. Typing it into
-// the focused window is not optional — it is the product — so the only choice
-// here is what else happens.
+// Output configures what mavor does with a finished transcript.
 type Output struct {
+	// Driver is the output dispatch strategy: "typing" (default) or "paste".
+	// "typing" types characters into the focused window (in-process or via wtype).
+	// "paste" copies text to selection buffers and synthesizes a paste chord.
+	Driver string `toml:"driver"`
+
+	// PasteChord is the keystroke chord synthesized to trigger a paste when
+	// Driver is "paste". Defaults to "shift+insert".
+	PasteChord string `toml:"paste_chord"`
+
+	// CopyCommand overrides the copy utility. Empty means default dual-buffer
+	// wl-copy logic.
+	CopyCommand []string `toml:"copy_command"`
+
+	// RestoreSelection restores previous clipboard and primary selections after
+	// paste dispatch. Defaults to true.
+	RestoreSelection bool `toml:"restore_selection"`
+
 	// TypingDelayMS is the pause wtype leaves between keystrokes, in
 	// milliseconds. UNSET by default, and that is the fast setting.
 	//
@@ -319,6 +338,9 @@ func Default() Config {
 			Verbose: false,
 		},
 		Output: Output{
+			Driver:           DefaultOutputDriver,
+			PasteChord:       DefaultPasteChord,
+			RestoreSelection: DefaultRestoreSelection,
 			// nil: pass no -d, which is the fastest wtype types. See the
 			// measurements on Output.TypingDelayMS.
 			TypingDelayMS: nil,
@@ -397,6 +419,16 @@ func (c *Config) Resolve() {
 	}
 	if c.Overlay.TopMargin < 0 {
 		c.Overlay.TopMargin = 0
+	}
+
+	if c.Output.Driver == "" {
+		c.Output.Driver = DefaultOutputDriver
+	}
+	if c.Output.PasteChord == "" {
+		c.Output.PasteChord = DefaultPasteChord
+	}
+	if len(c.Output.CopyCommand) == 0 {
+		c.Output.CopyCommand = nil
 	}
 
 	if c.Advanced.Placement == "" {
