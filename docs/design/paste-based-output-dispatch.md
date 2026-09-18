@@ -85,26 +85,53 @@ As analyzed in [`wayland-dictation-stack.md`](../research/wayland-dictation-stac
 
 Because Wayland selection transfers are asynchronous and demand-driven (the target application requests data via a pipe only after receiving the paste chord), restoring $S_{\text{old}}$ too quickly can overwrite $S_{\text{transcript}}$ *before* the target application finishes reading it.
 
-### The Fix: Single-Paste Delivery (`wl-copy --paste-once`)
-`wl-copy` supports the `--paste-once` (`-o`) flag:
-```bash
-wl-copy --paste-once --type text/plain <transcript>
+### The Dual-Invocation Challenge with `--paste-once`
+
+When emitting to both `CLIPBOARD` and `PRIMARY` simultaneously, `--paste-once` encounters an **asymmetric consumption** problem:
+- An application only consumes from **one** selection buffer per paste.
+- In Kitty, `Shift+Insert` consumes `PRIMARY`. The `PRIMARY` instance of `wl-copy -o` serves the text and exits.
+- The `CLIPBOARD` instance never receives a paste request. Without intervention, it would linger in the background indefinitely.
+- Conversely, in a GUI browser, `Shift+Insert` consumes `CLIPBOARD`, leaving the `PRIMARY` instance orphaned.
+
+### The "First-Exit Wins" Supervisor Pattern
+`mavor` resolves this by running both invocations as foreground child processes (`-f -o`) under a concurrent supervisor:
+
+```go
+// Spawn both selection holders in the foreground with --paste-once:
+cmdClip := exec.Command("wl-copy", "--foreground", "--paste-once", text)
+cmdPrim := exec.Command("wl-copy", "--primary", "--foreground", "--paste-once", text)
+
+done := make(chan string, 2)
+go func() { cmdClip.Run(); done <- "clipboard" }()
+go func() { cmdPrim.Run(); done <- "primary" }()
+
+// Synthesize the paste chord:
+virtualKeyboard.TypeChord("shift+insert")
+
+// Wait for whichever buffer is consumed first:
+select {
+case winner := <-done:
+    // One buffer was consumed; terminate the lingering sibling immediately:
+    if winner == "clipboard" {
+        _ = cmdPrim.Process.Kill()
+    } else {
+        _ = cmdClip.Process.Kill()
+    }
+case <-time.After(1 * time.Second):
+    // Fallback timeout if window did not accept paste:
+    _ = cmdClip.Process.Kill()
+    _ = cmdPrim.Process.Kill()
+}
+
+// Restore pre-existing user selections:
+restoreSelections(oldClipboard, oldPrimary)
 ```
-With `--paste-once`, the `wl-copy` process serves exactly one paste request to the focused window and immediately exits. By launching `wl-copy --paste-once` in a background worker, `mavor` can wait for the process to exit (confirming the paste was consumed) and immediately re-seed the previous selection $S_{\text{old}}$.
 
-For the primary selection:
-```bash
-# Save existing primary selection:
-old_primary=$(wl-paste --primary --no-newline 2>/dev/null)
-
-# Set primary selection once:
-wl-copy --primary --paste-once "$text"
-
-# After paste completes, restore old primary selection:
-if [ -n "$old_primary" ]; then
-    printf "%s" "$old_primary" | wl-copy --primary
-fi
-```
+This pattern ensures that:
+1. Whichever buffer the target window reads, the data is delivered cleanly.
+2. The unconsumed sibling process is terminated immediately with `SIGKILL`.
+3. Pre-existing user selections are restored as soon as consumption finishes.
+4. If a focused window ignores the chord, the 1-second timeout prevents indefinite hangs.
 
 ---
 
@@ -115,18 +142,9 @@ Rather than requiring complex window sniffing upfront, `mavor`'s core paste stra
 1. **Default Paste Chord (`Shift+Insert`):**
    `Shift+Insert` is recognized natively across X11 and Wayland toolkits (GTK, Qt, Chromium, Electron, terminal emulators).
 2. **Dual-Buffer Emission (`CLIPBOARD` + `PRIMARY`):**
-   When paste dispatch is enabled, `mavor` copies the transcript to **both** `CLIPBOARD` and `PRIMARY` selections:
-   ```bash
-   wl-copy <text> && wl-copy --primary <text>
-   ```
-   Because `PRIMARY` is populated alongside `CLIPBOARD`, `Shift+Insert` in Kitty immediately receives the transcript without requiring the user to remap `kitty.conf`. In GUI applications, `Shift+Insert` reads `CLIPBOARD` and also succeeds.
-3. **Selection Restoration with `wl-copy --paste-once`:**
-   To ensure existing user data is not destroyed:
-   - Before setting selections, `mavor` reads the current `CLIPBOARD` and `PRIMARY` contents via `wl-paste`.
-   - The transcript is emitted using `wl-copy --paste-once`.
-   - Once the paste is consumed by the application, `mavor` restores the previous buffers.
-4. **Contextual Routing Deferred:**
-   Dynamic per-application detection (e.g. sniffing `app_id` via Sway IPC to choose between `Ctrl+Shift+V` and `Ctrl+V`) is detailed in a dedicated specification: [`active-application-output-routing.md`](./active-application-output-routing.md).
+   When paste dispatch is enabled, `mavor` copies the transcript to **both** selections using the First-Exit Wins supervisor above. Because `PRIMARY` is populated alongside `CLIPBOARD`, `Shift+Insert` in Kitty immediately receives the transcript without requiring the user to remap `kitty.conf`. In GUI applications, `Shift+Insert` reads `CLIPBOARD` and also succeeds.
+3. **Contextual Routing Deferred:**
+   Dynamic per-application detection (e.g. sniffing `app_id` via Sway IPC to choose between `Ctrl+Shift+V` and `Ctrl+V`, bypassing the dual-process supervisor entirely) is detailed in a dedicated specification: [`active-application-output-routing.md`](./active-application-output-routing.md).
 
 ---
 
