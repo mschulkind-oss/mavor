@@ -199,7 +199,15 @@ func runDaemon(verbose bool, logFile string) error {
 	// working path if the in-process one ever misbehaves.
 	var outDispatch output.Dispatcher
 	var closeOutput func() error
-	if native, err := output.NewNative(logger); err == nil {
+	if cfg.Output.Driver == "paste" {
+		logger.Info("output: using paste dispatcher", "chord", cfg.Output.PasteChord, "restore_selection", cfg.Output.RestoreSelection)
+		p := output.NewPaste(logger)
+		p.Chord = cfg.Output.PasteChord
+		p.CopyCommand = cfg.Output.CopyCommand
+		p.RestoreSelection = cfg.Output.RestoreSelection
+		p.Clipboard = cfg.Output.Clipboard
+		outDispatch = p
+	} else if native, err := output.NewNative(logger); err == nil {
 		native.Clipboard = cfg.Output.Clipboard
 		outDispatch, closeOutput = native, native.Close
 	} else {
