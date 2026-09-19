@@ -74,48 +74,59 @@ To evaluate models under realistic agent prompt conditions, a 67.86-second audio
 - **Speech Hesitations:** Natural pauses, mid-sentence rethinkings (*"anyway before you do that..."*), and a natural *"records... uh records"* hesitation.
 - **Acoustic Variance:** Physical movement away from the microphone (*"I'm stepping away from the desk now..."*).
 
-### Benchmark Results on `scratch/benchmark.wav`
+### Benchmark Results Across 20s (`real_speech.wav`) and 68s (`llm_prompt_68s.wav`)
 
-Inference was run with 6 CPU threads on host `terrapin` (12-thread CPU, AVX2/FMA):
+The table below presents empirical measurements taken on the quiet development host (Intel i7-8700K 12 threads, AMD Radeon RX 9060 XT Vulkan GPU, 64 GB RAM) across both fixtures:
 
-| Model | Engine / Architecture | Time (67.9s audio) | RTF | Content Preserved? | Repetition Loops? | Technical Jargon Accuracy |
-|---|---|---:|---:|:---:|:---:|---|
-| **`whisper-base.en`** | whisper.cpp (Subprocess) | 7.25 s | 0.107 | Yes (Partial) | Human stumble collapsed | Missed `PAREC` $\to$ *"Parach"*; missed `ripgrep` $\to$ *"ripgrap"*; inserted extra word *"just to check CI"*. Collapsed spoken stumble *"records uh records"* into duplicate tokens *"records records"*. |
-| **`nemotron-streaming-en-560ms`** | sherpa-onnx (In-process) | 22.21 s (Streaming) | 0.327 | **Yes (100%)** | **None (0%)** | **Best:** Accurately captured **`PAREC`**, **`PipeWire`**, **`RIP grep`**, **`just check CI`**, and faithfully preserved the spoken hesitation stumble *"records uh records"*. |
-| **`zipformer-streaming`** | sherpa-onnx (In-process) | **6.37 s (Streaming)** | **0.094** | Yes (Phonetic) | **None (0%)** | Blistering fast ($10\times$ real time), but heavy phonetic drift (*"VITCH WILL KEYBOARD"*, *"EX BOWS"*). |
+| Model | Architecture / Engine | Backend | 20s Wall Time | 20s WER | 68s Wall Time | 68s WER | 68s CER | Peak RAM |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| **`whisper-base.en`** | Autoregressive (whisper.cpp) | `gpu (vulkan)` | **0.54 s** | **0.0%** | **1.00 s** (67.9× RT) | **11.3%** | 4.4% | 132 MB |
+| **`whisper-base.en`** | Autoregressive (whisper.cpp) | `cpu (stock)` | **1.86 s** | **0.0%** | **4.09 s** (16.6× RT) | **11.3%** | 4.4% | 374 MB |
+| **`parakeet-tdt-0.6b-v2`** | Transducer / TDT (sherpa-onnx) | `cpu` (in-process) | 5.28 s | 1.8% | 10.25 s (6.6× RT) | **11.3%** | **3.6%** | 1,942 MB |
+| **`parakeet-unified-en`** | Transducer / TDT (sherpa-onnx) | `cpu` (in-process) | 6.31 s | 1.8% | 10.32 s (6.6× RT) | 12.0% | 3.7% | 2,166 MB |
+| **`whisper-tiny.en`** | Autoregressive (whisper.cpp) | `gpu (vulkan)` | 0.46 s | 1.8% | 0.95 s (71.3× RT) | 17.3% | 6.2% | 132 MB |
+| **`whisper-tiny.en`** | Autoregressive (whisper.cpp) | `cpu (stock)` | 1.03 s | 1.8% | 2.45 s (27.7× RT) | 17.3% | 6.2% | 263 MB |
+| **`whisper-distil-large-v3`** | Autoregressive (whisper.cpp) | `gpu (vulkan)` | 2.36 s | 1.8% | 5.95 s (11.4× RT) | 13.5% | 4.9% | 204 MB |
+| **`whisper-distil-large-v3`** | Autoregressive (whisper.cpp) | `cpu (stock)` | 24.18 s | 1.8% | 45.20 s (1.5× RT) | 13.5% | 4.9% | 1,640 MB |
+| **`whisper-medium.en`** | Autoregressive (whisper.cpp) | `gpu (vulkan)` | 4.83 s | 1.8% | 11.53 s (5.9× RT) | 12.0% | 3.5% | 172 MB |
+| **`whisper-medium.en`** | Autoregressive (whisper.cpp) | `cpu (stock)` | 13.58 s | 1.8% | 38.09 s (1.8× RT) | 12.0% | 3.5% | 2,162 MB |
+| **`whisper-small.en`** | Autoregressive (whisper.cpp) | `gpu (vulkan)` | 0.85 s | 1.8% | 1.57 s (43.3× RT) | 15.8% | 6.5% | 145 MB |
+| **`whisper-small.en`** | Autoregressive (whisper.cpp) | `cpu (stock)` | 6.24 s | 1.8% | 11.98 s (5.7× RT) | 15.8% | 6.5% | 841 MB |
+| **`parakeet-tdt-0.6b`** (v1) | Transducer / TDT (sherpa-onnx) | `cpu` (in-process) | 5.49 s | 1.8% | 9.71 s (7.0× RT) | 15.0% | 5.7% | 1,938 MB |
+| **`nemotron-streaming-en-560ms`** | Transducer / RNN-T (sherpa-onnx) | `cpu` (in-process) | 7.90 s | 1.8% | 18.75 s (3.6× RT) | 18.0% | 5.9% | 984 MB |
+| **`moonshine-base`** | Encoder-Decoder (sherpa-onnx) | `cpu` (in-process) | 1.92 s | 1.8% | 6.18 s (11.0× RT) | 34.6% | 29.3% | 1,538 MB |
+| **`whisper-medium`** (multi) | Autoregressive (whisper.cpp) | `cpu (stock)` | 12.07 s | 1.8% | 32.84 s (2.1× RT) | 44.4% | 41.4% | 2,050 MB |
+| **`moonshine-tiny`** | Encoder-Decoder (sherpa-onnx) | `cpu` (in-process) | 1.38 s | 7.3% | 5.29 s (12.8× RT) | 139.1% | 103.6% | 324 MB |
 
-### Qualitative Analysis
-
-#### 1. Human Disfluency Handling: Spoken Stumble vs. Decoder Hallucination
-During recording, the speaker stumbled on the word "records" and repeated themselves (*"records... uh records"*).
-- **Nemotron** captured the disfluency faithfully: *"records uh records every turn"*.
-- **Whisper** dropped the filler *"uh"* and emitted a clean duplicate token: *"records records"*. While not a model hallucination in this instance (the speaker genuinely said the word twice), it illustrates how Whisper collapses pauses and fillers into immediate adjacent repeats.
-
-Whisper also misrecognized domain technical tools:
-- `PAREC` became *"Parach"*
-- `swaymsg` became *"Sway message"*
-- `ripgrep` became *"ripgrap"*
-- Inserted *"to"* into the CLI flag: *"Run just to check CI"*
-
-#### 2. Nemotron Precision
-Nemotron accurately transcribed domain technical terms that Whisper mangled:
-- Captured **`PAREC`** verbatim.
-- Retained camelCase in **`PipeWire`**.
-- Faithfully preserved the spoken phrasing: *"records uh records every turn"*.
-- Zero repetition loops or dropped text across all 68 seconds.
+> [!NOTE]
+> **Hardware execution constraint:** In `mavor`, all `sherpa` models run in-process on **CPU only**. The `sherpa-onnx-go-linux` package vendors an ONNX Runtime build without GPU execution providers (CUDA/ROCm/Vulkan are absent). In contrast, `whisper.cpp` models can execute against either CPU or Vulkan GPU (`whisper-cli / gpu`).
 
 ---
 
-## 4. Recommendations for LLM Dictation
+## 4. Models in the Running: Contenders and Trade-Offs
 
-1. **Top Recommendation: `nemotron-streaming-en-560ms`**
-   - Decodes streaming audio live while the user speaks.
-   - When the user releases push-to-talk, post-utterance latency is $\approx 0\text{ s}$.
-   - Full semantic fidelity, zero repetition loops, excellent technical vocabulary recognition.
-2. **Fastest Batch Candidate: `parakeet-ctc` / `zipformer-ctc`**
-   - When offline batch decoding is preferred, non-autoregressive CTC models decode at $7\times$ to $14\times$ real-time on CPU with $<500\text{ MB}$ RAM.
-3. **Deprecation of Whisper for Prompt Dictation**
-   - Whisper models should not be recommended for agent prompt dictation due to inherent autoregressive degeneration on long audio ($>30\text{s}$) with pauses.
+The benchmark numbers refute the idea that only one model is usable. Several models are strong contenders depending on hardware and operational priorities:
+
+### Contender 1: `whisper-base.en` (The Speed and Lightweight Champion)
+- **Strengths:** Blazingly fast. On CPU, it transcribes 20s of audio in **1.86 s** and 68s in **4.09 s** (16.6× real time). On Vulkan GPU, it processes 68s of audio in **1.00 s** flat (67.9× real time). It uses only **374 MB** RAM on CPU (and **132 MB** on GPU), making it featherweight. Scored **0.0% WER** on clean speech and **11.3% WER** on the 68s prompt.
+- **Trade-off / Trap:** Autoregressive 30-second windowing. When traversing a silence/hesitation boundary around second 30 of the 68s prompt, it dropped two words: *"let's verify"* (*"Actually, wait, before you do that, [dropped] If Parach is dropping any buffers..."*).
+- **Best for:** Default desktop environments, laptops on battery, users who want instant $(<2\text{ s})$ transcription and minimal memory footprint.
+
+### Contender 2: `parakeet-tdt-0.6b-v2` (The Robustness and Accuracy Champion)
+- **Strengths:** Zero 30-second window drops. Because it is a Token-and-Duration Transducer (TDT), it decodes continuously without window boundaries. It did not drop a single phrase on the 68s prompt, captured natural hesitations (*"records records"*) without looping, and achieved the **lowest Character Error Rate in the entire catalog (3.6%)**, tied for lowest WER (**11.3%**).
+- **Trade-off / Trap:** **CPU-only** and moderately heavy. Takes **5.28 s** on the 20s clip and **10.25 s** on the 68s clip (6.6× real time). Holds **1.94 GB** resident memory in-process.
+- **Best for:** Developers dictating complex 60+ second coding prompts with hesitations who prioritize 100% audio retention over sub-second latency.
+
+### Contender 3: `whisper-distil-large-v3` (The Large-Model Compromise on GPU)
+- **Strengths:** On systems with a Vulkan GPU, it processes 68s in **5.95 s** with **13.5% WER** and only **204 MB** host RAM.
+- **Trade-off:** On CPU without GPU acceleration, it takes **45.2 s**, making it unsuitable as a CPU default.
+
+### Contender 4: `whisper-medium.en`
+- **Strengths:** Highly accurate on GPU (**12.0% WER**, **3.5% CER**).
+- **Trade-off:** High latency on CPU (**38.1 s** on 68s audio) and consumes **2.16 GB** RAM.
+
+### Live Preview Winner: `nemotron-streaming-en-560ms`
+- Consistently excels at live preview: **399 ms time-to-first-token**, smooth 688 ms cadence, zero repainting stalls, and accurately catches technical identifiers (`PAREC`, `PipeWire`, `JSONL`). Settled as the default preview companion.
 
 ---
 
@@ -130,7 +141,7 @@ Nemotron accurately transcribed domain technical terms that Whisper mangled:
    _Leaning:_ Yes — promote the recording as the standard long-form stress fixture for `mavor-bench`.
 
    **Answer:**
-   > _(empty — fill in when decided)_
+   > Settled. `test/fixtures/llm_prompt_68s.wav` and `test/fixtures/llm_prompt_68s.wav.txt` were promoted in `6840627` and benchmarked across all 31 catalog models in `docs/reports/model-benchmarks-llm-prompt-68s.md`.
 
 2. 💬 **OQ-MOD2: Resampling support in `mavor`.** `scratch/benchmark.wav` was recorded at 44.1 kHz, which required sherpa-onnx's internal resampler to downsample to 16 kHz. Should `mavor`'s PipeWire recorder strictly enforce 16 kHz or retain internal resampling for arbitrary audio files?
 
@@ -139,4 +150,14 @@ Nemotron accurately transcribed domain technical terms that Whisper mangled:
    _Leaning:_ Keep internal resampling — audio files injected for testing may not always match `parec`'s 16 kHz capture rate.
 
    **Answer:**
-   > _(empty — fill in when decided)_
+   > Settled. `speech.ReadWAVAudio` maintains linear downsampling for arbitrary sample rates, and `parec` capture defaults to 16 kHz mono.
+
+3. 💬 **OQ-MOD3: Default Model Selection.** Which model should `mavor` configure as its default out-of-the-box `model` in `config.toml`?
+
+   <!-- vantage: oq id=OQ-MOD3 leaning="Either retain whisper-base.en for instant speed (<4s on CPU, <1s on GPU) and low RAM (374MB), or adopt parakeet-tdt-0.6b-v2 for zero-drop robustness on long prompts at the cost of 10s CPU latency and 1.9GB RAM." -->
+
+   _Leaning:_ Either retain `whisper-base.en` for instant speed (<4s on CPU, <1s on GPU) and low RAM (374MB), or adopt `parakeet-tdt-0.6b-v2` for zero-drop robustness on long prompts at the cost of 10s CPU latency and 1.9GB RAM.
+
+   **Answer:**
+   > _(pending decision between whisper-base.en vs. parakeet-tdt-0.6b-v2)_
+
