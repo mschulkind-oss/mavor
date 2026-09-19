@@ -47,6 +47,11 @@ func (RealLauncher) Run(ctx context.Context, stdin []byte, name string, args ...
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
+	if name == "wl-copy" {
+		// wl-copy daemonizes itself to hold clipboard selection and leaves stderr open in the child.
+		// Running without capturing child stderr prevents blocking indefinitely on pipe EOF.
+		return nil, cmd.Run()
+	}
 	return cmd.CombinedOutput()
 }
 
@@ -162,6 +167,14 @@ type Paste struct {
 	// Timeout is the maximum time to wait for paste-once consumption.
 	Timeout time.Duration
 
+	// SiblingGrace is the window to allow a second buffer to exit before killing it.
+	// This prevents clipboard managers reading CLIPBOARD from starving a PRIMARY paste (e.g. Kitty).
+	SiblingGrace time.Duration
+
+	// RestoreDelay allows the target application to finish consuming in-flight
+	// selection pipes before restoring previous selections.
+	RestoreDelay time.Duration
+
 	// Launcher executes commands. Defaults to RealLauncher{}.
 	Launcher CommandLauncher
 }
@@ -177,6 +190,8 @@ func NewPaste(logger *slog.Logger) *Paste {
 		RestoreSelection: true,
 		Clipboard:        false,
 		Timeout:          1 * time.Second,
+		SiblingGrace:     50 * time.Millisecond,
+		RestoreDelay:     50 * time.Millisecond,
 		Launcher:         RealLauncher{},
 	}
 }
@@ -208,7 +223,20 @@ func (p *Paste) Emit(ctx context.Context, text string) error {
 		oldPrim, primErr = p.Launcher.Run(ctx, nil, "wl-paste", "-p", "-n")
 	}
 
+	restoreDelay := p.RestoreDelay
+	if restoreDelay <= 0 {
+		restoreDelay = 50 * time.Millisecond
+	}
+	siblingGrace := p.SiblingGrace
+	if siblingGrace <= 0 {
+		siblingGrace = 50 * time.Millisecond
+	}
+
 	defer func() {
+		if p.RestoreSelection || p.Clipboard {
+			time.Sleep(restoreDelay)
+		}
+
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 		defer cancel()
 
@@ -262,8 +290,8 @@ func (p *Paste) Emit(ctx context.Context, text string) error {
 		return fmt.Errorf("output: failed to start wl-copy --primary: %w", err)
 	}
 
-	// Allow child processes a brief moment to register Wayland selections before chord injection
-	time.Sleep(5 * time.Millisecond)
+	// Allow child processes a moment to register Wayland selections before chord injection
+	time.Sleep(20 * time.Millisecond)
 
 	// Synthesize the paste chord into the focused window
 	if _, err := p.Launcher.Run(ctx, nil, "wtype", wtypeArgs...); err != nil {
@@ -288,25 +316,31 @@ func (p *Paste) Emit(ctx context.Context, text string) error {
 	select {
 	case winner := <-done:
 		log.Info("output: paste-once consumed", "winner", winner, "elapsed_ms", time.Since(start).Milliseconds())
-		if winner == "clipboard" {
-			_ = cmdPrim.Kill()
-			_ = cmdPrim.Wait()
-		} else {
-			_ = cmdClip.Kill()
-			_ = cmdClip.Wait()
+		// If one buffer was consumed, wait briefly for the sibling in case a dual-buffer consumer
+		// or clipboard watcher triggered the first exit before the target window read the other buffer.
+		select {
+		case second := <-done:
+			log.Info("output: dual paste-once consumed", "second", second, "elapsed_ms", time.Since(start).Milliseconds())
+		case <-time.After(siblingGrace):
+			if winner == "clipboard" {
+				_ = cmdPrim.Kill()
+			} else {
+				_ = cmdClip.Kill()
+			}
+			<-done
 		}
 	case <-time.After(timeout):
 		log.Warn("output: paste-once timeout expired without consumption; terminating holders", "timeout", timeout)
 		_ = cmdClip.Kill()
 		_ = cmdPrim.Kill()
-		_ = cmdClip.Wait()
-		_ = cmdPrim.Wait()
+		<-done
+		<-done
 	case <-ctx.Done():
 		log.Warn("output: context cancelled during paste dispatch")
 		_ = cmdClip.Kill()
 		_ = cmdPrim.Kill()
-		_ = cmdClip.Wait()
-		_ = cmdPrim.Wait()
+		<-done
+		<-done
 		return ctx.Err()
 	}
 

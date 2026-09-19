@@ -332,3 +332,42 @@ func TestPasteEmitCustomCopyCommand(t *testing.T) {
 		t.Error("wtype chord was not executed")
 	}
 }
+
+func TestPasteEmitDualBufferBothConsumed(t *testing.T) {
+	// Simulates scenario where a clipboard manager reads CLIPBOARD, and Kitty reads PRIMARY
+	// within the sibling grace period. Neither process should be killed with SIGKILL.
+	p := NewPaste(nil)
+	p.SiblingGrace = 30 * time.Millisecond
+	p.RestoreDelay = 1 * time.Millisecond
+	l := newMockLauncher()
+	p.Launcher = l
+
+	go func() {
+		time.Sleep(5 * time.Millisecond)
+		l.clipCmd.waitCh <- nil
+		time.Sleep(5 * time.Millisecond)
+		l.primCmd.waitCh <- nil
+	}()
+
+	if err := p.Emit(context.Background(), "hello dual"); err != nil {
+		t.Fatalf("Emit failed: %v", err)
+	}
+
+	if l.clipCmd.isKilled() {
+		t.Error("clipCmd was unexpectedly killed")
+	}
+	if l.primCmd.isKilled() {
+		t.Error("primCmd was unexpectedly killed")
+	}
+}
+
+func TestRealLauncherRunEcho(t *testing.T) {
+	r := RealLauncher{}
+	out, err := r.Run(context.Background(), nil, "sh", "-c", "echo 'hello launcher'")
+	if err != nil {
+		t.Fatalf("RealLauncher.Run failed: %v", err)
+	}
+	if string(out) != "hello launcher\n" {
+		t.Errorf("got %q, want %q", string(out), "hello launcher\n")
+	}
+}
