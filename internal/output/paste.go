@@ -190,8 +190,8 @@ func NewPaste(logger *slog.Logger) *Paste {
 		RestoreSelection: true,
 		Clipboard:        false,
 		Timeout:          1 * time.Second,
-		SiblingGrace:     50 * time.Millisecond,
-		RestoreDelay:     50 * time.Millisecond,
+		SiblingGrace:     300 * time.Millisecond,
+		RestoreDelay:     200 * time.Millisecond,
 		Launcher:         RealLauncher{},
 	}
 }
@@ -225,11 +225,11 @@ func (p *Paste) Emit(ctx context.Context, text string) error {
 
 	restoreDelay := p.RestoreDelay
 	if restoreDelay <= 0 {
-		restoreDelay = 50 * time.Millisecond
+		restoreDelay = 200 * time.Millisecond
 	}
 	siblingGrace := p.SiblingGrace
 	if siblingGrace <= 0 {
-		siblingGrace = 50 * time.Millisecond
+		siblingGrace = 300 * time.Millisecond
 	}
 
 	defer func() {

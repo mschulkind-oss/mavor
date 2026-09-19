@@ -48,7 +48,15 @@
     "ninja",
     // shaderc's default output carries no binaries; glslc lives in "bin",
     // and the Vulkan backend's shader generator shells out to it by name.
-    {"name": "shaderc", "outputs": ["out", "bin", "lib", "dev"]},
+    {
+      "name": "shaderc",
+      "outputs": [
+        "out",
+        "bin",
+        "lib",
+        "dev"
+      ]
+    },
     "vulkan-headers",
     "spirv-headers", // ggml-vulkan's CMake find_package()s these directly
     "vulkan-loader",
@@ -112,7 +120,7 @@
     // `mavor config show` resolves, and the thing to compare against
     // `defaultConfigTemplate()` when a user's behaviour disagrees with a
     // default.
-    "~/.config/mavor:/ctx/mavor-config",
+    "~/.dotfiles/config/mavor:/ctx/mavor-config",
     // The model cache. Needed to tell "the companion is not installed" apart
     // from "it is installed but its ONNX files are truncated" — the two look
     // identical from the outside and only the second is a download bug.
