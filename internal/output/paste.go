@@ -25,11 +25,16 @@ type ManagedCmd interface {
 }
 
 type realCmd struct {
-	cmd *exec.Cmd
+	cmd    *exec.Cmd
+	stderr *bytes.Buffer
 }
 
 func (r *realCmd) Wait() error {
-	return r.cmd.Wait()
+	err := r.cmd.Wait()
+	if r.stderr != nil && r.stderr.Len() > 0 {
+		return fmt.Errorf("%v (stderr: %s)", err, r.stderr.String())
+	}
+	return err
 }
 
 func (r *realCmd) Kill() error {
@@ -60,10 +65,12 @@ func (RealLauncher) Start(ctx context.Context, stdin []byte, name string, args .
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	return &realCmd{cmd: cmd}, nil
+	return &realCmd{cmd: cmd, stderr: &stderr}, nil
 }
 
 // ChordToWtypeArgs converts a human-readable chord (e.g. "shift+insert", "ctrl+shift+v")
@@ -275,13 +282,12 @@ func (p *Paste) Emit(ctx context.Context, text string) error {
 
 	// Dual-buffer Timed Lease:
 	// Spawn both selection holders in the foreground (WITHOUT --paste-once).
-	// This permits multiple simultaneous reads (e.g. cliphist capturing CLIPBOARD
-	// while Kitty pastes from PRIMARY) without racing or killing each other.
-	cmdClip, err := p.Launcher.Start(ctx, []byte(text), "wl-copy", "--foreground")
+	// Pass text as an argument to avoid pipe/stdin buffering and EOF timing issues.
+	cmdClip, err := p.Launcher.Start(ctx, nil, "wl-copy", "--foreground", "--", text)
 	if err != nil {
 		return fmt.Errorf("output: failed to start wl-copy: %w", err)
 	}
-	cmdPrim, err := p.Launcher.Start(ctx, []byte(text), "wl-copy", "--primary", "--foreground")
+	cmdPrim, err := p.Launcher.Start(ctx, nil, "wl-copy", "--primary", "--foreground", "--", text)
 	if err != nil {
 		_ = cmdClip.Kill()
 		_ = cmdClip.Wait()
@@ -313,8 +319,9 @@ func (p *Paste) Emit(ctx context.Context, text string) error {
 
 	_ = cmdClip.Kill()
 	_ = cmdPrim.Kill()
-	_ = cmdClip.Wait()
-	_ = cmdPrim.Wait()
+	errClip := cmdClip.Wait()
+	errPrim := cmdPrim.Wait()
+	log.Info("output: holders reaped", "errClip", errClip, "errPrim", errPrim)
 
 	return ctx.Err()
 }
