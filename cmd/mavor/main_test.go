@@ -159,3 +159,36 @@ func TestLogsCommand(t *testing.T) {
 		t.Fatalf("mavor logs error = %v", err)
 	}
 }
+
+func TestDoctorFixPreservesExistingConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	t.Setenv("XDG_CACHE_HOME", tmpDir)
+	t.Setenv("HOME", tmpDir)
+
+	configDir := filepath.Join(tmpDir, "mavor")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(configDir, "config.toml")
+	customContent := "model = \"whisper-tiny.en\"\n"
+	if err := os.WriteFile(cfgPath, []byte(customContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	modelDir := filepath.Join(tmpDir, "mavor", "models")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stubInstalledModels(t, modelDir)
+
+	_ = execCLIErr(t, "doctor", "--fix")
+
+	gotContent, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	if string(gotContent) != customContent {
+		t.Fatalf("doctor --fix overwrote existing config:\ngot:\n%s\nwant:\n%s", string(gotContent), customContent)
+	}
+}

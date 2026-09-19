@@ -38,7 +38,7 @@ func newDoctorCmd() *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if fix {
-				return runSetup(true)
+				return runSetup(false)
 			}
 			return runDoctor()
 		},
