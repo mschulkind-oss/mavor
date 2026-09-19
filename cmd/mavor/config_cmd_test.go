@@ -81,6 +81,7 @@ func TestTemplateExamplesStateTheDefaults(t *testing.T) {
 		"boost = 1.5",
 		`placement = "auto"`,
 		`gpu = "auto"`,
+		`chunking = "auto"`,
 		`driver = "paste"`,
 		`paste_chord = "shift+insert"`,
 		"restore_selection = true",

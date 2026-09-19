@@ -345,7 +345,7 @@ func whisperArgv(t *testing.T, cfg config.Config) []string {
 	if err != nil {
 		t.Fatalf("Factory: %v", err)
 	}
-	cli, ok := tr.(*WhisperCli)
+	cli, ok := Unwrap(tr).(*WhisperCli)
 	if !ok {
 		t.Fatalf("Factory returned %T, want *WhisperCli", tr)
 	}
@@ -393,7 +393,7 @@ func TestSupervisedServerCarriesThePrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Factory: %v", err)
 	}
-	st, ok := tr.(*ServerTranscriber)
+	st, ok := Unwrap(tr).(*ServerTranscriber)
 	if !ok {
 		t.Fatalf("Factory returned %T, want *ServerTranscriber", tr)
 	}

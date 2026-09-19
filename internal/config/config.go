@@ -50,6 +50,8 @@ const (
 	DefaultOutputDriver     = "paste"
 	DefaultPasteChord       = "shift+insert"
 	DefaultRestoreSelection = true
+
+	DefaultChunking = "auto"
 )
 
 // Config is the whole configuration. Field order follows the scaffolded file.
@@ -294,6 +296,12 @@ type Advanced struct {
 	// reports which backend actually loaded, which is the only reliable
 	// answer.
 	GPU string `toml:"gpu"`
+
+	// Chunking controls audio segmentation for models with a hard processing
+	// window (such as whisper's 30-second context window). Audio longer than
+	// 28s is segmented to avoid truncation and dropped speech at boundaries.
+	// Options: "auto" (or "hybrid"), "vad", "overlap", or "off".
+	Chunking string `toml:"chunking"`
 }
 
 // Paths is where mavor keeps its files.
@@ -356,6 +364,7 @@ func Default() Config {
 			Placement: "auto",
 			Threads:   PhysicalCores(),
 			GPU:       "auto",
+			Chunking:  DefaultChunking,
 		},
 		Paths: Paths{
 			Models: defaultModelDir(),
@@ -436,6 +445,9 @@ func (c *Config) Resolve() {
 	}
 	if c.Advanced.GPU == "" {
 		c.Advanced.GPU = "auto"
+	}
+	if c.Advanced.Chunking == "" {
+		c.Advanced.Chunking = DefaultChunking
 	}
 	if c.Advanced.Threads <= 0 {
 		c.Advanced.Threads = PhysicalCores()

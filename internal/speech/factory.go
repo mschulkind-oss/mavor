@@ -165,14 +165,14 @@ func FactoryFor(cfg config.Config, res Resolution, logger *slog.Logger) (Transcr
 		cli.NoGPU = cfg.GPUOff()
 		cli.Prompt = prompt
 		cli.Logger = logger
-		return cli, nil
+		return WrapChunking(cli, cfg.Advanced.Chunking, logger), nil
 
 	case models.PlacementRemote:
 		st := NewServerTranscriber(res.Server)
 		st.Model = cfg.Model
 		st.Prompt = prompt
 		st.Logger = logger
-		return st, nil
+		return WrapChunking(st, cfg.Advanced.Chunking, logger), nil
 
 	case models.PlacementLocalServer:
 		// There is no endpoint to configure: mavor starts the child and the
@@ -192,7 +192,7 @@ func FactoryFor(cfg config.Config, res Resolution, logger *slog.Logger) (Transcr
 			Prompt: prompt,
 			Logger: logger,
 		})
-		return st, nil
+		return WrapChunking(st, cfg.Advanced.Chunking, logger), nil
 
 	default:
 		return newSherpaTranscriber(cfg, logger)

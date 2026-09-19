@@ -141,6 +141,8 @@ preview_width = %v
 # threads = %-12d # default: this machine's physical core count
 # gpu = %q           # "auto" or "off". whisper only — sherpa models
 #                        # run on the CPU whatever this says.
+# chunking = %q      # "auto", "vad", "overlap", or "off". whisper only —
+#                        # segments audio >28s to avoid 30s window truncation.
 
 [paths]
 # models = %q
@@ -169,6 +171,7 @@ preview_width = %v
 		d.Advanced.Placement,
 		d.Advanced.Threads,
 		d.Advanced.GPU,
+		d.Advanced.Chunking,
 		d.Paths.Models,
 		d.Paths.Log,
 		d.Paths.Socket,

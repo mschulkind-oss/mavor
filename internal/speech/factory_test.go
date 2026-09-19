@@ -58,7 +58,7 @@ func TestWhisperModelDefaultsToASupervisedWarmServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FactoryFor: %v", err)
 	}
-	st, ok := transcriber.(*ServerTranscriber)
+	st, ok := Unwrap(transcriber).(*ServerTranscriber)
 	if !ok {
 		t.Fatalf("got %T, want *ServerTranscriber", transcriber)
 	}
@@ -117,7 +117,7 @@ func TestSubprocessPlacementBuildsTheCLI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Factory: %v", err)
 	}
-	cli, ok := transcriber.(*WhisperCli)
+	cli, ok := Unwrap(transcriber).(*WhisperCli)
 	if !ok {
 		t.Fatalf("got %T, want *WhisperCli", transcriber)
 	}
@@ -185,7 +185,7 @@ func TestServerURLMakesThePlacementRemote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FactoryFor: %v", err)
 	}
-	st, ok := transcriber.(*ServerTranscriber)
+	st, ok := Unwrap(transcriber).(*ServerTranscriber)
 	if !ok {
 		t.Fatalf("got %T, want *ServerTranscriber", transcriber)
 	}
@@ -207,7 +207,7 @@ func TestGPUOffReachesBothWhisperPlacements(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cli.(*WhisperCli).NoGPU {
+	if !Unwrap(cli).(*WhisperCli).NoGPU {
 		t.Error("whisper-cli NoGPU = false with gpu = \"off\", want true")
 	}
 
@@ -216,7 +216,7 @@ func TestGPUOffReachesBothWhisperPlacements(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !srv.(*ServerTranscriber).Supervisor.cfg.NoGPU {
+	if !Unwrap(srv).(*ServerTranscriber).Supervisor.cfg.NoGPU {
 		t.Error("supervisor NoGPU = false with gpu = \"off\", want true")
 	}
 }
@@ -230,7 +230,7 @@ func TestGPUAutoLeavesGPUEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if transcriber.(*WhisperCli).NoGPU {
+	if Unwrap(transcriber).(*WhisperCli).NoGPU {
 		t.Error("NoGPU = true with gpu = \"auto\", want false")
 	}
 }
@@ -388,4 +388,28 @@ func sherpaTransducerDir(t *testing.T) string {
 		}
 	}
 	return dir
+}
+
+func TestWhisperChunkingConfiguredByFactory(t *testing.T) {
+	cfg := whisperConfig(t, "whisper-base.en")
+	cfg.Advanced.Placement = "subprocess"
+
+	// Default "auto": wrapped in ChunkingTranscriber
+	tx, err := Factory(cfg, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := tx.(*ChunkingTranscriber); !ok {
+		t.Errorf("expected *ChunkingTranscriber by default, got %T", tx)
+	}
+
+	// Explicit "off": unwrapped WhisperCli
+	cfg.Advanced.Chunking = "off"
+	txOff, err := Factory(cfg, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := txOff.(*WhisperCli); !ok {
+		t.Errorf("expected *WhisperCli when chunking is off, got %T", txOff)
+	}
 }
