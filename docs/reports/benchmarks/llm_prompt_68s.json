@@ -1,0 +1,1440 @@
+{
+  "machine": {
+    "timestamp": "2026-09-18T22:55:24.625805726Z",
+    "hostname": "03c9740bb728",
+    "os": "linux",
+    "arch": "amd64",
+    "cpu_model": "Intel(R) Core(TM) i7-8700K CPU @ 3.70GHz",
+    "cpu_logical_cores": 12,
+    "mem_total_kb": 65760792,
+    "gpu_name": "AMD Radeon RX 9060 XT (RADV GFX1200)",
+    "gpu_driver": "radv",
+    "vulkan_api_version": "1.4.354",
+    "mavor_commit": "adf02a3",
+    "go_version": "go1.26.3",
+    "load_before": 5.84,
+    "load_after": 12.59
+  },
+  "audio": "test/fixtures/llm_prompt_68s.wav",
+  "audio_seconds": 67.8646875,
+  "reference_transcript": "Alright, here is a new benchmark sample for benchmarking Mavor. So I want you to look at the repository structure for Mavor, particularly under internal/speech and internal/output. We need to check how the ZWP virtual keyboard V1 interacts with the Wayland compositor. Actually wait before you do that, let's verify if PAREC is dropping any buffers when PipeWire is under load. Run just check CI with the integration tag enabled to see if swaymsg reports any unhandled XKB keycodes. I'm stepping away from the desk now, but make sure the JSONL history log records, uh records every turn without truncation or déjà vu repetition loops. If the gopls language server throws an error in the container, fall back to ripgrep with rg -n and give me a summary of what broke.",
+  "runs_per_cell": 3,
+  "threads": 6,
+  "model_dir": "/home/agent/.cache/mavor/models",
+  "stream_chunk_ms": 30,
+  "whisper_cpu_backends": [
+    "CPU"
+  ],
+  "whisper_gpu_backends": [
+    "Vulkan"
+  ],
+  "results": [
+    {
+      "model": "whisper-tiny",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "stock",
+        "binary": "whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 2897.195706,
+      "rtf": 0.04269076912790617,
+      "peak_rss_kb": 274792,
+      "transcript": "All right, here is a new benchmark sample for benchmarking mavor. So I want you to look at the repository structure for mavor, particularly under internal slash speech and internal slash output. We need to check how the ZWP virtual keyboard V1 interacts with the waylin compositor. Actually, wait, before you do that, let's\nverify if Parac is dropping any buffers when pipe wire is under load. Run just check CI with the integration tag enabled to see if sway message reports any unhandle XKB key codes. I'm stepping away from the desk now. Make sure the JSON L history log records records every turn without truncation or deja vu repetition loops. If the go PLS language server throws an error in the container, fall back to rip grep with the\nRG-N and give me a summary of what broke.",
+      "wer": 0.17293233082706766,
+      "cer": 0.05452127659574468,
+      "punctuation_density": 0.12142857142857143,
+      "capitalization_f1": 0.6285714285714287
+    },
+    {
+      "model": "whisper-tiny",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 3289.190092,
+      "rtf": 0.048466886287511446,
+      "peak_rss_kb": 299680,
+      "transcript": "All right, here is a new benchmark sample for benchmarking mavor. So I want you to look at the repository structure for mavor, particularly under internal slash speech and internal slash output. We need to check how the ZWP virtual keyboard V1 interacts with the waylin compositor. Actually, wait, before you do that, let's\nverify if Parac is dropping any buffers when pipe wire is under load. Run just check CI with the integration tag enabled to see if sway message reports any unhandle XKB key codes. I'm stepping away from the desk now. Make sure the JSON L history log records records every turn without truncation or deja vu repetition loops. If the go PLS language server throws an error in the container, fall back to rip grep with the\nRG-N and give me a summary of what broke.",
+      "wer": 0.17293233082706766,
+      "cer": 0.05452127659574468,
+      "punctuation_density": 0.12142857142857143,
+      "capitalization_f1": 0.6285714285714287
+    },
+    {
+      "model": "whisper-tiny",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "gpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 1012.534514,
+      "rtf": 0.01491990240137774,
+      "peak_rss_kb": 135248,
+      "transcript": "All right, here is a new benchmark sample for benchmarking mavor. So I want you to look at the repository structure for mavor, particularly under internal slash speech and internal slash output. We need to check how the ZWP virtual keyboard V1 interacts with the waylin compositor. Actually, wait, before you do that, let's\nverify if Parac is dropping any buffers when pipe wire is under load. Run just check CI with the integration tag enabled to see if sway message reports any unhandled XKB key codes. I'm stepping away from the desk now. Make sure the JSON L history log records records every turn without truncation or deja vu repetition loops. If the go PLS language server throws an error in the container, fall back to rip grep with the\nRG-N and give me a summary of what broke.",
+      "wer": 0.16541353383458646,
+      "cer": 0.05319148936170213,
+      "punctuation_density": 0.12142857142857143,
+      "capitalization_f1": 0.6285714285714287
+    },
+    {
+      "model": "whisper-tiny.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "stock",
+        "binary": "whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 2446.312129,
+      "rtf": 0.03604690773828436,
+      "peak_rss_kb": 269720,
+      "transcript": "All right, here is a new benchmark sample for benchmarking mavor. So I want you to look at the repository structure for mavor, particularly under internal slash speech and internal slash output. We need to check how the ZWP virtual keyboard V1 interacts with the Wayland compositor. Actually, wait, before you do that, let's\nverify if parak is dropping any buffers when pipe wire is under load run, just check CI with the integration tag enabled to see if sway message reports any on handle xkb key codes. I'm stepping away from the desk now, make sure the Json L history log records records every turn without truncation or deja vu repetition loops. If the go PLS language server throws an error in the container fall back to regret with\nrg dash and and give me a summary of what broke.",
+      "wer": 0.17293233082706766,
+      "cer": 0.0625,
+      "punctuation_density": 0.10638297872340426,
+      "capitalization_f1": 0.6451612903225806
+    },
+    {
+      "model": "whisper-tiny.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 2288.748709,
+      "rtf": 0.03372517863579642,
+      "peak_rss_kb": 296180,
+      "transcript": "All right, here is a new benchmark sample for benchmarking mavor. So I want you to look at the repository structure for mavor, particularly under internal slash speech and internal slash output. We need to check how the ZWP virtual keyboard V1 interacts with the Wayland compositor. Actually, wait, before you do that, let's\nverify if parak is dropping any buffers when pipe wire is under load run, just check CI with the integration tag enabled to see if sway message reports any on handle xkb key codes. I'm stepping away from the desk now, make sure the Json L history log records records every turn without truncation or deja vu repetition loops. If the go PLS language server throws an error in the container fall back to regret with\nrg dash and and give me a summary of what broke.",
+      "wer": 0.17293233082706766,
+      "cer": 0.0625,
+      "punctuation_density": 0.10638297872340426,
+      "capitalization_f1": 0.6451612903225806
+    },
+    {
+      "model": "whisper-tiny.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "gpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 951.325889,
+      "rtf": 0.014017980838709379,
+      "peak_rss_kb": 135556,
+      "transcript": "All right, here is a new benchmark sample for benchmarking mavor. So I want you to look at the repository structure for mavor, particularly under internal slash speech and internal slash output. We need to check how the ZWP virtual keyboard V1 interacts with the Wayland compositor. Actually, wait, before you do that, let's\nverify if parak is dropping any buffers when pipe wire is under load run, just check CI with the integration tag enabled to see if sway message reports any on handle xkb key codes. I'm stepping away from the desk now, make sure the Json L history log records records every turn without truncation or deja vu repetition loops. If the go PLS language server throws an error in the container fall back to regret with\nrg dash and and give me a summary of what broke.",
+      "wer": 0.17293233082706766,
+      "cer": 0.0625,
+      "punctuation_density": 0.10638297872340426,
+      "capitalization_f1": 0.6451612903225806
+    },
+    {
+      "model": "whisper-base",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "stock",
+        "binary": "whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 4315.51476,
+      "rtf": 0.06358998941828178,
+      "peak_rss_kb": 388008,
+      "transcript": "All right. Here is a new benchmark sample for benchmarking Mavore. So I want you to look at the repository structure for Mavore, particularly under internal/speech and internal/output. We need to check how the ZWP Virtual Keyboard V1 interacts with the Wayland compositor. Actually, wait. Before you do that, let's\nverify if Parac is dropping any buffers when pipe wire is under load. Run just check CI with the integration tag enabled to see if Sway message reports any unhandled XKB key codes. I'm stepping away from the desk now. Make sure the JSON L history log records records every turn without truncation or deja vu repetition loops. If the go PLS language server throws an error in the container, fall back to ripgrap with\nrg-n and give me a summary of what broke.",
+      "wer": 0.14285714285714285,
+      "cer": 0.031914893617021274,
+      "punctuation_density": 0.1417910447761194,
+      "capitalization_f1": 0.5853658536585366
+    },
+    {
+      "model": "whisper-base",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 4143.41688,
+      "rtf": 0.061054092085814145,
+      "peak_rss_kb": 413368,
+      "transcript": "All right. Here is a new benchmark sample for benchmarking Mavore. So I want you to look at the repository structure for Mavore, particularly under internal/speech and internal/output. We need to check how the ZWP Virtual Keyboard V1 interacts with the Wayland compositor. Actually, wait. Before you do that, let's\nverify if Parac is dropping any buffers when pipe wire is under load. Run just check CI with the integration tag enabled to see if Sway message reports any unhandled XKB key codes. I'm stepping away from the desk now. Make sure the JSON L history log records records every turn without truncation or deja vu repetition loops. If the go PLS language server throws an error in the container, fall back to ripgrap with\nrg-n and give me a summary of what broke.",
+      "wer": 0.14285714285714285,
+      "cer": 0.031914893617021274,
+      "punctuation_density": 0.1417910447761194,
+      "capitalization_f1": 0.5853658536585366
+    },
+    {
+      "model": "whisper-base",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "gpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 1058.203108,
+      "rtf": 0.015592838440462867,
+      "peak_rss_kb": 141560,
+      "transcript": "All right. Here is a new benchmark sample for benchmarking Mavore. So I want you to look at the repository structure for Mavore, particularly under internal/speech and internal/output. We need to check how the ZWP Virtual Keyboard V1 interacts with the Wayland compositor. Actually, wait. Before you do that, let's\nverify if Parac is dropping any buffers when pipe wire is under load. Run just check CI with the integration tag enabled to see if sway message reports any unhandled XKB key codes. I'm stepping away from the desk now, but make sure the JSON L history log records records every turn without truncation or deja vu repetition loops. If the go PLS language server throws an error in the container, fall back to rip grip with\nrg-n and give me a summary of what broke.",
+      "wer": 0.14285714285714285,
+      "cer": 0.027925531914893616,
+      "punctuation_density": 0.13970588235294118,
+      "capitalization_f1": 0.6153846153846153
+    },
+    {
+      "model": "whisper-base.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "stock",
+        "binary": "whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 4088.947547,
+      "rtf": 0.0602514753641207,
+      "peak_rss_kb": 383016,
+      "transcript": "Alright, here is a new benchmark sample for benchmarking Mavor. So I want you to look at the repository structure for Mavor, particularly under internal/speech and internal/output. We need to check how the ZWP virtual keyboard V1 interacts with the Wayland compositor. Actually, wait, before you do that,\nIf Parach is dropping any buffers when Pipewire is under load, run just check CI with the integration tag enabled to see if Sway message reports any unhandled XKB key codes. I'm stepping away from the desk now, make sure the JSON L history log records records every turn without truncation or deja vu repetition loops. If the go PLS language server throws an error in the container, fall back to ripgrap with\nRg-N and give me a summary of what broke.",
+      "wer": 0.11278195488721804,
+      "cer": 0.043882978723404256,
+      "punctuation_density": 0.13846153846153847,
+      "capitalization_f1": 0.7567567567567567
+    },
+    {
+      "model": "whisper-base.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 3626.434541,
+      "rtf": 0.053436251968300895,
+      "peak_rss_kb": 407624,
+      "transcript": "Alright, here is a new benchmark sample for benchmarking Mavor. So I want you to look at the repository structure for Mavor, particularly under internal/speech and internal/output. We need to check how the ZWP virtual keyboard V1 interacts with the Wayland compositor. Actually, wait, before you do that,\nIf Parach is dropping any buffers when Pipewire is under load, run just check CI with the integration tag enabled to see if Sway message reports any unhandled XKB key codes. I'm stepping away from the desk now, make sure the JSON L history log records records every turn without truncation or deja vu repetition loops. If the go PLS language server throws an error in the container, fall back to ripgrap with\nRg-N and give me a summary of what broke.",
+      "wer": 0.11278195488721804,
+      "cer": 0.043882978723404256,
+      "punctuation_density": 0.13846153846153847,
+      "capitalization_f1": 0.7567567567567567
+    },
+    {
+      "model": "whisper-base.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "gpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 999.175782,
+      "rtf": 0.014723058763071737,
+      "peak_rss_kb": 134856,
+      "transcript": "Alright, here is a new benchmark sample for benchmarking Mavor. So I want you to look at the repository structure for Mavor, particularly under internal/speech and internal/output. We need to check how the ZWP virtual keyboard V1 interacts with the Wayland compositor. Actually, wait, before you do that,\nIf Parach is dropping any buffers when Pipewire is under load, run just check CI with the integration tag enabled to see if Sway message reports any unhandled XKB key codes. I'm stepping away from the desk now, make sure the JSON L history log records records every turn without truncation or deja vu repetition loops. If the go PLS language server throws an error in the container, fall back to ripgrap with\nRg-N and give me a summary of what broke.",
+      "wer": 0.11278195488721804,
+      "cer": 0.043882978723404256,
+      "punctuation_density": 0.13846153846153847,
+      "capitalization_f1": 0.7567567567567567
+    },
+    {
+      "model": "whisper-small",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "stock",
+        "binary": "whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 11767.888858,
+      "rtf": 0.17340224042142682,
+      "peak_rss_kb": 863188,
+      "transcript": "All right, here is a new benchmark sample for benchmarking Maivor. So I want you to look at the repository structure for Maivor, particularly under internal slash speech and internal slash output. We need to check how the ZWP virtual keyboard V1 interacts with the Weyland compositor. Actually, wait, before you do that,\nverify if PAREC is dropping any buffers when pipe wire is under load. Run just check CI with the integration tag enabled to see if sway message reports any unhandled XKB key codes. I'm stepping away from the desk now, but make sure the JSON L history log records records every turn without truncation or deja vu repetition loops. If the go PLS language server throws an error in the container, fall back to ripgrap with\nRG dash N and give me a summary of what broke.",
+      "wer": 0.16541353383458646,
+      "cer": 0.057180851063829786,
+      "punctuation_density": 0.10714285714285714,
+      "capitalization_f1": 0.6486486486486486
+    },
+    {
+      "model": "whisper-small",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 11461.0416,
+      "rtf": 0.16888078354446118,
+      "peak_rss_kb": 889684,
+      "transcript": "All right, here is a new benchmark sample for benchmarking Maivor. So I want you to look at the repository structure for Maivor, particularly under internal slash speech and internal slash output. We need to check how the ZWP virtual keyboard V1 interacts with the Weyland compositor. Actually, wait, before you do that,\nverify if PAREC is dropping any buffers when pipe wire is under load. Run just check CI with the integration tag enabled to see if sway message reports any unhandled XKB key codes. I'm stepping away from the desk now, but make sure the JSON L history log records records every turn without truncation or deja vu repetition loops. If the go PLS language server throws an error in the container, fall back to ripgrap with\nRG dash N and give me a summary of what broke.",
+      "wer": 0.16541353383458646,
+      "cer": 0.057180851063829786,
+      "punctuation_density": 0.10714285714285714,
+      "capitalization_f1": 0.6486486486486486
+    },
+    {
+      "model": "whisper-small",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "gpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 1607.863787,
+      "rtf": 0.023692200557174893,
+      "peak_rss_kb": 148784,
+      "transcript": "All right, here is a new benchmark sample for benchmarking Maivor. So I want you to look at the repository structure for Maivor, particularly under internal slash speech and internal slash output. We need to check how the ZWP virtual keyboard V1 interacts with the Weyland compositor. Actually, wait, before you do that,\nverify if PAREC is dropping any buffers when pipe wire is under load. Run just check CI with the integration tag enabled to see if sway message reports any unhandled XKB key codes. I'm stepping away from the desk now, but make sure the JSON L history log records records every turn without truncation or deja vu repetition loops. If the go PLS language server throws an error in the container, fall back to ripgrap with\nRG dash N and give me a summary of what broke.",
+      "wer": 0.16541353383458646,
+      "cer": 0.057180851063829786,
+      "punctuation_density": 0.10714285714285714,
+      "capitalization_f1": 0.6486486486486486
+    },
+    {
+      "model": "whisper-small.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "stock",
+        "binary": "whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 11976.494213,
+      "rtf": 0.17647608283763186,
+      "peak_rss_kb": 860996,
+      "transcript": "All right, here is a new benchmark sample for benchmarking Mavor. So I want you to look at the repository structure for Mavor, particularly under internal slash speech and internal slash output. We need to check how the ZWP virtual keyboard V1 interacts with the Weyland compositor. Actually, wait, before you do that,\nverify if Parack is dropping any buffers when pipewire is under load. Run just check CI with the integration tag enabled to see if Sway message reports any unhandled XKB key codes. I'm stepping away from the desk now, make sure the JSON L history log records records every turn without truncation or deja vu repetition loops. If the go PLS language server throws an error in the container, fall back to rip\nRG dash N and give me a summary of what broke.",
+      "wer": 0.15789473684210525,
+      "cer": 0.06515957446808511,
+      "punctuation_density": 0.10948905109489052,
+      "capitalization_f1": 0.6315789473684211
+    },
+    {
+      "model": "whisper-small.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 11656.745335,
+      "rtf": 0.17176451796083197,
+      "peak_rss_kb": 885096,
+      "transcript": "All right, here is a new benchmark sample for benchmarking Mavor. So I want you to look at the repository structure for Mavor, particularly under internal slash speech and internal slash output. We need to check how the ZWP virtual keyboard V1 interacts with the Weyland compositor. Actually, wait, before you do that,\nverify if Parack is dropping any buffers when pipewire is under load. Run just check CI with the integration tag enabled to see if Sway message reports any unhandled XKB key codes. I'm stepping away from the desk now, make sure the JSON L history log records records every turn without truncation or deja vu repetition loops. If the go PLS language server throws an error in the container, fall back to rip\nRG dash N and give me a summary of what broke.",
+      "wer": 0.15789473684210525,
+      "cer": 0.06515957446808511,
+      "punctuation_density": 0.10948905109489052,
+      "capitalization_f1": 0.6315789473684211
+    },
+    {
+      "model": "whisper-small.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "gpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 1568.902611,
+      "rtf": 0.023118099689179293,
+      "peak_rss_kb": 148812,
+      "transcript": "All right, here is a new benchmark sample for benchmarking Mavor. So I want you to look at the repository structure for Mavor, particularly under internal slash speech and internal slash output. We need to check how the ZWP virtual keyboard V1 interacts with the Weyland compositor. Actually, wait, before you do that,\nverify if Parack is dropping any buffers when pipewire is under load. Run just check CI with the integration tag enabled to see if Sway message reports any unhandled XKB key codes. I'm stepping away from the desk now, make sure the JSON L history log records records every turn without truncation or deja vu repetition loops. If the go PLS language server throws an error in the container, fall back to rip\nRG dash N and give me a summary of what broke.",
+      "wer": 0.15789473684210525,
+      "cer": 0.06515957446808511,
+      "punctuation_density": 0.10948905109489052,
+      "capitalization_f1": 0.6315789473684211
+    },
+    {
+      "model": "whisper-medium",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "stock",
+        "binary": "whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 32844.369758,
+      "rtf": 0.4839684815169892,
+      "peak_rss_kb": 2188020,
+      "transcript": "All right, here is a new benchmark sample for benchmarking MAVOR. So I want you to look at the repository structure for MAVOR, particularly under internal/speech and internal/output. We need to check how the ZWP virtual keyboard V1 interacts with the Wayland compositor.\nI'm stepping away from the desk now, but make sure the JSONL history log records every turn without truncation or deja vu repetition loops.\nRG dash N and give me a summary of what broke.",
+      "wer": 0.44360902255639095,
+      "cer": 0.41356382978723405,
+      "punctuation_density": 0.14102564102564102,
+      "capitalization_f1": 0.6206896551724139
+    },
+    {
+      "model": "whisper-medium",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 30716.749469,
+      "rtf": 0.4526175629851681,
+      "peak_rss_kb": 2212712,
+      "transcript": "All right, here is a new benchmark sample for benchmarking MAVOR. So I want you to look at the repository structure for MAVOR, particularly under internal/speech and internal/output. We need to check how the ZWP virtual keyboard V1 interacts with the Wayland compositor.\nI'm stepping away from the desk now, but make sure the JSONL history log records every turn without truncation or deja vu repetition loops.\nRG dash N and give me a summary of what broke.",
+      "wer": 0.44360902255639095,
+      "cer": 0.41356382978723405,
+      "punctuation_density": 0.14102564102564102,
+      "capitalization_f1": 0.6206896551724139
+    },
+    {
+      "model": "whisper-medium",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "gpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 7978.501833,
+      "rtf": 0.11756485039439693,
+      "peak_rss_kb": 176456,
+      "transcript": "All right, here is a new benchmark sample for benchmarking MAVOR. So I want you to look at the repository structure for MAVOR, particularly under internal/speech and internal/output. We need to check how the ZWP virtual keyboard V1 interacts with the Wayland compositor.\nI'm stepping away from the desk now, but make sure the JSONL history log records every turn without truncation or deja vu repetition loops.\nRG dash N and give me a summary of what broke.",
+      "wer": 0.44360902255639095,
+      "cer": 0.41356382978723405,
+      "punctuation_density": 0.14102564102564102,
+      "capitalization_f1": 0.6206896551724139
+    },
+    {
+      "model": "whisper-medium.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "stock",
+        "binary": "whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 38088.557261,
+      "rtf": 0.5612426530513384,
+      "peak_rss_kb": 2213808,
+      "transcript": "All right, here is a new benchmark sample for benchmarking Mavor. So I want you to look at the repository structure for Mavor, particularly under internal/speech and internal/output. We need to check how the ZWP virtual keyboard V1 interacts with the Wayland compositor. Actually, wait, before you do that,\nverify if Parek is dropping any buffers when pipewire is under load. Run just check CI with the integration tag enabled to see if SwayMessage reports any unhandled XKB key codes. I'm stepping away from the desk now. Make sure the JSON-L history log records records every turn without truncation or deja vu repetition loops. If the Go PLS language server throws an error in the container, fall back to rip grep with\nRG-N and give me a summary of what broke.",
+      "wer": 0.12030075187969924,
+      "cer": 0.034574468085106384,
+      "punctuation_density": 0.1450381679389313,
+      "capitalization_f1": 0.6842105263157895
+    },
+    {
+      "model": "whisper-medium.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 35362.185622,
+      "rtf": 0.521069011361763,
+      "peak_rss_kb": 2240944,
+      "transcript": "All right, here is a new benchmark sample for benchmarking Mavor. So I want you to look at the repository structure for Mavor, particularly under internal/speech and internal/output. We need to check how the ZWP virtual keyboard V1 interacts with the Wayland compositor. Actually, wait, before you do that,\nverify if Parek is dropping any buffers when pipewire is under load. Run just check CI with the integration tag enabled to see if SwayMessage reports any unhandled XKB key codes. I'm stepping away from the desk now. Make sure the JSON-L history log records records every turn without truncation or deja vu repetition loops. If the Go PLS language server throws an error in the container, fall back to rip grep with\nRG-N and give me a summary of what broke.",
+      "wer": 0.12030075187969924,
+      "cer": 0.034574468085106384,
+      "punctuation_density": 0.1450381679389313,
+      "capitalization_f1": 0.6842105263157895
+    },
+    {
+      "model": "whisper-medium.en",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "gpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 11534.037979,
+      "rtf": 0.16995640006446652,
+      "peak_rss_kb": 176572,
+      "transcript": "All right, here is a new benchmark sample for benchmarking Mavor. So I want you to look at the repository structure for Mavor, particularly under internal/speech and internal/output. We need to check how the ZWP virtual keyboard V1 interacts with the Wayland compositor. Actually, wait, before you do that,\nverify if Parek is dropping any buffers when pipewire is under load. Run just check CI with the integration tag enabled to see if SwayMessage reports any unhandled XKB key codes. I'm stepping away from the desk now. Make sure the JSON-L history log records records every turn without truncation or deja vu repetition loops. If the Go PLS language server throws an error in the container, fall back to rip grep with\nRG-N and give me a summary of what broke.",
+      "wer": 0.12030075187969924,
+      "cer": 0.034574468085106384,
+      "punctuation_density": 0.1450381679389313,
+      "capitalization_f1": 0.6842105263157895
+    },
+    {
+      "model": "whisper-large-v3",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "stock",
+        "binary": "whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 75613.111822,
+      "rtf": 1.114174611383866,
+      "peak_rss_kb": 4094700,
+      "transcript": "All right, here is a new benchmark sample for benchmarking Mavor. So I want you to look at the repository structure for Mavor, particularly under internal slash speech and internal slash output. We need to check how the ZWP virtual keyboard V1 interacts with the Wayland compositor. Actually, wait, before you do that,\nverify if Parac is dropping any buffers when Pipewire is under load. Run just check CI with the integration tag enabled to see if Sway message reports any unhandled XKB key codes. I'm stepping away from the desk now, but make sure the JSONL history log records every turn without truncation or deja vu repetition loops. If the Go PLS language server throws an error in the container, fall back to RipGrep with\nRG-N and give me a summary of what broke.",
+      "wer": 0.11278195488721804,
+      "cer": 0.05452127659574468,
+      "punctuation_density": 0.11851851851851852,
+      "capitalization_f1": 0.7692307692307693
+    },
+    {
+      "model": "whisper-large-v3",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 67281.089456,
+      "rtf": 0.991400563894146,
+      "peak_rss_kb": 4120260,
+      "transcript": "All right, here is a new benchmark sample for benchmarking Mavor. So I want you to look at the repository structure for Mavor, particularly under internal slash speech and internal slash output. We need to check how the ZWP virtual keyboard V1 interacts with the Wayland compositor. Actually, wait, before you do that,\nverify if Parac is dropping any buffers when Pipewire is under load. Run just check CI with the integration tag enabled to see if Sway message reports any unhandled XKB key codes. I'm stepping away from the desk now, but make sure the JSONL history log records every turn without truncation or deja vu repetition loops. If the Go PLS language server throws an error in the container, fall back to RipGrep with\nRG-N and give me a summary of what broke.",
+      "wer": 0.11278195488721804,
+      "cer": 0.05452127659574468,
+      "punctuation_density": 0.11851851851851852,
+      "capitalization_f1": 0.7692307692307693
+    },
+    {
+      "model": "whisper-large-v3",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "gpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 34525.976003,
+      "rtf": 0.5087472922202729,
+      "peak_rss_kb": 209172,
+      "transcript": "All right, here is a new benchmark sample for benchmarking Mavor. So I want you to look at the repository structure for Mavor, particularly under internal slash speech and internal slash output. We need to check how the ZWP virtual keyboard V1 interacts with the Wayland compositor. Actually, wait, before you do that,\nverify if Parac is dropping any buffers when Pipewire is under load. Run just check CI with the integration tag enabled to see if Sway message reports any unhandled XKB key codes. I'm stepping away from the desk now, but make sure the JSONL history log records every turn without truncation or deja vu repetition loops. If the Go PLS language server throws an error in the container, fall back to RipGrep with\nRG-N and give me a summary of what broke.",
+      "wer": 0.11278195488721804,
+      "cer": 0.05452127659574468,
+      "punctuation_density": 0.11851851851851852,
+      "capitalization_f1": 0.7692307692307693
+    },
+    {
+      "model": "whisper-large-v3-turbo",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "stock",
+        "binary": "whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 45575.754341,
+      "rtf": 0.6715680277905943,
+      "peak_rss_kb": 1931644,
+      "transcript": "All right, here is a new benchmark sample for benchmarking Mavor. So I want you to look at the repository structure for Mavor, particularly under internal slash speech and internal slash output. We need to check how the ZWP virtual keyboard V1 interacts with the Wayland compositor.\nVerify if parec is dropping any buffers when pipewire is under load. Run just check CI with the integration tag enabled to see if SwayMessage reports any unhandled XKB keycodes. I'm stepping away from the desk now, but make sure the JSON-L history log records records every turn without truncation or deja vu repetition loops.\nRG dash N and give me a summary of what broke.",
+      "wer": 0.24812030075187969,
+      "cer": 0.19680851063829788,
+      "punctuation_density": 0.10619469026548672,
+      "capitalization_f1": 0.6470588235294118
+    },
+    {
+      "model": "whisper-large-v3-turbo",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 41964.245486,
+      "rtf": 0.6183517088471084,
+      "peak_rss_kb": 1955836,
+      "transcript": "All right, here is a new benchmark sample for benchmarking Mavor. So I want you to look at the repository structure for Mavor, particularly under internal slash speech and internal slash output. We need to check how the ZWP virtual keyboard V1 interacts with the Wayland compositor.\nVerify if parec is dropping any buffers when pipewire is under load. Run just check CI with the integration tag enabled to see if SwayMessage reports any unhandled XKB keycodes. I'm stepping away from the desk now, but make sure the JSON-L history log records records every turn without truncation or deja vu repetition loops.\nRG dash N and give me a summary of what broke.",
+      "wer": 0.24812030075187969,
+      "cer": 0.19680851063829788,
+      "punctuation_density": 0.10619469026548672,
+      "capitalization_f1": 0.6470588235294118
+    },
+    {
+      "model": "whisper-large-v3-turbo",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "gpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 6838.023588,
+      "rtf": 0.10075967104394315,
+      "peak_rss_kb": 208912,
+      "transcript": "All right, here is a new benchmark sample for benchmarking Mavor. So I want you to look at the repository structure for Mavor, particularly under internal slash speech and internal slash output. We need to check how the ZWP virtual keyboard V1 interacts with the Wayland compositor.\nVerify if parec is dropping any buffers when pipewire is under load. Run just check CI with the integration tag enabled to see if SwayMessage reports any unhandled XKB keycodes. I'm stepping away from the desk now, but make sure the JSONL history log records records every turn without truncation or deja vu repetition loops.\nRG dash N and give me a summary of what broke.",
+      "wer": 0.23308270676691728,
+      "cer": 0.19547872340425532,
+      "punctuation_density": 0.09734513274336283,
+      "capitalization_f1": 0.7058823529411765
+    },
+    {
+      "model": "whisper-distil-large-v3",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "stock",
+        "binary": "whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 45204.898084,
+      "rtf": 0.6661033852694009,
+      "peak_rss_kb": 1789512,
+      "transcript": "All right, here is a new benchmark sample for benchmarking MAVOR. So I want you to look at the repository structure for MAVOR, particularly under internal slash speech and internal slash output. We need to check how the ZWP Virtual Keyboard V1 interacts with the Wayland Compositor. Actually, wait, before you do that,\nverify if PARAC is dropping any buffers when pipewire is under load. Run, just check CI with the integration tag enabled to see if Sway message reports any unhandled XKB key codes. I'm stepping away from the desk now, but make sure the JSON-L history log records records every turn without truncation or deja vu repetition loops. If the Go PLS language server throws an error in the container fall back to RipGrep with\ng and give me a summary of what broke.",
+      "wer": 0.13533834586466165,
+      "cer": 0.04920212765957447,
+      "punctuation_density": 0.11764705882352941,
+      "capitalization_f1": 0.65
+    },
+    {
+      "model": "whisper-distil-large-v3",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "cpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 44232.742145,
+      "rtf": 0.651778469399126,
+      "peak_rss_kb": 1815028,
+      "transcript": "All right, here is a new benchmark sample for benchmarking MAVOR. So I want you to look at the repository structure for MAVOR, particularly under internal slash speech and internal slash output. We need to check how the ZWP Virtual Keyboard V1 interacts with the Wayland Compositor. Actually, wait, before you do that,\nverify if PARAC is dropping any buffers when pipewire is under load. Run, just check CI with the integration tag enabled to see if Sway message reports any unhandled XKB key codes. I'm stepping away from the desk now, but make sure the JSON-L history log records records every turn without truncation or deja vu repetition loops. If the Go PLS language server throws an error in the container fall back to RipGrep with\ng and give me a summary of what broke.",
+      "wer": 0.13533834586466165,
+      "cer": 0.04920212765957447,
+      "punctuation_density": 0.11764705882352941,
+      "capitalization_f1": 0.65
+    },
+    {
+      "model": "whisper-distil-large-v3",
+      "family": "Whisper",
+      "backend": {
+        "engine": "whisper-cli",
+        "device": "gpu",
+        "mode": "batch",
+        "build": "vulkan",
+        "binary": "/home/agent/.cache/mavor-bench/whisper-vulkan/whisper.cpp/build-vulkan/bin/whisper-cli"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 5947.345258,
+      "rtf": 0.08763534434605626,
+      "peak_rss_kb": 208800,
+      "transcript": "All right, here is a new benchmark sample for benchmarking MAVOR. So I want you to look at the repository structure for MAVOR, particularly under internal slash speech and internal slash output. We need to check how the ZWP Virtual Keyboard V1 interacts with the Wayland Compositor. Actually, wait, before you do that,\nverify if PARAC is dropping any buffers when pipewire is under load. Run, just check CI with the integration tag enabled to see if Sway message reports any unhandled XKB key codes. I'm stepping away from the desk now, but make sure the JSON-L history log records records every turn without truncation or deja vu repetition loops. If the Go PLS language server throws an error in the container fall back to RipGrep with\ng and give me a summary of what broke.",
+      "wer": 0.13533834586466165,
+      "cer": 0.04920212765957447,
+      "punctuation_density": 0.11764705882352941,
+      "capitalization_f1": 0.65
+    },
+    {
+      "model": "fastconformer-streaming",
+      "family": "NeMo",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 24177.375219,
+      "load_ms": 1904.830122,
+      "rtf": 0.35625855079639174,
+      "peak_rss_kb": 580540,
+      "transcript": "alright here is a new benchmark sample for benchmarking mavor so i want you to look at the repository structure for particularly under internal slash speech and internal slash output we need to check how the z w p virtual keyboard v one interacts with the wayland compositor actually wait before you do that let's verify if parrk is dropping any buffers when pipe wire is under load run just check sea with the integration tag unable to see if sway message reports any unhandled xkb keycodes i'm stepping away from the desk now but make sure jason l history log records records every turn without truncation or deja vu repetition loops if the go p l s language server throws an error in the container fall back to rip grap with r g dash n and give me a summary of what broke",
+      "wer": 0.21052631578947367,
+      "cer": 0.07845744680851063,
+      "punctuation_density": 0.013888888888888888,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "fastconformer-streaming",
+      "family": "NeMo",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "streaming"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 25748.55421,
+      "load_ms": 1831.800236,
+      "rtf": 0.37941019340875914,
+      "peak_rss_kb": 573952,
+      "first_token_ms": 755.088756,
+      "stream_updates": 219,
+      "stream_mean_gap_ms": 301.2542808219178,
+      "stream_max_gap_ms": 3904.6875,
+      "stream_slowest_chunk_ms": 210.522389,
+      "stream_slow_chunks": 415,
+      "transcript": "alright here is a new benchmark sample for benchmarking mavor so i want you to look at the repository structure for particularly under internal slash speech and internal slash output we need to check how the z w p virtual keyboard v one interacts with the wayland compositor actually wait before you do that let's verify if parrk is dropping any buffers when pipe wire is under load run just check sea with the integration tagon able to see if sway message reports any unhandled xkb keycodes i'm stepping away from the desk now but make sure jason l history log records records every turn without truncation or deja vu repetition loops if the go p l s language server throws an error in the container fall back to rip grap with r g dash n and give me a summary of what broke",
+      "wer": 0.21804511278195488,
+      "cer": 0.08111702127659574,
+      "punctuation_density": 0.013888888888888888,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "parakeet-tdt-0.6b",
+      "family": "NeMo",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 9714.943837,
+      "load_ms": 4176.274121,
+      "rtf": 0.1431516771811555,
+      "peak_rss_kb": 1984476,
+      "transcript": "All right, here is a new benchmark sample for benchmarking uh Mavor. So I want you to look at the repository structure for Mavor. Um particularly uh under internal slash speech and internal slash output. Uh we need to check how the ZWP virtual keyboard v1 interacts with the Wayland compositor. Uh actually wait, before you do that, let's verify if Parek is dropping any buffers when Pipewire is under load. Run just check CI with the integration tag enabled to see if Sway Message reports any unhandled XKB key codes. I'm stepping away from the desk now, but make sure the uh JSON L history log records uh records every turn without truncation or deja vu repetition loops. If the Go pls language server throws an error in the container, fall back to Ripgrep with RG-N and give me a summary of what broke.",
+      "wer": 0.15037593984962405,
+      "cer": 0.057180851063829786,
+      "punctuation_density": 0.1103448275862069,
+      "capitalization_f1": 0.5641025641025642
+    },
+    {
+      "model": "parakeet-tdt-0.6b-v2",
+      "family": "NeMo",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 10247.886223,
+      "load_ms": 4314.215303,
+      "rtf": 0.15100469184360424,
+      "peak_rss_kb": 1988928,
+      "transcript": "Alright, here is a new benchmark sample for benchmarking Mavor. So I want you to look at the repository structure for Mavor. Particularly under internal slash speech and internal slash output, we need to check how the ZWP virtual keyboard v1 interacts with the Wayland compositor. Actually, wait, before you do that, let's verify if Parek is dropping any buffers when Pipewire is under load. Run just check CI with the integration tag enabled to see if Sway Message reports any unhandled XKB key codes. I'm stepping away from the desk now, but make sure the JSON L history log records records every turn without truncation or deja vu repetition loops. If the Go PLS language server throws an error in the container, fall back to Rip Grep with rg-n and give me a summary of what broke.",
+      "wer": 0.11278195488721804,
+      "cer": 0.03590425531914894,
+      "punctuation_density": 0.12318840579710146,
+      "capitalization_f1": 0.65
+    },
+    {
+      "model": "parakeet-unified-en",
+      "family": "NeMo",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 10318.571137,
+      "load_ms": 4982.868784,
+      "rtf": 0.1520462484557967,
+      "peak_rss_kb": 2218388,
+      "transcript": "All right, here is a new benchmark sample for benchmarking MaVor. So I want you to look at the repository structure for MaVor, particularly under internal slash speech and internal slash output. We need to check how the ZWP virtual keyboard v1 interacts with the Wayland compositor. Actually, wait, before you do that, let's verify if Parek is dropping any buffers when Pipewire is under load. Run just check CI with the integration tag enabled to see if SwayMessage reports any unhandled XKB key codes. I'm stepping away from the desk now, but make sure the JSON-L history log records records every turn without truncation or deja vu repetition loops. If the Go PLS language server throws an error in the container, fall back to rip grep with rg-n and give me a summary of what broke",
+      "wer": 0.12030075187969924,
+      "cer": 0.03723404255319149,
+      "punctuation_density": 0.12408759124087591,
+      "capitalization_f1": 0.7222222222222222
+    },
+    {
+      "model": "parakeet-unified-en-streaming-240ms",
+      "family": "NeMo",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 420370.748099,
+      "load_ms": 2519.231749,
+      "rtf": 6.1942486377617225,
+      "peak_rss_kb": 1065360,
+      "transcript": "All right, here is a new benchmark sample for benchmarking MAVOR. So I want you to look at the repository structure for Mavor, particularly under internal slash speech and internal slash output, we need to check how the ZWP virtual keyboard V1 interacts with the Wayland compositor. Actually, wait, before you do that, let's verify if Parek is dropping any buffers when Pipewire is under load. Run just check CI with the integration tag enabled to see if SwayMessage reports any unhandled XKB key codes. I'm stepping away from the desk now, but make sure the JSON L history log records records every turn without truncation or deja vu repetition loops. If the go PLS language server throws an error in the container fallback to rip grep with rg-n and give me a summary of what broke",
+      "wer": 0.13533834586466165,
+      "cer": 0.03856382978723404,
+      "punctuation_density": 0.10948905109489052,
+      "capitalization_f1": 0.7222222222222222
+    },
+    {
+      "model": "parakeet-unified-en-streaming-240ms",
+      "family": "NeMo",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "streaming"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 329847.112251,
+      "load_ms": 2257.006211,
+      "rtf": 4.860364416339499,
+      "peak_rss_kb": 1056620,
+      "first_token_ms": 9476.235098,
+      "stream_updates": 245,
+      "stream_mean_gap_ms": 268.42729591836735,
+      "stream_max_gap_ms": 3994.6875,
+      "stream_slowest_chunk_ms": 1133.092035,
+      "stream_slow_chunks": 846,
+      "transcript": "All right, here is a new benchmark sample for benchmarking MAVOR. So I want you to look at the repository structure for Mavor, particularly under internal slash speech and internal slash output, we need to check how the ZWP virtual keyboard V1 interacts with the Wayland compositor. Actually, wait, before you do that, let's verify if Parek is dropping any buffers when Pipewire is under load. Run just check CI with the integration tag enabled to see if SwayMessage reports any unhandled XKB key codes. I'm stepping away from the desk now, but make sure the JSON L history log records records every turn without truncation or deja vu repetition loops. If the go PLS language server throws an error in the container fallback to rip grep with rg-n and give me a summary of what broke",
+      "wer": 0.13533834586466165,
+      "cer": 0.03856382978723404,
+      "punctuation_density": 0.10948905109489052,
+      "capitalization_f1": 0.7222222222222222
+    },
+    {
+      "model": "parakeet-ctc",
+      "family": "NeMo",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 6250.255554,
+      "load_ms": 1384.896813,
+      "rtf": 0.09209878928566495,
+      "peak_rss_kb": 1152832,
+      "transcript": "all right here is a new benchmark sample for benchmarking so i want you to look at the repository structure for particularly under internal slash speech and internal s out we need to check how the z w p virtual keyboard v on interacts with the waylan compositor actually wait before you do that let's verify if pk is dropping any buffers when pipe wire is underload run just with the integration tag enabled to see if sway message reports any unhandled x kv key codes i'm stepping away from the desk now make sure the json l history log records records every turn without truncation or de repetition loops if the go pl language server throws an error in the container fall back to ripre with r g n and give me a summary of what broke",
+      "wer": 0.2781954887218045,
+      "cer": 0.09574468085106383,
+      "punctuation_density": 0.014492753623188406,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "canary-1b",
+      "family": "NeMo",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 33307.574421,
+      "load_ms": 5179.176074,
+      "rtf": 0.4907938966196521,
+      "peak_rss_kb": 3161816,
+      "transcript": "All right, here is a new benchmark sample for benchmarking Mavor. So I want you to look at the repository structure for Mavor, particularly under internal slash speech and internal slash output. We need to check how the ZWP Virtual Keyboard V1 interacts with the Weyland compositor. Actually, wait, before you do that, let's verify if Parack is dropping any buffers when Pipewire is under load. Run just check CI with the integration tag enabled to see if SwayMessage reports any unhandled XKB keycodes. I'm stepping away from the desk now, but make sure the JSON L history log records every turn without truncation or deja vu repetition loops.",
+      "wer": 0.2857142857142857,
+      "cer": 0.21808510638297873,
+      "punctuation_density": 0.12844036697247707,
+      "capitalization_f1": 0.6486486486486486
+    },
+    {
+      "model": "canary-180m",
+      "family": "NeMo",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 8822.424502,
+      "load_ms": 1247.500252,
+      "rtf": 0.13000022289942764,
+      "peak_rss_kb": 824852,
+      "transcript": "All right, here is a new benchmark sample for benchmarking Mavor. So I want you to look at the repository structure for Mavor, particularly under internal slash speech and internal slash output. We need to check how the GOPLS language server throws an error in the container, fall back to RIPGREP with RGN and give me a summary of what broke.",
+      "wer": 0.6015037593984962,
+      "cer": 0.5704787234042553,
+      "punctuation_density": 0.09836065573770492,
+      "capitalization_f1": 0.31999999999999995
+    },
+    {
+      "model": "nemotron-streaming-en-80ms",
+      "family": "Nemotron",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 85315.361925,
+      "load_ms": 2503.651233,
+      "rtf": 1.2571392438077609,
+      "peak_rss_kb": 995112,
+      "transcript": "Alright, here is a new benchmark sample for benchmarking uh Mavor, so I want you to look at the repository structure for Mavor, um, particularly uh under internal slash speech and internal slash output um we need to check how the ZWP virtual keyboard V one interacts with the Wayland compositor uh actually wait before you do that let's verify if PEREC is dropping any buffers when pipe wire is under load run just check CI with the integration tag enabled to see if sway message reports any unhandled XKB key codes I'm stepping away from the desk now but make sure the uh JSON L history log records uh records every turn without truncation or deja vu repetition loops if the go PLS language server throws an error in the container fallback to rip grep with RG N and give me a summary of what broke",
+      "wer": 0.19548872180451127,
+      "cer": 0.06382978723404255,
+      "punctuation_density": 0.04081632653061224,
+      "capitalization_f1": 0.5
+    },
+    {
+      "model": "nemotron-streaming-en-80ms",
+      "family": "Nemotron",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "streaming"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 84757.244446,
+      "load_ms": 2702.249915,
+      "rtf": 1.2489152690196945,
+      "peak_rss_kb": 970380,
+      "first_token_ms": 2111.381805,
+      "stream_updates": 212,
+      "stream_mean_gap_ms": 310.9183372641509,
+      "stream_max_gap_ms": 4144.6875,
+      "stream_slowest_chunk_ms": 381.618441,
+      "stream_slow_chunks": 846,
+      "transcript": "Alright, here is a new benchmark sample for benchmarking uh Mavor, so I want you to look at the repository structure for Mavor, um, particularly uh under internal slash speech and internal slash output um we need to check how the ZetwP virtual keyboard V one interacts with the Wayland compositor uh actually wait before you do that let's verify if PEREC is dropping any buffers when pipe wire is under load run just check CI with the integration tag enabled to see if sway message reports any unhandled XKB key codes I'm stepping away from the desk now but make sure the uh JSON L history log records uh records every turn without truncation or deja vu repetition loops if the go PLS language server throws an error in the container fallback to rip grep with RG N and give me a summary of what broke",
+      "wer": 0.20300751879699247,
+      "cer": 0.06648936170212766,
+      "punctuation_density": 0.04081632653061224,
+      "capitalization_f1": 0.43749999999999994
+    },
+    {
+      "model": "nemotron-streaming-en-560ms",
+      "family": "Nemotron",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 18754.180491,
+      "load_ms": 2479.930314,
+      "rtf": 0.27634667132299107,
+      "peak_rss_kb": 1007300,
+      "transcript": "Alright, here is a new benchmark sample for benchmarking uh Mavor. So I want you to look at the repository structure for Mavor um particularly uh under internal slash speech and internal slash output uh we need to check how the ZWP virtual keyboard V one interacts with the Wayland compositor actually wait before you do that let's verify if PAREC is dropping any buffers when PipeWire is underload run just check CI with the integration tag enabled to see if sway message reports any unhandled XKB key codes I'm stepping away from the desk now but make sure the uh JSON L history log records uh records every turn without truncation or deja vu repetition loops if the Go PLS language server throws an error in the container fallback to rip grep with RG N and give me a summary of what broke",
+      "wer": 0.18045112781954886,
+      "cer": 0.05851063829787234,
+      "punctuation_density": 0.027777777777777776,
+      "capitalization_f1": 0.6285714285714287
+    },
+    {
+      "model": "nemotron-streaming-en-560ms",
+      "family": "Nemotron",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "streaming"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 19278.070407,
+      "load_ms": 2494.375306,
+      "rtf": 0.28406629599524785,
+      "peak_rss_kb": 975680,
+      "first_token_ms": 399.220291,
+      "stream_updates": 96,
+      "stream_mean_gap_ms": 688.173828125,
+      "stream_max_gap_ms": 3904.6875,
+      "stream_slowest_chunk_ms": 173.226105,
+      "stream_slow_chunks": 120,
+      "transcript": "Alright, here is a new benchmark sample for benchmarking uh Mavor. So I want you to look at the repository structure for Mavor um particularly uh under internal slash speech and internal slash output uh we need to check how the ZWP virtual keyboard V one interacts with the Wayland compositor actually wait before you do that let's verify if PAREC is dropping any buffers when PipeWire is underload run just check CI with the integration tag enabled to see if Sway message reports any unhandled XKB key codes I'm stepping away from the desk now but make sure the uh JSON L history log records uh records every turn without truncation or deja vu repetition loops if the Go PLS language server throws an error in the container fallback to rip grep with RG N and give me a summary of what broke",
+      "wer": 0.18045112781954886,
+      "cer": 0.05851063829787234,
+      "punctuation_density": 0.027777777777777776,
+      "capitalization_f1": 0.6111111111111113
+    },
+    {
+      "model": "nemotron-streaming-multi-560ms",
+      "family": "Nemotron",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 17992.192485,
+      "load_ms": 1524.387177,
+      "rtf": 0.2651186227741784,
+      "peak_rss_kb": 1025072,
+      "transcript": "All right, here is a new benchmark sample for benchmarking Mar so I want you to look at the repository structure for Mavor, particularly uh under internal slash speech and internal slash output we need to check how the ZWP virtual keyboard V one interacts with the Wayland compositor.  Actually, wait before you do that, let's verify if Perek is dropping any buffers when pipewire is underload.  Run, just check CI with the integration tag enable to see if Sway message reports any unhandled XKB keycodes.  I'm stepping away from the desk now, but make sure the JSON L history log records records every turn without truncation or devo repetition loops if the Go PLS language server throws an error in the container fall back to Rip Grap with RGN and give me a summary of what broke",
+      "wer": 0.18796992481203006,
+      "cer": 0.0598404255319149,
+      "punctuation_density": 0.07971014492753623,
+      "capitalization_f1": 0.4736842105263158
+    },
+    {
+      "model": "nemotron-streaming-multi-560ms",
+      "family": "Nemotron",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "streaming"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 17958.922906,
+      "load_ms": 1483.423729,
+      "rtf": 0.26462838874783,
+      "peak_rss_kb": 1025080,
+      "first_token_ms": 493.039812,
+      "stream_updates": 94,
+      "stream_mean_gap_ms": 696.7519946808511,
+      "stream_max_gap_ms": 3904.6875,
+      "stream_slowest_chunk_ms": 184.693285,
+      "stream_slow_chunks": 120,
+      "transcript": "All right, here is a new benchmark sample for benchmarking Mavor.  So I want you to look at the repository structure for Mavor, particularly uh under internal slash speech and internal slash output we need to check how the ZWP virtual keyboard V one interacts with the Wayland compositor.  Actually, wait before you do that, let's verify if Perek is dropping any buffers when pipewire is underload.  Run, just check CI with the integration tag enable to see if sway message reports any unhandled XKV keycodes.  I'm stepping away from the desk now, but make sure the JSON L history log records records every turn without truncation or devo repetition loops if the Go PLS language server throws an error in the container fall back to Rip Grap with RGN and give me a summary of what broke",
+      "wer": 0.18796992481203006,
+      "cer": 0.05851063829787234,
+      "punctuation_density": 0.08695652173913043,
+      "capitalization_f1": 0.48648648648648646
+    },
+    {
+      "model": "cohere-transcribe",
+      "family": "Cohere",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 21272.060532,
+      "load_ms": 6656.875297,
+      "rtf": 0.3134481468289381,
+      "peak_rss_kb": 4151556,
+      "transcript": "All right, here is a new benchmark sample for benchmarking MaVor. So I want you to look at the repository structure for MaVor, particularly under internal slash speech and internal slash output. We need to check how the ZWP virtual keyboard v1 interacts with the Wayland compositor. Actually, wait, before you do that, let's verify if Parek is dropping any buffers when Pipewire is under load. If the Go PLS language server throws an error in the container, fall back to RIPGREP with RG N and give me a summary of what broke.",
+      "wer": 0.37593984962406013,
+      "cer": 0.3550531914893617,
+      "punctuation_density": 0.12903225806451613,
+      "capitalization_f1": 0.5454545454545455
+    },
+    {
+      "model": "moonshine-tiny",
+      "family": "Moonshine",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 5289.213764,
+      "load_ms": 743.180259,
+      "rtf": 0.07793764266578256,
+      "peak_rss_kb": 1246124,
+      "transcript": "All right, here is a new benchmark sample for benchmarking a MayVore. So I want you to look at the repository structure for MayVore. I want you to look at the repository structure for MayVore. Particularly, before you do that, let's verify if Parrack is dropping any buffer's when pipe wire is under load. Run just checks CI with the integration tag enabled to see if SWA message reports any unhandled XKB key codes. I'm stepping away from the desk now with the integration tag enabled to see if SWA message reports any unhandled XKB key codes. I'm stepping away from the desk now with the integration tag enabled to see if SWA message reports any unhandled XKB key codes. I'm stepping away from the desk now with the integration tag enabled to see if SWA message reports any unhandled XKB key codes. I'm stepping away from the desk now with the integration tag enabled to see if SWA message reports any unhandled XKB key codes. I'm stepping away from the desk now with the integration tag. I'm stepping away from the desk now with the integration tag. I'm stepping away from the desk now with the integration tag. I'm stepping away from the desk now with the entire project tag. I'm stepping away from the desk now with the entire project tag. I'm stepping away from the desk now with the entire project tag.",
+      "wer": 1.3909774436090225,
+      "cer": 1.0359042553191489,
+      "punctuation_density": 0.1276595744680851,
+      "capitalization_f1": 0.42857142857142855
+    },
+    {
+      "model": "moonshine-base",
+      "family": "Moonshine",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 6179.228316,
+      "load_ms": 1493.606146,
+      "rtf": 0.09105218845957258,
+      "peak_rss_kb": 1574600,
+      "transcript": "So I want you to look at the repository structure for Mayvore. Actually, wait, before you do that, let's verify if Parak is dropping any buffers when Pipewire is under load. Run just Check CI with the integration tag enabled to see if Sway message reports any unhandled XKB key codes. I'm stepping away from the desk now, but make sure the JSON-L history log records records every turn without truncation or deja vu repetition loops. If the Go PLS language server throws an error in the container, fall back to rip-grab with RG-N and give me a summary of what broke.",
+      "wer": 0.3458646616541353,
+      "cer": 0.2925531914893617,
+      "punctuation_density": 0.14705882352941177,
+      "capitalization_f1": 0.5294117647058824
+    },
+    {
+      "model": "sensevoice-small",
+      "family": "SenseVoice",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 5560.923511,
+      "load_ms": 2260.985126,
+      "rtf": 0.08194134115772654,
+      "peak_rss_kb": 1776520,
+      "transcript": "All right, here is a new benchmark sample for benchmarking Mavoor, so I want you to look at the repository structure for Mavoor particularly under internal slash speech and internal slash output we need to check how the ZWP virtual keyboard V1 interacts with the Wayland Compositor actually wait before you do that let's verify if PAak is dropping any buffers when pipepewires underload, run just check CI with the integration tag enabled to see if Sway message reports any unhandled XKV key codes I'm stepping away from the desk now make sure the JON L history log records records every turn without truncation or deja vu repetition loops if the go PLS language server throws an error in the container fall back to RipGp with RG N and give me a summary of what broke.",
+      "wer": 0.18045112781954886,
+      "cer": 0.0598404255319149,
+      "punctuation_density": 0.04411764705882353,
+      "capitalization_f1": 0.34285714285714286
+    },
+    {
+      "model": "paraformer",
+      "family": "Paraformer",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 4711.478591,
+      "load_ms": 3032.844197,
+      "rtf": 0.06942459715886852,
+      "peak_rss_kb": 1184972,
+      "transcript": "all right here is a new benchmark sample for benchmarking um mavor so i want you to look at the repository strustrucor for mavor uticuculy uh under internal slash speech and internal slash output we need to check how the z w p virtual keyboard v one interacts with the whale and compositor uacwawabefore before do that let's verify of parac is dropping any buffers when pipiwwiers s underlorun just texy with with repogration tag agto see see a sway message reports any unhandle x k v keycots um steping away from the desash ech uh js on l history log records um records every turning without trffer or dage of vu repetition loops the the go p s language server throros and error in container ffl back to rib grep with arr dash and and give me a summary of what broke",
+      "wer": 0.49624060150375937,
+      "cer": 0.22606382978723405,
+      "punctuation_density": 0.006993006993006993,
+      "capitalization_f1": 0
+    },
+    {
+      "model": "zipformer-streaming",
+      "family": "Zipformer",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 7043.266601,
+      "load_ms": 2717.931778,
+      "rtf": 0.10378396866558916,
+      "peak_rss_kb": 174396,
+      "transcript": "ALL RIGHT HERE IS A NEW BENCH MARK SAMPLE FOUR BENCH MARKING A MEVOR SO I WANT YOU TO LOOK AT THE REPOSITORY STRUCTURE FOR MAVOUR UM PARTICULARLY A UNDER INTERNAL SLASH SPEECH AND INTERNAL SLASH OUTPUT AH WE NEED TO CHECK HOW THE Z W P VITCH WILL KEYBOARD V ONE INTERACTS WITH THE WHALEN COMPOSITOR I ACTUALLY WAIT BEFORE YOU DO THAT LET'S VERIFY IF PARAK IS DROPPING ANY BUFFERS WHEN PIPE WIRE IS UNDER LOAD RUN JUST CHECKS THE EYE WITH THE INTEGRATION TAG ENABLED TO SEE IF SWAY MESSAGE REPORTS ANY UNHANDLED EX BOWS I'M STEPPING AWAY FROM THE DESK NOW IT MAKES SURE THE A JASON L HISTORY LOG RECORDS OF RECORDS EVERY TURN WITHOUT TRUNCATION OR DEJAH VOUS REPETITION LOOPS IF THE GO S LANGUAGE SERVER THROWS AN ERROR IN THE CONTAINER FALL BACK TO RIP GRAP WITH R G DASH N AND GIVE ME A SUMMARY OF WHAT BROKE",
+      "wer": 0.3684210526315789,
+      "cer": 0.12898936170212766,
+      "punctuation_density": 0.01282051282051282,
+      "capitalization_f1": 0.09859154929577464
+    },
+    {
+      "model": "zipformer-streaming",
+      "family": "Zipformer",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "streaming"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 8407.917359,
+      "load_ms": 2693.79313,
+      "rtf": 0.12389237567770424,
+      "peak_rss_kb": 195400,
+      "first_token_ms": 135.549828,
+      "stream_updates": 162,
+      "stream_mean_gap_ms": 406.1400462962963,
+      "stream_max_gap_ms": 3394.6875,
+      "stream_slowest_chunk_ms": 52.595092,
+      "stream_slow_chunks": 40,
+      "transcript": "ALL RIGHT HERE IS A NEW BENCH MARK SAMPLE FOUR BENCH MARKING A MEVOR SO I WANT YOU TO LOOK AT THE REPOSITORY STRUCTURE FOR MAVOUR UM PARTICULARLY A UNDER INTERNAL SLASH SPEECH AND INTERNAL SLASH OUTPUT AH WE NEED TO CHECK HOW THE Z W P VITCH WILL KEYBOARD V ONE INTERACTS WITH THE WHALEN COMPOSITOR I ACTUALLY WAIT BEFORE YOU DO THAT LET'S VERIFY IF PARAK IS DROPPING ANY BUFFERS WHEN PIPE WIRE IS UNDER LOAD RUN JUST CHECKS THE EYE WITH THE INTEGRATION TAG ENABLED TO SEE IF SWAY MESSAGE REPORTS ANY UNHANDLED EX BOWS I'M STEPPING AWAY FROM THE DESK NOW IT MAKES SURE THE A JASON L HISTORY LOG RECORDS OF RECORDS EVERY TURN WITHOUT TRUNCATION OR DEJAH VOUS REPETITION LOOPS IF THE GO S LANGUAGE SERVER THROWS AN ERROR IN THE CONTAINER FALL BACK TO RIP GRAP WITH R G DASH N AND GIVE ME A SUMMARY OF WHAT BROKE",
+      "wer": 0.3684210526315789,
+      "cer": 0.12898936170212766,
+      "punctuation_density": 0.01282051282051282,
+      "capitalization_f1": 0.09859154929577464
+    },
+    {
+      "model": "zipformer-streaming-20m",
+      "family": "Zipformer",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 2732.1801,
+      "load_ms": 590.154365,
+      "rtf": 0.04025923054607744,
+      "peak_rss_kb": 126480,
+      "transcript": "UCH MARK SAMPLE FOUR BENCH MARKING A MEAVOUR SO I WANT YOU TO LOOK AT THE REPOSITORY STRUCTURE FOR MAYFORE A PARTICULARLY A UNDER INTERNAL SLASH SPEECH AND INTERNAL SLASH OUTPUT A WE NEED TO CHECK HOW THE ZID P VIRTUAL KEYBOARD BE ONE INTERACTS WITH THE WYLAND COMPOSITOR I ACTUALLY WAIT BEFORE YOU DO THAT WHAT'S VERIFY IF PARICK IS DROPPING ANY BUFFERS WHEN PIPE WIRE IS UNDER LOAD RUN JUST CHECKSY EYE WITH THE INDIGATION TAG UNABLE TO SEE IF SWAY MESSAGE REPORTS ANY UNHANDLED EXCABI KI COATS I'M STEPPING AWAY FROM THE DESK NOW IT MAKES SURE THE A JASON L HISTORY LOG RECORDS OF RECORDS EVERY TURN WITHOUT TRUNCATION OR DEJAH VOUS REPETITION LOOPS IF THE GO P S LANGUAGE SERVER THROWS AN ERROR IN THE CONTAINER FALL BACK TO RIP GRAF WITH ARCH N AND GIVE ME A SUMMARY OF WHAT BROKE",
+      "wer": 0.3684210526315789,
+      "cer": 0.1529255319148936,
+      "punctuation_density": 0.013605442176870748,
+      "capitalization_f1": 0.1044776119402985
+    },
+    {
+      "model": "zipformer-streaming-20m",
+      "family": "Zipformer",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "streaming"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 3448.061623,
+      "load_ms": 599.165892,
+      "rtf": 0.05080789067215553,
+      "peak_rss_kb": 133140,
+      "first_token_ms": 132.11944,
+      "stream_updates": 154,
+      "stream_mean_gap_ms": 415.1603084415584,
+      "stream_max_gap_ms": 3754.6875,
+      "stream_slowest_chunk_ms": 27.118458,
+      "transcript": "UCH MARK SAMPLE FOUR BENCH MARKING A MEVOUR SO I WANT YOU TO LOOK AT THE REPOSITORY STRUCTURE FOR MAYFORE A PARTICULARLY UNDER INTERNAL SLASH SPEECH AND INTERNAL SLASH OUTPUT A WE NEED TO CHECK HOW THE ZID P VIRTUAL KEYBOARD BE ONE INTERACTS WITH THE WYLAND COMPOSITOR I ACTUALLY WAIT BEFORE YOU DO THAT WHAT'S VERIFY IF PARICK IS DROPPING ANY BUFFERS WHEN PIPE WIRE IS UNDER LOAD RUN JUST CHECKSY EYE WITH THE INDIGATION TAG UNABLE TO SEE IF SWAY MESSAGE REPORTS ANY UNHANDLED EXCABI KI COATS I'M STEPPING AWAY FROM THE DESK NOW IT MAKES SURE THE A JASON L HISTORY LOG RECORDS OF RECORDS EVERY TURN WITHOUT TRUNCATION OR DEJAH VOUS REPETITION LOOPS IF THE GO P S LANGUAGE SERVER THROWS AN ERROR IN THE CONTAINER FALL BACK TO RIP GRAF WITH ARCH N AND GIVE ME A SUMMARY OF WHAT BROKE",
+      "wer": 0.3609022556390977,
+      "cer": 0.1502659574468085,
+      "punctuation_density": 0.0136986301369863,
+      "capitalization_f1": 0.1044776119402985
+    },
+    {
+      "model": "zipformer-offline",
+      "family": "Zipformer",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 3464.0591,
+      "load_ms": 1782.310756,
+      "rtf": 0.0510436167557686,
+      "peak_rss_kb": 1466792,
+      "transcript": "ALL RIGHT HERE IS A NEW BENCH MARK SAMPLE FOR BENCH MARKING A MAYVOR SO I WANT YOU TO LOOK AT THE REPOSITORY STRUCTURE FOR MAYFORE A PARTICULARLY A UNDER INTERNAL SLASH SPEECH AND INTERNAL SLASH OUTPUT A WE NEED TO CHECK HOW THE Z P VIRTAL KEYBOARD VI ONE INTERACTS WITH THE WHALEN COMPOSITOR A ACTUALLY WAIT BEFORE YOU DO THAT LET'S VERIFY IF PARACK IS DROPPING ANY BUFFERS WHEN PIPE WIRE IS UNDER LOW RUN JUST CHECKS THE I WITH THE INTEGRATION TAGON ABLE TO SEE IF SWAY MESSAGE REPORTS ANY UNHANDLED EX KEY COATS I'M STEPPING AWAY FROM THE DESK NOW MAKE SURE THE A JASON L HISTORY LOG RECORDS RECORDS EVERY TURN WITHOUT TRUNCATION OR DEJAH VOUS REPETITION LOOPS IF THE GO P S LANGUAGE SERVER THROWS AN ERROR IN THE CONTAINER FALL BACK TO RIP GRAP WITH R G DASH N AND GIVE ME A SUMMARY OF WHAT BROKE",
+      "wer": 0.37593984962406013,
+      "cer": 0.12234042553191489,
+      "punctuation_density": 0.012987012987012988,
+      "capitalization_f1": 0.10294117647058823
+    },
+    {
+      "model": "zipformer-ctc",
+      "family": "Zipformer",
+      "backend": {
+        "engine": "sherpa",
+        "device": "cpu",
+        "mode": "batch"
+      },
+      "runs": 3,
+      "failed": false,
+      "total_ms": 3054.99878,
+      "load_ms": 1180.31084,
+      "rtf": 0.045016029580921595,
+      "peak_rss_kb": 1566700,
+      "transcript": "ALL RIGHT HERE IS A NEW BENCH MARK SAMPLE FOR BENCH MAR GING A MAYVOUR SO I WANT YOU TO LOOK AT THE REPOSITORY STRUCTURE FOR MAYVOR A PARTICULARLY A UNDER INTERNAL SLASH SPEECH AND INTERNAL SLASH OUTPUT A WE NEED TO CHECK HOW THE Z W P VIRTRI KEYBOARD V ONE INTERACTS WITH THE WHALEN COMPOSITOR A ACTUALLY WAIT BEFORE YOU DO THAT LET'S VERIFY IF PARRAK IS DROPPING ANY BUFFERS WHEN PIPE WIRE IS UNDER LOAD RUN JUST CHECK C I WITH THE INTEGRATION TAGONABLE TO SEE IF SWAY MESSAGE REPORTS ANY UNHANDLED EX K B KEY COOATS I'M STEPPING AWAY FROM THE DESK NOW MAKE SURE THE A JASON L HISTORY LOG RECORDS A RECORDS EVERY TURN WITHOUT TRUNCATION OR DEJAH VOUS REPETITION LOOPS IF THE GO P P S LANGUAGE SERVER THROWS AN ERROR IN THE CONTAINER FALL BACK TO RIP GRAP WITH R G DASH N AND GIVE ME A SUMMARY OF WHAT BROKE",
+      "wer": 0.39849624060150374,
+      "cer": 0.12101063829787234,
+      "punctuation_density": 0.012578616352201259,
+      "capitalization_f1": 0.10071942446043167
+    }
+  ],
+  "skipped": [
+    {
+      "backend": "sherpa / gpu",
+      "reason": "the sherpa-onnx-go binding vendors a CPU-only ONNX Runtime with no execution providers; a GPU request falls back to CPU without saying so"
+    }
+  ],
+  "thread_scaling": [
+    {
+      "model": "whisper-tiny.en",
+      "threads": 2,
+      "runs": 3,
+      "total_ms": 4964.00835,
+      "rtf": 0.07314567461907195,
+      "peak_rss_kb": 267508
+    },
+    {
+      "model": "whisper-tiny.en",
+      "threads": 4,
+      "runs": 3,
+      "total_ms": 2905.287685,
+      "rtf": 0.04281000608748106,
+      "peak_rss_kb": 270408
+    },
+    {
+      "model": "whisper-tiny.en",
+      "threads": 6,
+      "runs": 3,
+      "total_ms": 2326.65488,
+      "rtf": 0.03428373379012465,
+      "peak_rss_kb": 271136
+    },
+    {
+      "model": "whisper-tiny.en",
+      "threads": 8,
+      "runs": 3,
+      "total_ms": 2147.028157,
+      "rtf": 0.031636897421799814,
+      "peak_rss_kb": 271604
+    },
+    {
+      "model": "whisper-base.en",
+      "threads": 2,
+      "runs": 3,
+      "total_ms": 8213.342227,
+      "rtf": 0.12102527145652885,
+      "peak_rss_kb": 379800
+    },
+    {
+      "model": "whisper-base.en",
+      "threads": 4,
+      "runs": 3,
+      "total_ms": 5207.603636,
+      "rtf": 0.07673510079892433,
+      "peak_rss_kb": 380740
+    },
+    {
+      "model": "whisper-base.en",
+      "threads": 6,
+      "runs": 3,
+      "total_ms": 4694.525625,
+      "rtf": 0.06917479175012778,
+      "peak_rss_kb": 383608
+    },
+    {
+      "model": "whisper-base.en",
+      "threads": 8,
+      "runs": 3,
+      "total_ms": 3665.711987,
+      "rtf": 0.05401501313919703,
+      "peak_rss_kb": 383624
+    },
+    {
+      "model": "whisper-small.en",
+      "threads": 2,
+      "runs": 3,
+      "total_ms": 29561.395057,
+      "rtf": 0.43559318028245547,
+      "peak_rss_kb": 858652
+    },
+    {
+      "model": "whisper-small.en",
+      "threads": 4,
+      "runs": 3,
+      "total_ms": 16486.513897,
+      "rtf": 0.24293214194790186,
+      "peak_rss_kb": 858816
+    },
+    {
+      "model": "whisper-small.en",
+      "threads": 6,
+      "runs": 3,
+      "total_ms": 13710.0123,
+      "rtf": 0.2020198251115501,
+      "peak_rss_kb": 859936
+    },
+    {
+      "model": "whisper-small.en",
+      "threads": 8,
+      "runs": 3,
+      "total_ms": 12045.864937,
+      "rtf": 0.17749827459236442,
+      "peak_rss_kb": 859240
+    }
+  ],
+  "warm_server": [
+    {
+      "model": "whisper-tiny.en",
+      "threads": 6,
+      "runs": 3,
+      "startup_ms": 150.866054,
+      "warm_ms": 1948.950389,
+      "cold_ms": 2326.65488,
+      "rtf": 0.02871818114538581
+    },
+    {
+      "model": "whisper-base.en",
+      "threads": 6,
+      "runs": 3,
+      "startup_ms": 151.181282,
+      "warm_ms": 3708.384986,
+      "cold_ms": 4694.525625,
+      "rtf": 0.054643808475505026
+    },
+    {
+      "model": "whisper-small.en",
+      "threads": 6,
+      "runs": 3,
+      "startup_ms": 200.603057,
+      "warm_ms": 11383.998155,
+      "cold_ms": 13710.0123,
+      "rtf": 0.1677455326822215
+    }
+  ]
+}
