@@ -191,10 +191,13 @@ func TestPasteEmitEmptyText(t *testing.T) {
 	}
 }
 
-func TestPasteEmitPrimaryWins(t *testing.T) {
-	// Simulates Kitty terminal where Shift+Insert pastes from PRIMARY selection.
-	// Primary exits first; clipboard must be killed and old selections restored.
+func TestPasteEmitTimedLease(t *testing.T) {
+	// Simulates the timed lease where both CLIPBOARD and PRIMARY selection
+	// holders run in the foreground without --paste-once, allowing simultaneous
+	// readers (e.g. cliphist and Kitty), terminating both after the lease duration.
 	p := NewPaste(nil)
+	p.LeaseDuration = 20 * time.Millisecond
+	p.RestoreDelay = 1 * time.Millisecond
 	l := newMockLauncher()
 	p.Launcher = l
 
@@ -202,20 +205,34 @@ func TestPasteEmitPrimaryWins(t *testing.T) {
 	l.runOutputs["wl-paste -n"] = []byte("existing clipboard content")
 	l.runOutputs["wl-paste -p"] = []byte("existing primary content")
 
-	// Trigger primary completion in background
-	go func() {
-		time.Sleep(10 * time.Millisecond)
-		l.primCmd.waitCh <- nil
-	}()
-
-	err := p.Emit(context.Background(), "hello mavor")
+	start := time.Now()
+	err := p.Emit(context.Background(), "hello timed lease")
 	if err != nil {
 		t.Fatalf("Emit failed: %v", err)
 	}
+	elapsed := time.Since(start)
+	if elapsed < 20*time.Millisecond {
+		t.Errorf("Emit returned in %v, expected at least lease duration of 20ms", elapsed)
+	}
 
-	// Sibling (clipboard) must be killed
+	// Verify that neither command used --paste-once
+	if len(l.starts) != 2 {
+		t.Fatalf("expected 2 started commands, got %d: %v", len(l.starts), l.starts)
+	}
+	for _, s := range l.starts {
+		for _, arg := range s {
+			if arg == "--paste-once" || arg == "-o" {
+				t.Errorf("command %v used --paste-once; timed lease must not use paste-once", s)
+			}
+		}
+	}
+
+	// Both holders must be killed when the lease expires
 	if !l.clipCmd.isKilled() {
-		t.Error("clipCmd was not killed when primary won")
+		t.Error("clipCmd was not killed after lease expiration")
+	}
+	if !l.primCmd.isKilled() {
+		t.Error("primCmd was not killed after lease expiration")
 	}
 
 	// Verify restore calls were made
@@ -235,61 +252,34 @@ func TestPasteEmitPrimaryWins(t *testing.T) {
 	}
 }
 
-func TestPasteEmitClipboardWins(t *testing.T) {
-	// Simulates standard GUI app where Shift+Insert reads CLIPBOARD.
-	// Clipboard exits first; primary must be killed and old selections restored.
+func TestPasteEmitFallbackTimeout(t *testing.T) {
 	p := NewPaste(nil)
-	l := newMockLauncher()
-	p.Launcher = l
-
-	l.runOutputs["wl-paste -n"] = []byte("old clip")
-	l.runOutputs["wl-paste -p"] = []byte("old prim")
-
-	go func() {
-		time.Sleep(10 * time.Millisecond)
-		l.clipCmd.waitCh <- nil
-	}()
-
-	err := p.Emit(context.Background(), "hello gui")
-	if err != nil {
-		t.Fatalf("Emit failed: %v", err)
-	}
-
-	// Sibling (primary) must be killed
-	if !l.primCmd.isKilled() {
-		t.Error("primCmd was not killed when clipboard won")
-	}
-}
-
-func TestPasteEmitTimeoutTerminatesBoth(t *testing.T) {
-	p := NewPaste(nil)
+	p.LeaseDuration = 0
 	p.Timeout = 20 * time.Millisecond
+	p.RestoreDelay = 1 * time.Millisecond
 	l := newMockLauncher()
 	p.Launcher = l
 
-	err := p.Emit(context.Background(), "hello timeout")
+	err := p.Emit(context.Background(), "hello timeout fallback")
 	if err != nil {
 		t.Fatalf("Emit failed: %v", err)
 	}
 
 	if !l.clipCmd.isKilled() {
-		t.Error("clipCmd was not killed on timeout")
+		t.Error("clipCmd was not killed on fallback timeout")
 	}
 	if !l.primCmd.isKilled() {
-		t.Error("primCmd was not killed on timeout")
+		t.Error("primCmd was not killed on fallback timeout")
 	}
 }
 
 func TestPasteEmitNoRestore(t *testing.T) {
 	p := NewPaste(nil)
 	p.RestoreSelection = false
+	p.LeaseDuration = 10 * time.Millisecond
+	p.RestoreDelay = 1 * time.Millisecond
 	l := newMockLauncher()
 	p.Launcher = l
-
-	go func() {
-		time.Sleep(10 * time.Millisecond)
-		l.clipCmd.waitCh <- nil
-	}()
 
 	if err := p.Emit(context.Background(), "hello no restore"); err != nil {
 		t.Fatal(err)
@@ -299,6 +289,62 @@ func TestPasteEmitNoRestore(t *testing.T) {
 		if r[0] == "wl-paste" {
 			t.Errorf("wl-paste was called when RestoreSelection=false: %v", r)
 		}
+	}
+	if !l.clipCmd.isKilled() || !l.primCmd.isKilled() {
+		t.Error("both commands must be killed even when RestoreSelection=false")
+	}
+}
+
+func TestPasteEmitClipboardFlag(t *testing.T) {
+	p := NewPaste(nil)
+	p.Clipboard = true
+	p.LeaseDuration = 10 * time.Millisecond
+	p.RestoreDelay = 1 * time.Millisecond
+	l := newMockLauncher()
+	p.Launcher = l
+
+	if err := p.Emit(context.Background(), "persist to clipboard"); err != nil {
+		t.Fatal(err)
+	}
+
+	var copiedTranscript bool
+	for _, r := range l.runs {
+		if r[0] == "wl-copy" {
+			for _, arg := range r {
+				if arg == "(stdin:persist to clipboard)" {
+					copiedTranscript = true
+				}
+			}
+		}
+	}
+	if !copiedTranscript {
+		t.Errorf("transcript was not persisted to clipboard with Clipboard=true; runs: %v", l.runs)
+	}
+}
+
+func TestPasteEmitContextCancelled(t *testing.T) {
+	p := NewPaste(nil)
+	p.LeaseDuration = 500 * time.Millisecond
+	p.RestoreDelay = 1 * time.Millisecond
+	l := newMockLauncher()
+	p.Launcher = l
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+
+	err := p.Emit(ctx, "cancelled context")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled error, got: %v", err)
+	}
+
+	if !l.clipCmd.isKilled() {
+		t.Error("clipCmd was not killed on context cancellation")
+	}
+	if !l.primCmd.isKilled() {
+		t.Error("primCmd was not killed on context cancellation")
 	}
 }
 
@@ -330,34 +376,6 @@ func TestPasteEmitCustomCopyCommand(t *testing.T) {
 	}
 	if !wtypeRun {
 		t.Error("wtype chord was not executed")
-	}
-}
-
-func TestPasteEmitDualBufferBothConsumed(t *testing.T) {
-	// Simulates scenario where a clipboard manager reads CLIPBOARD, and Kitty reads PRIMARY
-	// within the sibling grace period. Neither process should be killed with SIGKILL.
-	p := NewPaste(nil)
-	p.SiblingGrace = 30 * time.Millisecond
-	p.RestoreDelay = 1 * time.Millisecond
-	l := newMockLauncher()
-	p.Launcher = l
-
-	go func() {
-		time.Sleep(5 * time.Millisecond)
-		l.clipCmd.waitCh <- nil
-		time.Sleep(5 * time.Millisecond)
-		l.primCmd.waitCh <- nil
-	}()
-
-	if err := p.Emit(context.Background(), "hello dual"); err != nil {
-		t.Fatalf("Emit failed: %v", err)
-	}
-
-	if l.clipCmd.isKilled() {
-		t.Error("clipCmd was unexpectedly killed")
-	}
-	if l.primCmd.isKilled() {
-		t.Error("primCmd was unexpectedly killed")
 	}
 }
 

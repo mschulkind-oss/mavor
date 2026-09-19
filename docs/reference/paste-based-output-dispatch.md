@@ -21,7 +21,7 @@ keystroke injection incurs heavy terminal redraw latencies on long utterances
 | Component | Lives in | Key symbols |
 | :--- | :--- | :--- |
 | Output dispatch interface & typing driver | `internal/output` | `Dispatcher`, `Wayland` |
-| Paste driver & First-Exit Wins supervisor | `internal/output` | `Paste`, `NewPasteDispatcher`, `PasteConfig` |
+| Paste driver & Timed Lease supervisor | `internal/output` | `Paste`, `NewPaste`, `ChordToWtypeArgs` |
 | Output configuration schema | `internal/config` | `OutputConfig`, `Default()` |
 | Environment & doctor diagnostics | `cmd/mavor` | `checkOutput`, `checkKittyShiftInsert`, `checkPasteOnce` |
 
@@ -42,17 +42,12 @@ a paste chord causes the terminal emulator to encapsulate the text in **Brackete
 Paste Mode** (`\e[200~` ... `\e[201~`) and write it as a single chunk to the PTY,
 triggering exactly one redraw in $<15\text{ ms}$.
 
-**P2. The First-Exit Wins supervisor prevents lingering background child processes.**
-Because Wayland selection transfers are demand-driven, an application only requests
-data from **one** selection buffer (`CLIPBOARD` or `PRIMARY`). Spawning two
-concurrent `wl-copy --paste-once` instances would leave the unconsumed sibling
-lingering indefinitely in the background. The supervisor terminates the unconsumed
-sibling process with `SIGKILL` as soon as either buffer finishes its transfer.
+**P2. The Timed Lease supervisor eliminates clipboard-manager race conditions.**
+Because Wayland selection transfers are demand-driven and asynchronous, both external clipboard managers (e.g. `cliphist`) and the target window may read selections concurrently. Using `--paste-once` caused single-read race conditions where clipboard managers consumed the selection and terminated the process before the target window could read it. Instead, the Timed Lease supervisor holds persistent foreground selection holders for a deterministic lease window (default 350ms) without `--paste-once`, serving unlimited reads across both buffers, before terminating both child processes and restoring pre-existing user selections.
 
 **P3. User selections are restored without clobbering in-flight transfers.**
 Pre-existing user selections in `CLIPBOARD` and `PRIMARY` are preserved prior to
-paste dispatch. Restoration executes only after the supervisor detects consumption
-of the transcript, preventing the race condition where restored contents overwrite
+paste dispatch. Restoration executes only after the lease window expires and holders are reaped, preventing the race condition where restored contents overwrite
 the transcript before the target window reads it.
 
 ---
@@ -77,12 +72,12 @@ sequenceDiagram
     participant W as Target Focused Window
 
     M->>M: Capture existing CLIPBOARD & PRIMARY (wl-paste)
-    M->>S: Spawn wl-copy --paste-once (dual buffers)
+    M->>S: Spawn wl-copy --foreground (dual buffers)
     M->>C: Synthesize paste chord (Shift+Insert via wtype)
     C->>W: Forward keydown/keyup events
-    W->>S: Read selection data via pipe
-    S-->>M: First buffer exits (SIGCHLD)
-    M->>S: Kill lingering sibling process (SIGKILL)
+    W->>S: Read selection data via pipe (demand-driven)
+    M->>M: Await lease duration (350ms)
+    M->>S: Terminate selection holders (SIGKILL)
     M->>M: Restore previous CLIPBOARD & PRIMARY (wl-copy)
 ```
 
@@ -98,23 +93,25 @@ which reads `PRIMARY`.
 
 To achieve zero-configuration universal pasting across both GUI and terminal
 windows, `output.Paste` writes the transcript to **both** buffers concurrently
-under the First-Exit Wins supervisor. Kitty reads `PRIMARY` and succeeds; GUI
+under the Timed Lease supervisor. Kitty reads `PRIMARY` and succeeds; GUI
 applications read `CLIPBOARD` and succeed.
 
-### The Supervisor Select Loop
+### The Supervisor Lease Loop
 
 `output.Paste.Emit` coordinates emission:
 
 1. If `restore_selection` is true, reads current `CLIPBOARD` and `PRIMARY` contents
    using `wl-paste`.
-2. Starts two child processes with `--foreground --paste-once`: one for `CLIPBOARD`
-   and one for `PRIMARY`.
-3. Synthesizes the configured `paste_chord` via `wtype`.
-4. Awaits process completion on a buffered channel:
-   - When the first child exits, immediately kills the remaining child process.
-   - If neither child exits within the fallback timeout, kills both child processes
-     to prevent daemon hangs.
-5. If `restore_selection` is true, restores original contents to both buffers.
+2. Starts two child processes with `--foreground`: one for `CLIPBOARD`
+   and one for `PRIMARY` (without `--paste-once` to allow multiple concurrent readers).
+3. Waits 20ms for Wayland compositor registration, then synthesizes the configured
+   `paste_chord` via `wtype`.
+4. Awaits the lease window (`LeaseDuration`, default 350ms):
+   - Clipboard managers and target applications can read either buffer as needed.
+   - If context is cancelled, terminates immediately.
+5. Kills and reaps both selection holder processes.
+6. If `restore_selection` is true, settles for `RestoreDelay` (50ms) and restores
+   original contents to both buffers.
 
 ### Diagnostic Verification in `mavor doctor`
 
@@ -135,9 +132,9 @@ applications read `CLIPBOARD` and succeed.
 
 | Subsystem | Package / File | Key Types and Entry Points |
 | :--- | :--- | :--- |
-| Paste Dispatcher | `internal/output/paste.go` | `Paste`, `NewPasteDispatcher`, `PasteConfig.Emit` |
-| First-Exit Wins Supervisor | `internal/output/paste.go` | `runSupervisor`, `chordToWtypeArgs` |
-| Selection Capture & Restore | `internal/output/paste.go` | `captureSelection`, `restoreSelection` |
+| Paste Dispatcher | `internal/output/paste.go` | `Paste`, `NewPaste`, `ChordToWtypeArgs` |
+| Timed Lease Supervisor | `internal/output/paste.go` | `Paste.Emit` |
+| Selection Capture & Restore | `internal/output/paste.go` | `Paste.Emit` |
 | Native Keystroke Typing | `internal/output/native.go` | `Wayland`, `Wayland.Emit` |
 | Configuration Schema | `internal/config/config.go` | `OutputConfig`, `DefaultOutputDriver`, `DefaultPasteChord` |
 | Diagnostics & Verification | `cmd/mavor/doctor.go` | `checkOutput`, `checkKittyShiftInsert`, `checkPasteOnce` |
@@ -187,5 +184,5 @@ the single place where numbers and defaults are recorded.
 | Default output driver | `"paste"` | `internal/config/config.go` (`DefaultOutputDriver`) |
 | Default paste chord | `"shift+insert"` | `internal/config/config.go` (`DefaultPasteChord`) |
 | Default restore selection | `true` | `internal/config/config.go` (`DefaultRestoreSelection`) |
-| Supervisor fallback timeout | `1s` | `internal/output/paste.go` (`supervisorTimeout`) |
-| Restore settle delay | `50ms` | `internal/output/paste.go` (`restoreDelay`) |
+| Default lease duration | `350ms` | `internal/output/paste.go` (`LeaseDuration`) |
+| Restore settle delay | `50ms` | `internal/output/paste.go` (`RestoreDelay`) |

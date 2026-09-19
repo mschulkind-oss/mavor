@@ -164,12 +164,13 @@ type Paste struct {
 	// Clipboard ensures the transcript remains on the clipboard after dispatch.
 	Clipboard bool
 
-	// Timeout is the maximum time to wait for paste-once consumption.
+	// Timeout is the maximum time to wait for paste dispatch.
 	Timeout time.Duration
 
-	// SiblingGrace is the window to allow a second buffer to exit before killing it.
-	// This prevents clipboard managers reading CLIPBOARD from starving a PRIMARY paste (e.g. Kitty).
-	SiblingGrace time.Duration
+	// LeaseDuration is the window during which CLIPBOARD and PRIMARY selection
+	// holders remain active in the foreground to serve simultaneous consumers (e.g. cliphist
+	// watching clipboard plus Kitty pasting primary). Defaults to 350ms.
+	LeaseDuration time.Duration
 
 	// RestoreDelay allows the target application to finish consuming in-flight
 	// selection pipes before restoring previous selections.
@@ -189,9 +190,8 @@ func NewPaste(logger *slog.Logger) *Paste {
 		Chord:            "shift+insert",
 		RestoreSelection: true,
 		Clipboard:        false,
-		Timeout:          1 * time.Second,
-		SiblingGrace:     300 * time.Millisecond,
-		RestoreDelay:     200 * time.Millisecond,
+		LeaseDuration:    350 * time.Millisecond,
+		RestoreDelay:     50 * time.Millisecond,
 		Launcher:         RealLauncher{},
 	}
 }
@@ -225,11 +225,7 @@ func (p *Paste) Emit(ctx context.Context, text string) error {
 
 	restoreDelay := p.RestoreDelay
 	if restoreDelay <= 0 {
-		restoreDelay = 200 * time.Millisecond
-	}
-	siblingGrace := p.SiblingGrace
-	if siblingGrace <= 0 {
-		siblingGrace = 300 * time.Millisecond
+		restoreDelay = 50 * time.Millisecond
 	}
 
 	defer func() {
@@ -277,13 +273,15 @@ func (p *Paste) Emit(ctx context.Context, text string) error {
 		return nil
 	}
 
-	// Dual-buffer First-Exit Wins Supervisor:
-	// Spawn both selection holders in the foreground with --paste-once.
-	cmdClip, err := p.Launcher.Start(ctx, []byte(text), "wl-copy", "--foreground", "--paste-once")
+	// Dual-buffer Timed Lease:
+	// Spawn both selection holders in the foreground (WITHOUT --paste-once).
+	// This permits multiple simultaneous reads (e.g. cliphist capturing CLIPBOARD
+	// while Kitty pastes from PRIMARY) without racing or killing each other.
+	cmdClip, err := p.Launcher.Start(ctx, []byte(text), "wl-copy", "--foreground")
 	if err != nil {
 		return fmt.Errorf("output: failed to start wl-copy: %w", err)
 	}
-	cmdPrim, err := p.Launcher.Start(ctx, []byte(text), "wl-copy", "--primary", "--foreground", "--paste-once")
+	cmdPrim, err := p.Launcher.Start(ctx, []byte(text), "wl-copy", "--primary", "--foreground")
 	if err != nil {
 		_ = cmdClip.Kill()
 		_ = cmdClip.Wait()
@@ -298,53 +296,27 @@ func (p *Paste) Emit(ctx context.Context, text string) error {
 		log.Warn("output: wtype chord failed", "err", err)
 	}
 
-	done := make(chan string, 2)
-	go func() {
-		_ = cmdClip.Wait()
-		done <- "clipboard"
-	}()
-	go func() {
-		_ = cmdPrim.Wait()
-		done <- "primary"
-	}()
-
-	timeout := p.Timeout
-	if timeout <= 0 {
-		timeout = 1 * time.Second
+	leaseDuration := p.LeaseDuration
+	if leaseDuration <= 0 {
+		leaseDuration = p.Timeout
+	}
+	if leaseDuration <= 0 {
+		leaseDuration = 350 * time.Millisecond
 	}
 
 	select {
-	case winner := <-done:
-		log.Info("output: paste-once consumed", "winner", winner, "elapsed_ms", time.Since(start).Milliseconds())
-		// If one buffer was consumed, wait briefly for the sibling in case a dual-buffer consumer
-		// or clipboard watcher triggered the first exit before the target window read the other buffer.
-		select {
-		case second := <-done:
-			log.Info("output: dual paste-once consumed", "second", second, "elapsed_ms", time.Since(start).Milliseconds())
-		case <-time.After(siblingGrace):
-			if winner == "clipboard" {
-				_ = cmdPrim.Kill()
-			} else {
-				_ = cmdClip.Kill()
-			}
-			<-done
-		}
-	case <-time.After(timeout):
-		log.Warn("output: paste-once timeout expired without consumption; terminating holders", "timeout", timeout)
-		_ = cmdClip.Kill()
-		_ = cmdPrim.Kill()
-		<-done
-		<-done
+	case <-time.After(leaseDuration):
+		log.Info("output: paste lease completed", "duration_ms", leaseDuration.Milliseconds(), "elapsed_ms", time.Since(start).Milliseconds())
 	case <-ctx.Done():
-		log.Warn("output: context cancelled during paste dispatch")
-		_ = cmdClip.Kill()
-		_ = cmdPrim.Kill()
-		<-done
-		<-done
-		return ctx.Err()
+		log.Warn("output: context cancelled during paste lease")
 	}
 
-	return nil
+	_ = cmdClip.Kill()
+	_ = cmdPrim.Kill()
+	_ = cmdClip.Wait()
+	_ = cmdPrim.Wait()
+
+	return ctx.Err()
 }
 
 // CopyOnly copies text directly to the clipboard without synthesizing a paste chord.
