@@ -190,7 +190,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 	wg.Wait()
 	d.stopLevelMonitoring()
 	d.stopStreamingMonitoring()
-	_ = d.ducker.Restore()
+	// An error here now means the device would not confirm the restore —
+	// i.e. it may still be muted — which is worth a log line on the way out
+	// rather than silence.
+	if err := d.ducker.Restore(); err != nil {
+		d.logger.Warn("ducking: restore on shutdown failed — background audio may still be ducked", "err", err)
+	}
 	_ = d.overlay.Close()
 	if closer, ok := d.transcriber.(io.Closer); ok {
 		_ = closer.Close()

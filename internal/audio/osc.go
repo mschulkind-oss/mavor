@@ -30,6 +30,15 @@ const DefaultOSCPort = 10024
 // second before recording starts.
 const DefaultOSCTimeoutMS = 200
 
+// restoreAttempts is how many send-and-confirm cycles Restore runs before
+// giving up and reporting the parameters still ducked. Against a device
+// that answers queries but disagrees, a cycle costs one round trip; against
+// a device that is silent, one timeout each — three of the default 200 ms,
+// paid twice per dictation cycle, and only in the window where a device was
+// alive at Duck and dead by Restore. A restore that confirmed nothing would
+// be cheaper, and that is the bug this constant exists to prevent.
+const restoreAttempts = 3
+
 // OSCDucker mutes parameters on a network audio device while mavor is
 // recording, and puts them back afterwards.
 //
@@ -57,10 +66,18 @@ const DefaultOSCTimeoutMS = 200
 // channel the user had already muted stays muted afterwards rather than being
 // switched on by a dictation ending.
 //
-// Best-effort by design. UDP acknowledges nothing, and a mixer that is
-// powered off is a normal Tuesday — Duck reports what went wrong and the
-// daemon logs it and dictates anyway, which is the same contract
-// CommandDucker has.
+// Restore confirms what it sends: it reads each parameter back and retries
+// the send-and-confirm cycle restoreAttempts times, and if the device still
+// disagrees it reports an error and stays ducked with the original values
+// saved, so the next cycle retries them. UDP acknowledges nothing, and a
+// restore that only fired and forgot could lose one datagram and leave the
+// parameter muted forever — invisibly, because the log would still say
+// "restored", and permanently, because the next Duck would read the muted
+// value back and adopt it as the pre-duck value.
+//
+// Best-effort by design. A mixer that is powered off is a normal Tuesday —
+// Duck reports what went wrong and the daemon logs it and dictates anyway,
+// which is the same contract CommandDucker has.
 type OSCDucker struct {
 	mu      sync.Mutex
 	addr    string
@@ -175,10 +192,26 @@ func (x *OSCDucker) Duck() error {
 	// is a far worse failure than not ducking. If a device accepts sets but
 	// does not answer queries, it is not usable here, and `mavor doctor` says
 	// so in words.
-	saved, missing := x.query()
+	saved, missing := x.queryPaths(x.paths)
 	if len(missing) > 0 {
 		x.log.Warn("osc: device did not report these parameters, so they were left alone",
 			"paths", missing, "addr", x.addr, "timeout", x.timeout)
+	}
+
+	// A parameter already sitting at the muted value is either the user's own
+	// mute — which Restore must and does put back — or the residue of a
+	// restore that never landed. The two are indistinguishable on the wire,
+	// so the honest move is to name the parameter in the log and let a human
+	// decide which it was.
+	var alreadyMuted []string
+	for _, p := range x.paths {
+		if v, ok := saved[p]; ok && v == x.muted {
+			alreadyMuted = append(alreadyMuted, p)
+		}
+	}
+	if len(alreadyMuted) > 0 {
+		x.log.Warn("osc: these were already at the muted value before mavor ducked them — either muted on purpose, or a previous restore never landed",
+			"paths", alreadyMuted, "addr", x.addr)
 	}
 
 	var errs []error
@@ -197,7 +230,22 @@ func (x *OSCDucker) Duck() error {
 	return errors.Join(errs...)
 }
 
-// Restore sets each parameter back to the value it had before Duck.
+// Restore sets each parameter back to the value it had before Duck, and
+// makes the device confirm it.
+//
+// Sending is not enough: a connected UDP socket reports a successful Write
+// even when the datagram never arrives, so a fire-and-forget restore could
+// lose exactly one datagram and leave the parameter muted forever. Restore
+// therefore reads every parameter back after sending, and retries the whole
+// send-and-confirm cycle restoreAttempts times.
+//
+// If the device still disagrees after the last attempt, Restore returns an
+// error and remains ducked with the original values saved. That is the state
+// the next cycle needs: Duck on a ducked ducker is a no-op that keeps the
+// saved values, and the next Restore retries them — so a mute orphaned while
+// the device was offline heals itself on the first cycle after it comes
+// back, with the values from before the duck rather than the muted ones a
+// fresh Duck would otherwise have adopted as the baseline.
 func (x *OSCDucker) Restore() error {
 	x.mu.Lock()
 	defer x.mu.Unlock()
@@ -205,24 +253,55 @@ func (x *OSCDucker) Restore() error {
 	if !x.ducked {
 		return nil
 	}
-	x.ducked = false
-	saved := x.saved
-	x.saved = nil
-
+	if len(x.saved) == 0 {
+		// Duck muted nothing — the device never answered — so there is
+		// nothing to put back and nothing to confirm.
+		x.ducked = false
+		return nil
+	}
 	if err := x.dial(); err != nil {
-		return err
+		return err // still ducked, values still saved, retried next cycle
 	}
-	var errs []error
+
+	// Config order, not map order: retries and error messages read the way
+	// the config file does.
+	savedPaths := make([]string, 0, len(x.saved))
 	for _, p := range x.paths {
-		old, ok := saved[p]
-		if !ok {
-			continue // never read, therefore never muted — see Duck
-		}
-		if err := x.send(p, old); err != nil {
-			errs = append(errs, err)
+		if _, ok := x.saved[p]; ok {
+			savedPaths = append(savedPaths, p)
 		}
 	}
-	return errors.Join(errs...)
+
+	var unconfirmed []string
+	for attempt := 1; attempt <= restoreAttempts; attempt++ {
+		var errs []error
+		for _, p := range savedPaths {
+			if err := x.send(p, x.saved[p]); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if len(errs) > 0 {
+			// The socket is finished; a retry would fail against it too.
+			// Still ducked, still saved.
+			return errors.Join(errs...)
+		}
+		got, _ := x.queryPaths(savedPaths)
+		unconfirmed = unconfirmed[:0]
+		for _, p := range savedPaths {
+			if got[p] != x.saved[p] {
+				unconfirmed = append(unconfirmed, p)
+			}
+		}
+		if len(unconfirmed) == 0 {
+			x.ducked = false
+			x.saved = nil
+			return nil
+		}
+		x.log.Debug("osc: restore not confirmed yet",
+			"attempt", attempt, "of", restoreAttempts, "paths", unconfirmed, "addr", x.addr)
+	}
+	return fmt.Errorf("osc: %s at %s never confirmed the restore after %d attempts — still considered ducked; the original values will be retried on the next restore",
+		strings.Join(unconfirmed, ", "), x.addr, restoreAttempts)
 }
 
 // Probe asks the device for the current value of each configured parameter,
@@ -238,7 +317,7 @@ func (x *OSCDucker) Probe() (values map[string]int32, missing []string, err erro
 	if err := x.dial(); err != nil {
 		return nil, nil, err
 	}
-	got, missed := x.query()
+	got, missed := x.queryPaths(x.paths)
 	return got, missed, nil
 }
 
@@ -278,19 +357,19 @@ func (x *OSCDucker) dial() error {
 	return nil
 }
 
-// query asks for every path's current value and returns what came back, plus
-// the paths that did not answer in time.
+// queryPaths asks for the current value of each of paths and returns what
+// came back, plus the paths that did not answer in time.
 //
 // Every question goes out before the first answer is read. Waiting for each
 // reply in turn would cost one round trip per path, and against an
 // unreachable device one whole timeout per path — with two channels that is
 // nearly half a second added to the start of every dictation.
-func (x *OSCDucker) query() (map[string]int32, []string) {
+func (x *OSCDucker) queryPaths(paths []string) (map[string]int32, []string) {
 	want := map[string]bool{}
-	for _, p := range x.paths {
+	for _, p := range paths {
 		want[p] = true
 	}
-	for _, p := range x.paths {
+	for _, p := range paths {
 		if err := x.sendRaw(encodeQuery(p)); err != nil {
 			x.log.Debug("osc: query failed", "path", p, "err", err)
 		}
@@ -316,7 +395,7 @@ func (x *OSCDucker) query() (map[string]int32, []string) {
 	_ = x.conn.SetReadDeadline(time.Time{})
 
 	var missing []string
-	for _, p := range x.paths {
+	for _, p := range paths {
 		if _, ok := got[p]; !ok {
 			missing = append(missing, p)
 		}

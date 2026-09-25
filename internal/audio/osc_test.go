@@ -1,9 +1,12 @@
 package audio
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -28,6 +31,15 @@ type fakeMixer struct {
 	// silent makes the mixer accept messages and answer nothing, which is
 	// what an unreachable or wedged device looks like from the client side.
 	silent bool
+	// swallowing applies no sets while still answering queries, which is
+	// what a device whose control plane is alive but whose writes go
+	// nowhere looks like.
+	swallowing bool
+	// swallowRemaining additionally swallows the next n sets and then
+	// applies again, so a test can lose exactly n datagrams deterministically
+	// — the transient this file exists for — without racing a goroutine
+	// against millisecond retry cycles.
+	swallowRemaining int
 	// refused are addresses it ignores queries for, the way a device does for
 	// a parameter it does not have.
 	refused map[string]bool
@@ -80,7 +92,13 @@ func (m *fakeMixer) serve() {
 		}
 		if a, v, ok := decodeIntReply(pkt); ok {
 			m.sets = append(m.sets, mixerSet{addr: a, val: v})
-			m.values[a] = v
+			swallow := m.swallowing || m.swallowRemaining > 0
+			if m.swallowRemaining > 0 {
+				m.swallowRemaining--
+			}
+			if !swallow {
+				m.values[a] = v
+			}
 		}
 		m.mu.Unlock()
 	}
@@ -94,6 +112,14 @@ func (m *fakeMixer) goSilent() {
 	m.silent = true
 }
 
+// unsilent brings the mixer back from goSilent, the way a device does when
+// it is powered on again or its network comes back.
+func (m *fakeMixer) unsilent() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.silent = false
+}
+
 // refuse makes the mixer ignore queries for one address while still answering
 // the rest, which is what a path the device does not implement looks like.
 func (m *fakeMixer) refuse(addr string) {
@@ -103,6 +129,34 @@ func (m *fakeMixer) refuse(addr string) {
 		m.refused = map[string]bool{}
 	}
 	m.refused[addr] = true
+}
+
+// swallow makes the mixer accept and record sets but apply none of them,
+// which is what a wedged device looks like: the control plane still answers
+// queries with the values it already holds, and the writes go nowhere. This
+// is the shape the lost-restore bug had: a set that never lands is
+// indistinguishable from one that did, until something reads the value back.
+func (m *fakeMixer) swallow() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.swallowing = true
+}
+
+// stopSwallowing heals the mixer: sets apply again.
+func (m *fakeMixer) stopSwallowing() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.swallowing = false
+}
+
+// swallowNext swallows exactly the next n sets — the mixer keeps answering
+// queries with the values it already holds — and applies every set after
+// that, which is what a device recovering mid-restore looks like from the
+// client side.
+func (m *fakeMixer) swallowNext(n int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.swallowRemaining = n
 }
 
 func (m *fakeMixer) setRaw(addr string, v int32) {
@@ -313,6 +367,142 @@ func TestOSCDuckIsIdempotentAndRestoreWithoutDuckIsANoop(t *testing.T) {
 	m.waitForSets(t, 2)
 	if got := m.value(15); got != 1 {
 		t.Errorf("channel 15 = %d after restore, want 1", got)
+	}
+}
+
+// The incident this file exists for: a device wedges between Duck and
+// Restore — it still answers queries, but the restore datagrams go nowhere.
+// The restore must not report success, and it must not forget the original
+// values, because the next Duck would read the muted value back and save it
+// as "what was there before", which is how one lost datagram becomes a
+// permanent, self-laundering mute.
+func TestOSCRestoreUnverifiedStaysDuckedAndKeepsTheOriginalValues(t *testing.T) {
+	m := startFakeMixer(t, map[int]int32{15: 1, 16: 1})
+	d := newTestDucker(t, m, []int{15, 16}, 100*time.Millisecond)
+
+	if err := d.Duck(); err != nil {
+		t.Fatalf("Duck: %v", err)
+	}
+	m.waitForSets(t, 2)
+
+	m.swallow() // wedged: queries answered, sets swallowed
+	err := d.Restore()
+	if err == nil {
+		t.Fatal("Restore against a device that swallows the sets reported success; want an error naming the unverified paths")
+	}
+	if !d.IsDucked() {
+		t.Error("IsDucked() = false after an unverified restore — the mute is now orphaned: nobody remembers what to put back")
+	}
+	if got := m.value(15); got != 0 {
+		t.Errorf("channel 15 = %d while wedged, want still muted at 0", got)
+	}
+
+	// The device heals. The next Restore must put back the values from
+	// BEFORE the duck, not the muted ones it would have re-learned by
+	// querying after a state-forgetting restore.
+	m.stopSwallowing()
+	if err := d.Restore(); err != nil {
+		t.Fatalf("Restore after the device healed: %v", err)
+	}
+	m.waitForSets(t, 4)
+	for _, ch := range []int{15, 16} {
+		if got := m.value(ch); got != 1 {
+			t.Errorf("channel %d = %d after the healed restore, want 1 — the original pre-duck value", ch, got)
+		}
+	}
+	if d.IsDucked() {
+		t.Error("IsDucked() = true after a verified restore")
+	}
+}
+
+// A transient swallow — the set lands on a later attempt within the same
+// Restore call — succeeds without error and without the caller ever knowing
+// a datagram was lost.
+func TestOSCRestoreRetriesWithinTheSameCall(t *testing.T) {
+	m := startFakeMixer(t, map[int]int32{15: 1, 16: 1})
+	d := newTestDucker(t, m, []int{15, 16}, 100*time.Millisecond)
+
+	if err := d.Duck(); err != nil {
+		t.Fatalf("Duck: %v", err)
+	}
+	m.waitForSets(t, 2)
+
+	m.swallowNext(2) // exactly one restore attempt's worth of sets is lost
+
+	if err := d.Restore(); err != nil {
+		t.Fatalf("Restore should have succeeded on a retry once the device applied again: %v", err)
+	}
+	m.waitForSets(t, 6)
+	for _, ch := range []int{15, 16} {
+		if got := m.value(ch); got != 1 {
+			t.Errorf("channel %d = %d, want 1", ch, got)
+		}
+	}
+	if d.IsDucked() {
+		t.Error("IsDucked() = true after a verified restore")
+	}
+}
+
+// A device that went fully offline between Duck and Restore: the restore
+// write "succeeds" (UDP never reports otherwise) but nothing confirms it.
+// State must be kept for the next cycle, exactly as with the swallowing
+// device.
+func TestOSCRestoreAgainstASilentDeviceKeepsState(t *testing.T) {
+	m := startFakeMixer(t, map[int]int32{15: 1})
+	d := newTestDucker(t, m, []int{15}, 80*time.Millisecond)
+
+	if err := d.Duck(); err != nil {
+		t.Fatalf("Duck: %v", err)
+	}
+	m.waitForSets(t, 1)
+
+	m.goSilent()
+	if err := d.Restore(); err == nil {
+		t.Fatal("Restore against an offline device reported success; want an error")
+	}
+	if !d.IsDucked() {
+		t.Error("IsDucked() = false — the mute is orphaned with the device offline")
+	}
+
+	// And the self-heal: device back, next restore lands the original value.
+	m.unsilent()
+	if err := d.Restore(); err != nil {
+		t.Fatalf("Restore after the device came back: %v", err)
+	}
+	m.waitForSets(t, 3)
+	if got := m.value(15); got != 1 {
+		t.Errorf("channel 15 = %d, want 1", got)
+	}
+}
+
+// When Duck reads a parameter that is already at the muted value, that is
+// either the user's own mute (legitimate, and restore must preserve it) or
+// the residue of a lost restore (this bug). They are indistinguishable on
+// the wire, so the one honest move is to say so in the log.
+func TestOSCDuckSaysWhenAPathIsAlreadyAtTheMutedValue(t *testing.T) {
+	m := startFakeMixer(t, map[int]int32{15: 0})
+	d := newTestDucker(t, m, []int{15}, 100*time.Millisecond)
+
+	var buf bytes.Buffer
+	d.SetLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+
+	if err := d.Duck(); err != nil {
+		t.Fatalf("Duck: %v", err)
+	}
+	m.waitForSets(t, 1)
+	log := buf.String()
+	if !strings.Contains(log, "/ch/15/mix/on") || !strings.Contains(log, "already") {
+		t.Errorf("Duck did not say that the parameter was already muted; log:\n%s", log)
+	}
+
+	// The contract that makes the warning safe: a pre-existing mute survives
+	// the dictation rather than being switched on.
+	if err := d.Restore(); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	m.waitForSets(t, 2)
+	if got := m.value(15); got != 0 {
+		t.Errorf("channel 15 = %d after restore, want 0 — the user's own mute must survive", got)
 	}
 }
 
