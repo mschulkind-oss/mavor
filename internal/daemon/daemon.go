@@ -51,6 +51,11 @@ type Daemon struct {
 	binaryPath        string
 	upgradeInterval   time.Duration
 
+	// controlMu keeps concurrent IPC control requests from advancing the FSM
+	// while the previous transition is still starting or stopping capture.
+	// Status requests do not take this lock so they remain responsive.
+	controlMu sync.Mutex
+
 	levelCancel  context.CancelFunc
 	levelMu      sync.Mutex
 	streamCancel context.CancelFunc
@@ -210,6 +215,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 }
 
 func (d *Daemon) handleRequest(req ipc.Request) ipc.Response {
+	if req.Action == "toggle" || req.Action == "start" || req.Action == "stop" {
+		d.controlMu.Lock()
+		defer d.controlMu.Unlock()
+	}
 	d.logger.Info("ipc: request", "action", req.Action, "state_before", d.machine.State())
 	switch req.Action {
 	case "toggle":

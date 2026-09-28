@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -106,6 +107,84 @@ func TestToggleDrivesFullPipeline(t *testing.T) {
 	if len(calls) != 1 || calls[0] != "hello world" {
 		t.Fatalf("output.Calls = %v, want [\"hello world\"]", calls)
 	}
+}
+
+// gatedStartRecorder holds the first Start until the test has sent a second
+// control request. Later starts go directly to the underlying recorder.
+type gatedStartRecorder struct {
+	audio.Recorder
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (r *gatedStartRecorder) Start(ctx context.Context) error {
+	r.once.Do(func() {
+		close(r.entered)
+		<-r.release
+	})
+	return r.Recorder.Start(ctx)
+}
+
+func TestConcurrentTogglesWaitForRecorderStart(t *testing.T) {
+	recorder := &gatedStartRecorder{
+		Recorder: &audio.MockRecorder{FixturePath: "/tmp/fake.wav"},
+		entered:  make(chan struct{}),
+		release:  make(chan struct{}),
+	}
+	out := &output.Mock{}
+	d, sock := newTestDaemon(t, func(c *Config) {
+		c.Recorder = recorder
+		c.Output = out
+	})
+	stop := runDaemon(t, d)
+	defer stop()
+	// Ensure the listener is ready before sending the concurrent requests.
+	sendWithRetry(t, sock, "status")
+
+	first := make(chan ipc.Response, 1)
+	second := make(chan ipc.Response, 1)
+	errs := make(chan error, 2)
+	request := func(result chan<- ipc.Response) {
+		resp, err := ipc.Send(sock, ipc.Request{Action: "toggle"}, sendTimeout)
+		if err != nil {
+			errs <- err
+			return
+		}
+		result <- resp
+	}
+	go request(first)
+	select {
+	case <-recorder.entered:
+	case <-time.After(sendTimeout):
+		t.Fatal("first toggle never entered recorder.Start")
+	}
+	go request(second)
+	// Give the second connection time to reach the daemon while Start is
+	// blocked. Without serialization it stops an as-yet unstarted recorder.
+	time.Sleep(50 * time.Millisecond)
+	close(recorder.release)
+
+	for _, result := range []<-chan ipc.Response{first, second} {
+		select {
+		case <-result:
+		case err := <-errs:
+			t.Fatalf("toggle request: %v", err)
+		case <-time.After(sendTimeout):
+			t.Fatal("toggle request did not complete")
+		}
+	}
+	waitForState(t, sock, "idle")
+	if calls := out.Calls(); len(calls) != 1 {
+		t.Fatalf("concurrent toggles produced %d transcripts, want 1 (recorder must be stopped)", len(calls))
+	}
+	if resp := sendWithRetry(t, sock, "toggle"); resp.State != "recording" {
+		t.Fatalf("next recording state = %q, want recording", resp.State)
+	}
+	if resp := sendWithRetry(t, sock, "toggle"); resp.State != "transcribing" {
+		t.Fatalf("next stop state = %q, want transcribing", resp.State)
+	}
+	waitForState(t, sock, "idle")
 }
 
 func TestUnknownActionReturnsError(t *testing.T) {
