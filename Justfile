@@ -55,6 +55,7 @@ check-ci: lint-ci lint-tagged test
 lint-tagged:
     go vet -tags=integration ./test/integration/...
     go vet -tags=e2e ./... 
+    go vet -tags=gnome ./test/gnome/...
 
 # Format all Go source files in-place.
 format:
@@ -130,6 +131,10 @@ dev:
 # Skipped when the Wayland/audio harness can't come up; failures are real.
 test-int *args:
     go test -tags=integration ./test/integration/... {{args}}
+
+# Real isolated GNOME acceptance: missing dependencies and focus regressions fail.
+test-gnome *args:
+    go test -tags=gnome ./test/gnome/... -count=1 -timeout=2m {{args}}
 
 # End-to-end smoke test with real whisper transcription.
 test-e2e: (_ensure-model test_model)
