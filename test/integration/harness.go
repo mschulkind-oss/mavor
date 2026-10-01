@@ -528,9 +528,10 @@ func (h *Harness) WlPaste() string {
 // daemon's socket path plus a teardown closure. modelName is a whisper
 // catalog name (e.g. "whisper-tiny.en"); the stub file is written to the path
 // speech.WhisperModelPath gives for it, which is upstream's. If a real
-// model file isn't already at the expected path, a stub is dropped so the
-// daemon's pre-flight check passes — tests that need real transcription
-// must arrange for a real model.
+// model file isn't already at the expected path, a stub and empty-transcript
+// whisper-cli shim are installed so lifecycle tests do not depend on silence
+// filtering to avoid inference. An explicitly configured transcript shim is
+// preserved; tests that need real transcription must arrange for a real model.
 func (h *Harness) RunDaemon(ctx context.Context, binary, modelName string, extraEnv ...string) (socket string, stop func()) {
 	socket = filepath.Join(h.XDGRuntime, "mavor.sock")
 	modelDir := filepath.Join(h.XDGRuntime, "cache", "mavor", "models")
@@ -541,6 +542,9 @@ func (h *Harness) RunDaemon(ctx context.Context, binary, modelName string, extra
 	if _, err := os.Stat(modelPath); err != nil {
 		if err := os.WriteFile(modelPath, []byte("stub"), 0o644); err != nil {
 			h.t.Fatal(err)
+		}
+		if h.ShimDir == "" {
+			h.installWhisperShim("")
 		}
 	}
 
@@ -587,9 +591,13 @@ func (h *Harness) RunDaemon(ctx context.Context, binary, modelName string, extra
 	if err := cmd.Start(); err != nil {
 		h.t.Fatalf("mavor daemon: %v", err)
 	}
+	var stopOnce sync.Once
 	stop = func() {
-		_ = cmd.Process.Signal(os.Interrupt)
-		_, _ = cmd.Process.Wait()
+		stopOnce.Do(func() {
+			_ = cmd.Process.Signal(os.Interrupt)
+			// Wait also joins stdout/stderr forwarding before TempDir cleanup.
+			_ = cmd.Wait()
+		})
 	}
 	h.t.Cleanup(stop)
 	deadline := time.Now().Add(5 * time.Second)
@@ -619,6 +627,7 @@ func (h *Harness) HideOverlay(socket string) {
 	if _, err := ipc.Send(socket, ipc.Request{Action: "stop"}, 2*time.Second); err != nil {
 		h.t.Fatalf("stop: %v", err)
 	}
+	h.WaitForState(socket, "idle")
 }
 
 // DaemonState reports the daemon's current FSM state, or an error if it is not
