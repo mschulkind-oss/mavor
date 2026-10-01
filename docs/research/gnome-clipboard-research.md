@@ -283,7 +283,7 @@ outside this dispatcher-level suite. Native selection reads do not
 claim application Paste acceptance or complete-desktop lifecycle checks.
 
 Finalize evidence and cleanup limits are recorded in the
-[independent report](../reports/gnome-headless-qa.md#finalize-repair-and-rerun).
+[independent report](../reports/gnome-headless-qa.md#independent-execution).
 The original Wayland run still fails focused and overview acceptance; deadline
 and forced worker-death cleanup pass. X11 acceptance is a separate result below.
 

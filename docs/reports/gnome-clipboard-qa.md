@@ -6,8 +6,11 @@ status: accepted
 
 Reviewed the actual uncommitted worktree based on `a2ba579`, 2026-10-01.
 Production code and tests were not modified; no commit was made.
-The [implementation QA](../qa/gnome-clipboard-qa.md) records earlier work;
-this report records independent source review and reruns.
+This is the historical review of the initial Wayland-helper implementation.
+The later [real GNOME review](gnome-headless-qa.md) supersedes its outstanding
+live-test verdict: the explicit X11 backend passed, while the Wayland helper's
+focus failures remain. Current [implementation QA](../qa/gnome-clipboard-qa.md)
+records that correction and its verified scope.
 
 ## Verdict
 
@@ -118,6 +121,6 @@ The final phase corrected the stale diagram in the user guide and retained
 the existing implementation regression tests. The other three nonblocking
 findings remain deferred, not silently treated as verified. Final race, Sway,
 Markdown, and local-gate evidence is recorded in the
-[delivery QA](../qa/gnome-clipboard-qa.md#final-review-disposition-and-rerun-evidence).
+[delivery QA](../qa/gnome-clipboard-qa.md#local-verification).
 This independent report describes the pre-commit review; final delivery is
 one coherent commit, with main-checkout integration left to the parent.
