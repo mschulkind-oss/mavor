@@ -563,8 +563,9 @@ volume = "0%"                     # "0%" mutes; "25%" merely lowers
 [overlay]
 top_margin = 8   # px below the top of the usable area, under your bar
 
-# Chosen for you. Override only if `mavor doctor` gives you a reason to.
+# Advanced choices. Override automatic settings only if `mavor doctor` gives you a reason to.
 [advanced]
+# silence_filter = false # optional final-recording rejection, not preview or chunking
 # placement = "auto"     # "auto", or "subprocess" for whisper models
 # server = "http://…"    # send audio to a whisper server you run instead
 # threads = 6            # default: this machine's physical core count

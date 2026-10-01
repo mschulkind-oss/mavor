@@ -524,3 +524,55 @@ clipboard = true
 		t.Error("Clipboard = false, want true")
 	}
 }
+
+func TestSilenceFilterConfig(t *testing.T) {
+	if Default().Advanced.SilenceFilter {
+		t.Fatal("silence filter must default off")
+	}
+	for _, tc := range []struct {
+		name, body string
+		want       bool
+	}{
+		{"omitted", "[advanced]\n", false},
+		{"explicit false", "[advanced]\nsilence_filter = false\n", false},
+		{"explicit true", "[advanced]\nsilence_filter = true\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, err := LoadFile(writeConfig(t, tc.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(f.UnknownKeys) != 0 {
+				t.Fatalf("unknown keys: %v", f.UnknownKeys)
+			}
+			cfg, err := Load(writeConfig(t, tc.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Advanced.SilenceFilter != tc.want {
+				t.Fatalf("silence filter = %v, want %v", cfg.Advanced.SilenceFilter, tc.want)
+			}
+			body, err := toml.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(body), "silence_filter = "+strconv.FormatBool(tc.want)) {
+				t.Fatalf("config show omitted effective setting: %s", body)
+			}
+			reloaded, err := Load(writeConfig(t, string(body)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(cfg, reloaded) {
+				t.Fatal("config show round trip changed configuration")
+			}
+		})
+	}
+	cfg, err := Load(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Advanced.SilenceFilter {
+		t.Fatal("missing file enabled filtering")
+	}
+}

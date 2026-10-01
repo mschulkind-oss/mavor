@@ -134,8 +134,10 @@ top_margin = %d   # px below the top of the usable area, under your bar
 # walks sideways while you speak.
 preview_width = %v
 
-# Chosen for you. Override only if `+"`mavor doctor`"+` gives you a reason to.
+# Advanced choices. Override automatic settings only if `+"`mavor doctor`"+` gives you a reason to.
 [advanced]
+# silence_filter = %t # opt into final-recording rejection by energy/preview
+#                        # evidence; does not change preview pauses or chunking.
 # placement = %q     # "auto", or "subprocess" for whisper models
 # server = "http://…"    # send audio to a whisper server you run instead
 # threads = %-12d # default: this machine's physical core count
@@ -168,6 +170,7 @@ preview_width = %v
 		d.Output.Clipboard,
 		d.Overlay.TopMargin,
 		d.Overlay.PreviewWidth,
+		d.Advanced.SilenceFilter,
 		d.Advanced.Placement,
 		d.Advanced.Threads,
 		d.Advanced.GPU,

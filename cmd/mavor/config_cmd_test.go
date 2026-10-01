@@ -79,6 +79,7 @@ func TestTemplateExamplesStateTheDefaults(t *testing.T) {
 		"pause_ms = 450",
 		"min_phrase_ms = 600",
 		"boost = 1.5",
+		"silence_filter = false",
 		`placement = "auto"`,
 		`gpu = "auto"`,
 		`chunking = "auto"`,

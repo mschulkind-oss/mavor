@@ -46,6 +46,7 @@ type Daemon struct {
 	previewMode       speech.PreviewMode
 	companion         speech.StreamTranscriber
 	history           TranscriptRecorder
+	silenceFilter     bool
 	silenceThreshold  time.Duration
 	minPhraseDuration time.Duration
 	binaryPath        string
@@ -72,8 +73,9 @@ type Daemon struct {
 	streamHadSpeech bool // Recognition evidence for this recording, never output text.
 
 	// streamDrain is closed when the previous recording's StopStream has
-	// returned. Its text is never emitted; only a quiet recording with no
-	// recognition evidence waits for it before deciding to skip transcription.
+	// returned. Its text is never emitted. With SilenceFilter enabled, a quiet
+	// recording without recognition evidence waits for it before deciding to
+	// skip transcription.
 	// The next StartStream also waits before reusing the same recognizer.
 	streamDrain chan struct{}
 }
@@ -105,7 +107,12 @@ type Config struct {
 	// emitter and never contributes to the final transcript.
 	PreviewCompanion speech.StreamTranscriber
 
-	History           TranscriptRecorder
+	// SilenceFilter opts into the final-recording energy check. Preview
+	// recognition can override rejection; false always sends audio to the model.
+	SilenceFilter bool
+
+	History TranscriptRecorder
+	// SilenceThreshold controls preview phrase pauses, not final rejection.
 	SilenceThreshold  time.Duration
 	MinPhraseDuration time.Duration
 
@@ -160,6 +167,7 @@ func New(c Config) *Daemon {
 		previewMode:       c.PreviewMode,
 		companion:         c.PreviewCompanion,
 		history:           c.History,
+		silenceFilter:     c.SilenceFilter,
 		silenceThreshold:  silenceThresh,
 		minPhraseDuration: minPhrase,
 		binaryPath:        c.BinaryPath,
@@ -738,7 +746,7 @@ func (d *Daemon) runTranscription(ctx context.Context) {
 	// The energy filter measures loudness, not intelligibility: quiet or short
 	// speech can fail it even after the preview recognized words. Recognition
 	// wins that disagreement; only the main model's final transcript is emitted.
-	if wav != "" {
+	if d.silenceFilter && wav != "" {
 		if hasSpeech, vadErr := audio.DetectSpeech(wav, 150*time.Millisecond); vadErr == nil && !hasSpeech {
 			if !d.previewRecognizedSpeech(ctx) {
 				d.logger.Info("pipeline: silence detected by VAD pre-filter — skipping transcription")

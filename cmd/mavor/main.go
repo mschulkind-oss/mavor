@@ -276,6 +276,7 @@ func runDaemon(verbose bool, logFile string) error {
 		PreviewCompanion:  preview.Companion,
 		History:           transcriptStore(logger),
 		BinaryPath:        upgradeWatch,
+		SilenceFilter:     cfg.Advanced.SilenceFilter,
 		SilenceThreshold:  time.Duration(cfg.Preview.PauseMS) * time.Millisecond,
 		MinPhraseDuration: time.Duration(cfg.Preview.MinPhraseMS) * time.Millisecond,
 	})
@@ -301,6 +302,7 @@ func runDaemon(verbose bool, logFile string) error {
 		"preview_reason", preview.Reason,
 		"gpu", cfg.Advanced.GPU,
 		"threads", cfg.Advanced.Threads,
+		"silence_filter", cfg.Advanced.SilenceFilter,
 		"recording_dir", recDir,
 		"top_margin", cfg.Overlay.TopMargin,
 		"duck_enabled", cfg.Ducking.Enabled,

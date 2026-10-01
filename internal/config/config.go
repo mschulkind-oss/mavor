@@ -271,6 +271,11 @@ type Overlay struct {
 // Advanced holds the settings mavor picks for you. A key belongs here only if
 // mavor cannot compute the right value — see the design's principle P1.
 type Advanced struct {
+	// SilenceFilter opts into rejecting final recordings that fail the energy
+	// check and have no recognized preview words. It does not affect preview
+	// phrase pauses, long-audio chunking, or transcript annotation stripping.
+	SilenceFilter bool `toml:"silence_filter"`
+
 	// Placement is where the model's runtime executes: "auto", or
 	// "subprocess" to spawn a fresh whisper-cli per utterance. The other
 	// placements are derived from the model and cannot be asked for. See
@@ -361,10 +366,11 @@ func Default() Config {
 			PreviewWidth: DefaultPreviewWidth,
 		},
 		Advanced: Advanced{
-			Placement: "auto",
-			Threads:   PhysicalCores(),
-			GPU:       "auto",
-			Chunking:  DefaultChunking,
+			SilenceFilter: false,
+			Placement:     "auto",
+			Threads:       PhysicalCores(),
+			GPU:           "auto",
+			Chunking:      DefaultChunking,
 		},
 		Paths: Paths{
 			Models: defaultModelDir(),

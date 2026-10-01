@@ -66,7 +66,7 @@ For high-level architecture see [`how-mavor-works.md`](./reference/how-mavor-wor
 1. **Activation:** Keypress signals `mavor start` (push-to-talk) or `mavor toggle`. Daemon enters `recording`.
 2. **Audio Capture & Ducking:** Audio capture initializes via PipeWire (`parec`). If `[ducking]` is enabled, background media streams (Spotify, Firefox) are automatically ducked.
 3. **Live HUD Waveform and preview:** The layer-shell HUD overlay appears 8px below Waybar, rendering a live volume waveform meter across 6 discrete energy levels (0% to 100%). If the preview is on, provisional text appears there too — see [§7.2](#72-preview--text-in-the-overlay-while-you-speak). **The preview is never typed.**
-4. **VAD Gating & Transcription:** On release (`mavor stop` / second `toggle`), an energy-threshold voice-activity check scans the captured WAV: it needs at least 150 ms of frames above an RMS threshold before the audio is worth decoding. Below that the cycle ends silently rather than handing whisper a silent clip to hallucinate over. This is a plain RMS gate computed in Go — there is no neural VAD model in `mavor`. If speech is detected, the model named by `model` transcribes it, once.
+4. **Final Transcription:** On release (`mavor stop` / second `toggle`), captured audio goes to the model named by `model`, including quiet, short, or silent recordings. Optional `advanced.silence_filter = true` rejects recordings lacking both sufficient energy and recognized preview words; it is off by default. This choice affects rejection before transcription, not preview pauses, long-audio chunking, or removal of non-speech annotations from final text.
 5. **Output Emission:** `wtype` types text directly into the focused window while `wl-copy` updates the Wayland clipboard. Temporary recording files in `/tmp/mavor-recordings/` are immediately purged.
 
 ---
@@ -423,8 +423,9 @@ volume = "0%"                     # "0%" mutes; "25%" merely lowers
 [overlay]
 top_margin = 8   # px below the top of the usable area, under your bar
 
-# Chosen for you. Override only if `mavor doctor` gives you a reason to.
+# Advanced choices. Override automatic settings only if `mavor doctor` gives you a reason to.
 [advanced]
+# silence_filter = false # optional final-recording rejection, not preview or chunking
 # placement = "auto"     # "auto", or "subprocess" for whisper models
 # server = "http://…"    # send audio to a whisper server you run instead
 # threads = 6            # default: this machine's physical core count
@@ -589,7 +590,7 @@ claims an exclusive zone, so the compositor places it inside the space Waybar
 has already reserved; a bar of any height, or no bar at all, needs no change
 here. Negative values are clamped to 0.
 
-### 7.6 `[advanced]` — chosen for you
+### 7.6 `[advanced]` — automatic settings and user choices
 
 A key belongs here only if mavor cannot compute the right value.
 
@@ -599,6 +600,26 @@ A key belongs here only if mavor cannot compute the right value.
 | `server` | An `http://` URL of a whisper server you run | unset. Setting it makes `placement` irrelevant |
 | `threads` | A thread count | This machine's **physical** core count |
 | `gpu` | `"auto"` or `"off"` | `"auto"` |
+| `silence_filter` | `true` or `false`; reject low-energy recordings without recognized preview words | `false` |
+
+**Silence filtering** is off by default so captured audio reaches the final
+model regardless of recording energy or preview evidence. To restore rejection
+before transcription, set:
+
+```toml
+[advanced]
+silence_filter = true
+```
+
+With it on, the energy check requires at least 150 ms above its loudness
+threshold. Recognized preview words override a failed check, including words
+recognized at preview stop; without earlier words, a quiet recording waits for
+that preview finish before deciding. An energy-check error does not reject the
+recording. This does not control preview phrase pauses, long-audio chunking, or
+stripping non-speech annotations from final text. Missing keys and explicit
+`false` mean the same thing; existing files need no rewrite. Restart the daemon
+after changing it. This setting makes no guarantee about a model's silence
+accuracy; observe the selected model's actual results.
 
 **Threads** default to physical cores rather than logical ones because that is
 where the measured scaling curve flattens: on a 6-core/12-thread machine, 6
@@ -892,7 +913,7 @@ There is one build and it is cgo, so there is no `build-sherpa` recipe and no
 | Preview shows words that were never said | Phrase mode feeding whisper short clips, which it fills with plausible text | Pull `zipformer-streaming` so `auto` uses the companion instead, or turn the preview off with `enabled = false` |
 | Vocabulary words still misheard | The model cannot be biased at all | `mavor doctor`'s `Vocabulary biasing` line says which mechanism applies; CTC, paraformer, moonshine and sensevoice have none |
 | Quiet, quick phrases disappear even though words appeared in the preview | Older versions rejected the recording using a fixed loudness threshold before final transcription | Update mavor: recognized preview words now prevent this rejection, including words recognized as you stop. The main model still produces the text that gets typed |
-| Quiet phrases disappear without any preview words | The loudness check cannot distinguish quiet speech from room noise without recognition evidence | Ensure the preview is enabled and its companion model is installed (`mavor setup`); if needed, raise microphone input gain or move closer |
-| Ghost words typed during silence | A model can mistake room noise for speech; the loudness check is not a speech recognizer | Check the selected microphone and background noise; preview recognition permits final transcription but is never itself typed |
+| Quiet phrases disappear without any preview words | With `advanced.silence_filter = true`, the loudness check can reject quiet speech without recognition evidence | Set `advanced.silence_filter = false` and restart the daemon to observe the final model's result. If keeping the filter enabled, ensure the preview and its companion model are installed (`mavor setup`); if needed, raise microphone input gain or move closer |
+| Unexpected words typed during silence | Captured audio reaches the model by default; its result must be observed | Check the selected microphone and actual model results. Optionally enable `advanced.silence_filter` to reject low-energy recordings without preview words; it is not a speech recognizer or an accuracy guarantee |
 | Text typed in wrong window | Focus shifted during transcription | Keep window focused until overlay closes |
 | Systemd service fails to start | Audio socket or Wayland display not ready | Ensure `PartOf=graphical-session.target` and PipeWire is running |

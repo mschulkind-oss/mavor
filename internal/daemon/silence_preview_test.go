@@ -3,11 +3,14 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/mschulkind-oss/mavor/internal/audio"
+	"github.com/mschulkind-oss/mavor/internal/history"
 	"github.com/mschulkind-oss/mavor/internal/output"
 	"github.com/mschulkind-oss/mavor/internal/speech"
 )
@@ -66,6 +69,7 @@ func TestQuietRecordingWithPreviewRunsFinalTranscription(t *testing.T) {
 			stream := speech.NewMockStreamTranscriber(tc.final)
 			stream.SetErrors(nil, nil, tc.stopErr)
 			d, sock := newTestDaemon(t, func(c *Config) {
+				c.SilenceFilter = true
 				c.Recorder = &audio.MockRecorder{FixturePath: quietRecording(t)}
 				c.Transcriber = main
 				c.Output = out
@@ -131,6 +135,7 @@ func TestPreviewSpeechEvidenceDoesNotLeakToNextRecording(t *testing.T) {
 	rec := &audio.MockRecorder{FixturePath: quietRecording(t)}
 	out := &output.Mock{}
 	d, sock := newTestDaemon(t, func(c *Config) {
+		c.SilenceFilter = true
 		c.Recorder = rec
 		c.Output = out
 		c.PreviewMode = speech.PreviewPhrases
@@ -185,6 +190,7 @@ func TestQuietPreviewDoesNotWaitForTailWhenWordsAlreadyRecognized(t *testing.T) 
 			main := &timedTranscriber{Mock: speech.Mock{Text: "final words"}, called: make(chan time.Time, 1)}
 			out := &output.Mock{}
 			d, sock := newTestDaemon(t, func(c *Config) {
+				c.SilenceFilter = true
 				c.Recorder = &audio.MockRecorder{FixturePath: quietRecording(t)}
 				c.Transcriber = main
 				c.Output = out
@@ -239,6 +245,143 @@ func TestQuietPreviewDoesNotWaitForTailWhenWordsAlreadyRecognized(t *testing.T) 
 			waitForState(t, sock, "idle")
 			if calls := out.Calls(); len(calls) != 1 || calls[0] != "final words" {
 				t.Fatalf("output = %v, want only final model words", calls)
+			}
+		})
+	}
+}
+
+// With no opt-in, quiet audio belongs to the final model, even without words
+// recognized by a preview. These fixtures deliberately fail DetectSpeech.
+func TestSilenceFilterDefaultOffRunsFinalTranscription(t *testing.T) {
+	for _, fixture := range []string{"quiet short", "zero amplitude", "header only"} {
+		for _, preview := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/preview=%v", fixture, preview), func(t *testing.T) {
+				wav := quietRecording(t)
+				if fixture != "quiet short" {
+					samples := make([]int16, audio.DefaultSampleRate)
+					if fixture == "header only" {
+						samples = nil
+					}
+					if err := audio.WriteWAV(wav, samples, audio.DefaultSampleRate); err != nil {
+						t.Fatal(err)
+					}
+				}
+				main := &timedTranscriber{Mock: speech.Mock{Text: "final words"}, called: make(chan time.Time, 1)}
+				out := &output.Mock{}
+				d, sock := newTestDaemon(t, func(c *Config) {
+					c.Recorder = &audio.MockRecorder{FixturePath: wav}
+					c.Transcriber = main
+					c.Output = out
+					c.PreviewEnabled = preview
+					c.PreviewMode = speech.PreviewCompanion
+					c.PreviewCompanion = speech.NewMockStreamTranscriber("")
+				})
+				stop := runDaemon(t, d)
+				defer stop()
+				sendWithRetry(t, sock, "toggle")
+				sendWithRetry(t, sock, "toggle")
+				waitForState(t, sock, "idle")
+				if len(main.called) != 1 {
+					t.Fatal("final model not called with silence filter default off")
+				}
+				if calls := out.Calls(); len(calls) != 1 || calls[0] != "final words" {
+					t.Fatalf("output = %v", calls)
+				}
+			})
+		}
+	}
+}
+
+func TestSilenceFilterDefaultOffDoesNotWaitForPreviewTail(t *testing.T) {
+	companion := &heldPreviewTail{
+		MockStreamTranscriber: speech.NewMockStreamTranscriber(""),
+		entered:               make(chan struct{}), release: make(chan struct{}),
+	}
+	main := &timedTranscriber{Mock: speech.Mock{Text: "final words"}, called: make(chan time.Time, 1)}
+	d, sock := newTestDaemon(t, func(c *Config) {
+		c.Recorder = &audio.MockRecorder{FixturePath: quietRecording(t)}
+		c.Transcriber = main
+		c.PreviewMode = speech.PreviewCompanion
+		c.PreviewCompanion = companion
+	})
+	stop := runDaemon(t, d)
+	defer stop()
+	defer func() { close(companion.release); d.awaitStreamDrain(t.Context()) }()
+	sendWithRetry(t, sock, "toggle")
+	sendWithRetry(t, sock, "toggle")
+	select {
+	case <-companion.entered:
+	case <-time.After(sendTimeout):
+		t.Fatal("tail decode did not start")
+	}
+	select {
+	case <-main.called:
+	case <-time.After(sendTimeout):
+		t.Fatal("default-off final transcription waited for preview evidence")
+	}
+}
+
+func TestEnabledSilenceFilterWithoutPreview(t *testing.T) {
+	for _, broken := range []bool{false, true} {
+		t.Run(fmt.Sprintf("energyCheckError=%v", broken), func(t *testing.T) {
+			wav := quietRecording(t)
+			if broken {
+				if err := os.WriteFile(wav, make([]byte, 64), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := audio.DetectSpeech(wav, 150*time.Millisecond); err == nil {
+					t.Fatal("fixture must produce an energy-check error")
+				}
+			}
+			main := &timedTranscriber{Mock: speech.Mock{Text: "final words"}, called: make(chan time.Time, 1)}
+			d, sock := newTestDaemon(t, func(c *Config) {
+				c.SilenceFilter = true
+				c.PreviewEnabled = false
+				c.Recorder = &audio.MockRecorder{FixturePath: wav}
+				c.Transcriber = main
+			})
+			stop := runDaemon(t, d)
+			defer stop()
+			sendWithRetry(t, sock, "toggle")
+			sendWithRetry(t, sock, "toggle")
+			waitForState(t, sock, "idle")
+			if got := len(main.called) != 0; got != broken {
+				t.Fatalf("final model called = %v, want %v", got, broken)
+			}
+		})
+	}
+}
+
+func TestDefaultOffQuietFinalEmptyTextIsNotTypedOrRecorded(t *testing.T) {
+	for _, text := range []string{"", "[BLANK_AUDIO]", "(machine whirring)"} {
+		t.Run(text, func(t *testing.T) {
+			store := &history.Store{Path: filepath.Join(t.TempDir(), "history.jsonl")}
+			out := &output.Mock{}
+			main := &timedTranscriber{Mock: speech.Mock{Text: text}, called: make(chan time.Time, 1)}
+			d, sock := newTestDaemon(t, func(c *Config) {
+				c.PreviewEnabled = false
+				c.Recorder = &audio.MockRecorder{FixturePath: quietRecording(t)}
+				c.Transcriber = main
+				c.History = store
+				c.Output = out
+			})
+			stop := runDaemon(t, d)
+			defer stop()
+			sendWithRetry(t, sock, "toggle")
+			sendWithRetry(t, sock, "toggle")
+			waitForState(t, sock, "idle")
+			if len(main.called) != 1 {
+				t.Fatal("final model was not called")
+			}
+			if calls := out.Calls(); len(calls) != 0 {
+				t.Fatalf("typed %v", calls)
+			}
+			entries, err := store.Recent(0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("recorded %v", entries)
 			}
 		})
 	}
