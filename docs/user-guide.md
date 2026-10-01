@@ -55,8 +55,8 @@ For high-level architecture see [`how-mavor-works.md`](./reference/how-mavor-wor
                   │   └──────┬──────┘└──────┬───────────┘   │
                   │          │              │               │
                   │   ┌──────▼──────┐┌──────▼───────────┐   │
-                  │   │ layer HUD   ││  output.Emitter  │   │
-                  │   │  + preview  ││ (wtype + wl-copy)│   │
+                  │   │ layer HUD   ││ Output dispatcher│   │
+                  │   │  + preview  ││ paste/type/copy  │   │
                   │   └─────────────┘└──────────────────┘   │
                   └─────────────────────────────────────────┘
 ```
@@ -67,7 +67,7 @@ For high-level architecture see [`how-mavor-works.md`](./reference/how-mavor-wor
 2. **Audio Capture & Ducking:** Audio capture initializes via PipeWire (`parec`). If `[ducking]` is enabled, background media streams (Spotify, Firefox) are automatically ducked.
 3. **Live HUD Waveform and preview:** The layer-shell HUD overlay appears 8px below Waybar, rendering a live volume waveform meter across 6 discrete energy levels (0% to 100%). If the preview is on, provisional text appears there too — see [§7.2](#72-preview--text-in-the-overlay-while-you-speak). **The preview is never typed.**
 4. **Final Transcription:** On release (`mavor stop` / second `toggle`), captured audio goes to the model named by `model`, including quiet, short, or silent recordings. Optional `advanced.silence_filter = true` rejects recordings lacking both sufficient energy and recognized preview words; it is off by default. This choice affects rejection before transcription, not preview pauses, long-audio chunking, or removal of non-speech annotations from final text.
-5. **Output Emission:** `wtype` types text directly into the focused window while `wl-copy` updates the Wayland clipboard. Temporary recording files in `/tmp/mavor-recordings/` are immediately purged.
+5. **Output Emission:** The default paste driver copies selections and injects a paste chord. Typing sends keystrokes; clipboard output copies only for manual paste. Additional copying in injection modes is off by default. Temporary recording files in `/tmp/mavor-recordings/` are immediately purged.
 
 ---
 
@@ -917,3 +917,60 @@ There is one build and it is cgo, so there is no `build-sherpa` recipe and no
 | Unexpected words typed during silence | Captured audio reaches the model by default; its result must be observed | Check the selected microphone and actual model results. Optionally enable `advanced.silence_filter` to reject low-energy recordings without preview words; it is not a speech recognizer or an accuracy guarantee |
 | Text typed in wrong window | Focus shifted during transcription | Keep window focused until overlay closes |
 | Systemd service fails to start | Audio socket or Wayland display not ready | Ensure `PartOf=graphical-session.target` and PipeWire is running |
+
+## GNOME Wayland: manual paste
+
+GNOME does not provide the protocols mavor uses for its overlay and synthetic
+keyboard. Choose copy-only output explicitly; it is never a silent fallback:
+
+```toml
+[output]
+driver = "clipboard"
+```
+
+1. Install `wl-copy` (the wl-clipboard package), set the driver, run `mavor setup`
+   and `mavor doctor`, then restart the daemon. Other audio/model requirements
+   still apply. This output mode needs neither `wtype` nor `wl-paste`.
+2. Open **Settings → Keyboard → Custom Shortcuts** (labels vary by GNOME version).
+   Add a shortcut whose command is the absolute installed binary path followed
+   by `toggle`, for example `/home/you/.local/bin/mavor toggle`.
+3. Press once to record, again to stop and transcribe. Check `mavor status` until
+   Idle, then use the target application's Paste command: usually Ctrl+V in
+   editors and Ctrl+Shift+V in terminals.
+
+Custom shortcuts have no release-triggered action, so this is not hold-to-speak.
+Separate shortcuts running the same absolute path with `start` and `stop` are
+also viable, but stopping still requires a second shortcut press.
+
+Copy-only output always overwrites CLIPBOARD, even when `output.clipboard` is
+false. It leaves PRIMARY unchanged: middle-click is not promised. The paste-only
+`paste_chord`, `restore_selection`, and `copy_command` settings are ignored,
+as is `typing_delay_ms`. Whitespace is normalized, like the injection drivers.
+The selection remains available for delayed and repeated manual paste until
+another application replaces it or the session/selection holder ends.
+
+There is **no GNOME HUD, waveform, or visible preview**. Missing layer-shell
+causes a logged no-overlay fallback; internal preview processing may still run.
+Set `[preview] enabled = false` to avoid preview work you cannot see.
+Notifications are deferred; status and logs are the available feedback.
+
+### Copy failures and verification limits
+
+`wl-copy` startup is limited to three seconds, or earlier caller cancellation.
+This deadline does not expire a successfully forked clipboard holder. Without
+data-control support, wl-clipboard may use a transparent surface that requires
+focus and can hang. A timeout protects daemon responsiveness, not clipboard
+readiness, focus preservation, or cleanup of every forked descendant.
+See [wl-clipboard's manual](https://man.archlinux.org/man/wl-clipboard.1.en).
+
+`mavor doctor` checks helper availability without overwriting your clipboard.
+It does not prove that background copying works on your GNOME version.
+Idle does not prove copying succeeded: dispatch failures are logged and the
+cycle still ends. Check `mavor logs`; recover with `mavor history copy` or
+`mavor history --pick` (these also depend on working clipboard transfer).
+
+Sway persistence tests are not GNOME certification. Before relying on this,
+record GNOME and wl-clipboard versions and test background dictation into an
+editor and terminal, delayed/repeated paste, successive transcripts, clipboard
+managers enabled/disabled, lock/unlock, focus changes, timeouts, and history
+recovery. No live GNOME session was tested for this implementation.

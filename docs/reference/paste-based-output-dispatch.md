@@ -56,13 +56,19 @@ the transcript before the target window reads it.
 
 ### The Output Drivers
 
-`internal/output` provides two implementations of the `Dispatcher` interface:
+`internal/output` provides paste, typing, and clipboard implementations of `Dispatcher`:
 
 1. **`output.Paste` (Default):** Writes transcript data to Wayland selection
    buffers, synthesizes a paste chord (default `Shift+Insert`), and manages
    selection lifecycle.
 2. **`output.Wayland` (`driver = "typing"`):** Translates characters directly into
-   virtual keycodes via `zwp_virtual_keyboard_v1` using `wtype`.
+   virtual keycodes via `zwp_virtual_keyboard_v1` using `wtype` (or native typing).
+3. **`output.Clipboard` (`driver = "clipboard"`):** Copies CLIPBOARD only, for
+   manual paste. No chord, PRIMARY writes, selection reads, or restoration.
+   Ordinary backgrounding `wl-copy` is bounded to three seconds for launch;
+   successfully forked ownership survives that deadline. It does not use the
+   paste driver's 350 ms ownership window or `--paste-once`. Paste-only knobs
+   are ignored and copying occurs regardless of `output.clipboard`.
 
 ```mermaid
 sequenceDiagram
@@ -117,7 +123,11 @@ applications read `CLIPBOARD` and succeed.
 
 `mavor doctor` verifies the output dispatch environment:
 
-1. **Driver Reporting:** Reports the active output driver (`paste` or `typing`) and
+For clipboard mode, doctor checks only `wl-copy` for output and explains manual
+paste and the missing GNOME HUD. It performs no clipboard write and cannot
+verify clipboard readiness. Paste-specific checks below are skipped.
+
+1. **Driver Reporting:** Reports the active output driver (`paste`, `typing`, or `clipboard`) and
    configured paste chord.
 2. **Utility Availability:** Verifies `wl-copy` and `wl-paste` exist on `PATH`.
 3. **`--paste-once` Support:** Probes `wl-copy` to verify `--paste-once` is supported

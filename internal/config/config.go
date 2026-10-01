@@ -93,7 +93,7 @@ type Logging struct {
 
 // Output configures what mavor does with a finished transcript.
 type Output struct {
-	// Driver is the output dispatch strategy: "typing" (default) or "paste".
+	// Driver is "paste" (default), "typing", or "clipboard" (manual paste).
 	// "typing" types characters into the focused window (in-process or via wtype).
 	// "paste" copies text to selection buffers and synthesizes a paste chord.
 	Driver string `toml:"driver"`
@@ -102,7 +102,8 @@ type Output struct {
 	// Driver is "paste". Defaults to "shift+insert".
 	PasteChord string `toml:"paste_chord"`
 
-	// CopyCommand overrides the copy utility. Empty means default dual-buffer
+	// CopyCommand overrides the paste driver copy utility. Ignored by clipboard.
+	// Empty means default dual-buffer
 	// wl-copy logic.
 	CopyCommand []string `toml:"copy_command"`
 
@@ -137,7 +138,8 @@ type Output struct {
 	// this is the knob that slows typing down for one.
 	TypingDelayMS *int `toml:"typing_delay_ms"`
 
-	// Clipboard also copies each transcript, replacing whatever was on the
+	// Clipboard enables additional copying in injection modes. The clipboard
+	// driver always copies, regardless of this flag. It replaces whatever was on the
 	// clipboard before.
 	//
 	// Off by default. It makes a keystroke that lands in the wrong window
@@ -147,6 +149,16 @@ type Output struct {
 	// A recovery path that destroys unrelated state is opt-in; `mavor
 	// history --copy` recovers a transcript on demand without it.
 	Clipboard bool `toml:"clipboard"`
+}
+
+// ValidateDriver rejects misspellings rather than silently enabling injection.
+func (o Output) ValidateDriver() error {
+	switch o.Driver {
+	case "", "paste", "typing", "clipboard":
+		return nil
+	default:
+		return fmt.Errorf("config: unknown output.driver %q (want paste, typing, or clipboard)", o.Driver)
+	}
 }
 
 // Preview configures the text shown in the overlay while you speak. It is
@@ -578,6 +590,9 @@ func LoadFile(path string) (File, error) {
 	out.Config.Paths.Socket = ExpandPath(out.Config.Paths.Socket)
 	out.Config.Vocabulary.File = ExpandPath(out.Config.Vocabulary.File)
 	out.Config.Resolve()
+	if err := out.Config.Output.ValidateDriver(); err != nil {
+		return out, err
+	}
 	return out, nil
 }
 

@@ -76,8 +76,9 @@ production package, not in `_test.go` files, so any package can drive the
 daemon.
 
 **P5. Degrade, don't die.** No compositor, or one without layer-shell → the
-`Noop` overlay and dictation still works. `wtype` fails → the clipboard still
-gets the text. Output errors → the cycle still completes and the transcript is
+`Noop` overlay; output still depends on the selected driver. Typing can copy
+when `output.clipboard` is enabled; it is off by default. Copy-only output never
+attempts injection. Output errors → the cycle still completes and the transcript is
 already in the history log.
 
 ## Invariants and one-writer rules
@@ -203,7 +204,7 @@ sequenceDiagram
     D->>D: strip non-speech markers — a marker-only transcript ends the cycle here
     D->>D: flatten to one line (output.CleanText)
     D->>D: append to history log
-    D->>O: Emit — wtype, then wl-copy
+    D->>O: Emit — selected paste, typing, or clipboard driver
     D->>M: Apply(EventTranscribeDone)
 ```
 
@@ -342,7 +343,7 @@ cgo.
 | `audio.Recorder` | `Start`, `Stop() (wavPath, error)`, `Level()` | `ParecRecorder` — a `parec` child writing 16 kHz mono s16le |
 | `audio.Ducker` | `Duck`, `Restore` | `CommandDucker` over `wpctl` or `pactl`, auto-detected |
 | `speech.Transcriber` | `Transcribe(ctx, wavPath) (string, error)` | chosen by `speech.Factory` — see below |
-| `output.Dispatcher` | `Emit(ctx, text) error` | `output.Wayland` — `wtype` then `wl-copy`, always both |
+| `output.Dispatcher` | `Emit(ctx, text) error` | `Paste` (default), `Native` / `Wayland` (typing), or `Clipboard` (copy only) |
 | `overlay.Overlay` | `Show(Visual)`, `SetLevel`, `SetText`, `Close` | `overlay.WL` — a `wlr-layer-shell` surface |
 
 Two optional interfaces are discovered by type assertion, so an implementation
@@ -456,7 +457,7 @@ Every row was traced through the code.
 | A dictation longer than ~30s | whisper-cli writes one line per window; `output.CleanText` joins them before the transcript is recorded or typed | One flowing line, and `mavor history` recovers the same string that was typed |
 | Empty transcript | Logged at Warn, `Emit` never called | Pill vanishes, nothing typed |
 | Output dispatch fails (paste supervisor times out or chord synthesis fails) | Error is logged at Warn and the cycle completes | Nothing pasted — **but the transcript is preserved in the history log** (recover with `mavor history --pick`) |
-| Typing driver fails (`wtype` / virtual keyboard fails under `driver = "typing"`) | Error is logged at Warn and the cycle completes | Nothing typed — **but the text is on clipboard and history log** |
+| Typing driver fails (`wtype` / virtual keyboard fails under `driver = "typing"`) | Error is logged at Warn and the cycle completes | Nothing typed — text is in history; clipboard copying is opt-in |
 | No whisper server on `$PATH` under a derived `local-server` placement | `AdjustForEnvironment` downgrades to `subprocess` and warns | The model reloads per utterance — slower, otherwise identical |
 | The model named in the config is not installed | `speech.Resolve` fails; the daemon never starts | An error naming the model, the directory searched, and the `models pull` to run |
 | `preview.source` names a model that is not installed | `speech.ResolvePreview` fails; the daemon never starts | The same shape of error. A *named* model is a request, never a hint |
@@ -529,9 +530,10 @@ The empty space, verified by search rather than assumed:
 - **No multi-seat or multi-instance story.** One socket path per user runtime
   directory.
 - **No keybinding of its own.** Binding is entirely the compositor's job.
-- **No X11 or GNOME support**, and this is architectural: the overlay needs
-  `wlr-layer-shell` and typing needs `virtual-keyboard-v1`. Porting means new
-  `Overlay` and `Dispatcher` implementations, not a restructuring.
+- **No X11 support or GNOME injection/HUD.** GNOME Wayland has explicit
+  [copy-only output](../user-guide.md#gnome-wayland-manual-paste), without visible
+  preview. Clipboard startup is bounded to three seconds; ownership is not.
+  Dispatch errors still only reach logs, so Idle does not establish success.
 
 ## Testing surfaces
 

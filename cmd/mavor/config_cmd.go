@@ -99,20 +99,24 @@ enabled = %t
 verbose = %t
 
 [output]
-# Dispatch strategy: "paste" (default) or "typing".
+# Dispatch strategy: "paste" (default), "typing", or "clipboard".
 # "paste" places text on selection buffers and synthesizes a paste chord,
 # rendering long dictations in a single frame via terminal bracketed paste.
 # "typing" sends keystrokes into the focused window (in-process or via wtype).
+# "clipboard" always copies to CLIPBOARD only; paste manually. No injected keys.
 # driver = %q
 
 # Keystroke chord synthesized to trigger a paste when driver is "paste".
 # paste_chord = %q
 
+# paste_chord, restore_selection, and copy_command apply only to "paste".
+# Ignored by "clipboard"; typing_delay_ms is also unused in that mode.
 # Automatically restore previous clipboard and primary selections after paste.
 # restore_selection = %t
+# copy_command = []  # paste-only helper override.
 
-# Your transcript is always typed into the focused window. This also copies
-# it to the clipboard, replacing whatever was there. Off by default: it
+# Additional copying in paste/typing modes, replacing whatever was there.
+# Clipboard mode always copies, even with this false. Off by default: it
 # makes a keystroke that landed in the wrong window recoverable, but it
 # costs you the clipboard on every utterance. `+"`mavor history --copy`"+` recovers
 # a transcript on demand without it.

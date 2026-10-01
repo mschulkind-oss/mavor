@@ -193,30 +193,9 @@ func runDaemon(verbose bool, logFile string) error {
 
 	recorder := audio.NewParecRecorder(recDir)
 	recorder.SetLogger(logger)
-	// Type in-process where the compositor allows it, and fall back to wtype
-	// where it does not. Both need the same protocol, so the fallback is for
-	// a missing binding rather than a missing feature — but it keeps a
-	// working path if the in-process one ever misbehaves.
-	var outDispatch output.Dispatcher
-	var closeOutput func() error
-	if cfg.Output.Driver == "paste" {
-		logger.Info("output: using paste dispatcher", "chord", cfg.Output.PasteChord, "restore_selection", cfg.Output.RestoreSelection)
-		p := output.NewPaste(logger)
-		p.Chord = cfg.Output.PasteChord
-		p.CopyCommand = cfg.Output.CopyCommand
-		p.RestoreSelection = cfg.Output.RestoreSelection
-		p.Clipboard = cfg.Output.Clipboard
-		outDispatch = p
-	} else if native, err := output.NewNative(logger); err == nil {
-		native.Clipboard = cfg.Output.Clipboard
-		outDispatch, closeOutput = native, native.Close
-	} else {
-		logger.Warn("output: falling back to wtype", "err", err)
-		w := output.NewWayland()
-		w.Logger = logger
-		w.Clipboard = cfg.Output.Clipboard
-		w.TypingDelayMS = cfg.Output.TypingDelayMS
-		outDispatch = w
+	outDispatch, closeOutput, err := selectOutput(cfg.Output, logger)
+	if err != nil {
+		return err
 	}
 	if closeOutput != nil {
 		defer func() { _ = closeOutput() }()
@@ -395,4 +374,34 @@ func globSorted(pattern string) []string {
 	matches, _ := filepath.Glob(pattern)
 	sort.Strings(matches)
 	return matches
+}
+
+// selectOutput keeps clipboard selection ahead of any keyboard constructor.
+func selectOutput(cfg config.Output, logger *slog.Logger) (output.Dispatcher, func() error, error) {
+	if err := cfg.ValidateDriver(); err != nil {
+		return nil, nil, err
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if cfg.Driver == "clipboard" {
+		logger.Info("output: copy-only; paste manually")
+		return output.NewClipboard(), nil, nil
+	}
+	if cfg.Driver == "paste" || cfg.Driver == "" {
+		logger.Info("output: using paste dispatcher", "chord", cfg.PasteChord, "restore_selection", cfg.RestoreSelection)
+		p := output.NewPaste(logger)
+		p.Chord, p.CopyCommand = cfg.PasteChord, cfg.CopyCommand
+		p.RestoreSelection, p.Clipboard = cfg.RestoreSelection, cfg.Clipboard
+		return p, nil, nil
+	}
+	if native, err := output.NewNative(logger); err == nil {
+		native.Clipboard = cfg.Clipboard
+		return native, native.Close, nil
+	} else {
+		logger.Warn("output: falling back to wtype", "err", err)
+	}
+	w := output.NewWayland()
+	w.Logger, w.Clipboard, w.TypingDelayMS = logger, cfg.Clipboard, cfg.TypingDelayMS
+	return w, nil, nil
 }

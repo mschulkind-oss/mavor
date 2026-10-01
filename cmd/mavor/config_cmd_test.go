@@ -97,3 +97,48 @@ func TestTemplateExamplesStateTheDefaults(t *testing.T) {
 }
 
 func quote(s string) string { return `"` + s + `"` }
+
+func TestScaffoldExplainsClipboardMode(t *testing.T) {
+	text := defaultConfigTemplate()
+	for _, want := range []string{"\"clipboard\"", "paste manually", "always copies", "Ignored", "copy_command"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("scaffold missing %q", want)
+		}
+	}
+}
+
+func TestConfigShowClipboard(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := os.MkdirAll(filepath.Dir(config.Path()), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config.Path(), []byte("[output]\ndriver = \"clipboard\"\nclipboard = false\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	capture, err := os.CreateTemp(t.TempDir(), "stdout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer capture.Close()
+	old := os.Stdout
+	os.Stdout = capture
+	defer func() { os.Stdout = old }()
+	if err := runConfigShow(); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(capture.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "driver = 'clipboard'") || !strings.Contains(string(body), "clipboard = false") {
+		t.Fatalf("show = %s", body)
+	}
+	path := filepath.Join(t.TempDir(), "shown.toml")
+	if err := os.WriteFile(path, body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	shown, err := config.Load(path)
+	if err != nil || shown.Output.Driver != "clipboard" {
+		t.Fatalf("shown config: %+v %v", shown.Output, err)
+	}
+}

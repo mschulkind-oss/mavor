@@ -11,7 +11,9 @@ vantage:
 
 # GNOME is two ports, not one — and only one of them is worth doing
 
-**Status:** DESIGN SKETCH, 2026-09-06. Nothing built. Every claim about mavor's
+**Status:** Injection design sketch, 2026-09-06; not implemented.
+The explicit clipboard workflow is separate: see the
+[copy-only plan](gnome-clipboard-design-plan.md). Every claim about mavor's
 code was verified against `ca2d8ff` on 2026-09-06; every claim about the outside
 world carries a link and the date I checked it.
 
@@ -39,7 +41,15 @@ the failure-mode table this doc extends).
 
 ## 1. The verdict
 
-**Do not port the HUD. Do port the typing — but not yet.**
+**Do not port the HUD. Copy-only output is an explicit option; injection remains
+a separate, unimplemented proposal.**
+
+Set `[output] driver = "clipboard"` for manual paste. Default output is still
+`"paste"`; `"typing"` remains opt-in. No desktop auto-selection or permission
+mechanism is added. Read the [GNOME instructions](../user-guide.md#gnome-wayland-manual-paste)
+for missing visible preview, status/log feedback, and the limits of background
+clipboard copying. The external GNOME/version claims below were not reverified
+for this implementation.
 
 Three facts drove that, in the order I found them.
 
@@ -99,15 +109,10 @@ portal delivers a real key-release signal, which is what sway's `bindsym
 interaction is the one part of the port that improves.
 
 > [!IMPORTANT]
-> The cheapest useful work in this whole document is not a port. It is making
-> mavor **tell the truth on a desktop it does not support**. Today
-> [`mavor doctor`](../../cmd/mavor/doctor.go#L416) checks that
-> `$WAYLAND_DISPLAY` is set and that `wtype` is on `$PATH`. Neither is a test
-> of what the compositor implements, so on GNOME `doctor` reports every check
-> green, the daemon starts, the overlay quietly falls back to `Noop`, and every
-> dictation fails to type while the clipboard silently absorbs the evidence.
-> That is a bug on the platform mavor already claims, and it is
-> [§5.1](#51-the-failure-that-exists-today).
+> Output failures still only reach the log, and Idle does not establish success.
+> History is recorded before dispatch. Injection modes copy additionally only
+> when `output.clipboard` is enabled (off by default); clipboard mode always
+> copies. Helper availability is not proof of a successful clipboard transfer.
 
 ---
 
@@ -156,29 +161,21 @@ required capability the four seams do not cover. There is a good answer for it
 on GNOME, and it is a new subsystem rather than a new implementation:
 [§3.3](#33-the-hotkey--where-gnome-is-better-than-sway).
 
-**Finding 2: there is no backend concept to select between.**
-[`overlay.NewDefault`](../../internal/overlay/factory.go#L16) returns `NewWL`
-unconditionally, and `runDaemon` constructs `output.NewWayland()` by name
-([`cmd/mavor/main.go`](../../cmd/mavor/main.go#L219)). The only runtime choice
-today is the overlay's fallback to `Noop` when the connection fails.
-Adding a second implementation of two seams means adding the *chooser*, which
-does not exist. That is small, but it is restructuring rather than
-implementing, and it has to be designed once for both seams — see
-[§4.2](#42-selection-per-seam-not-per-desktop).
+**Finding 2: output selection exists, independently of the overlay.** The
+configured output driver selects paste (default), typing, or explicit clipboard
+output. Clipboard selection never calls the native keyboard constructor.
+That matters because the native constructor currently uses a Wayland connection
+that also requires layer-shell. Overlay construction independently falls back
+to `Noop` with a warning when layer-shell is unavailable.
 
-**Finding 3: `output.Wayland` welds two independent drivers together.**
-[`Emit`](../../internal/output/output.go#L64) runs `wtype` **and** `wl-copy` on
-every call and joins the errors. On a non-wlroots compositor the first half is
-dead and the second half is *degraded*: without `wlr-data-control`,
-`wl-clipboard` falls back to briefly mapping a tiny transparent surface, and its
-own manual warns that a compositor which does not focus that surface makes
-`wl-clipboard` **hang**
-([wl-clipboard(1)](https://man.archlinux.org/man/wl-clipboard.1.en), checked
-2026-09-06; Mutter has never implemented `wlr-data-control`,
-[mutter#524](https://gitlab.gnome.org/GNOME/mutter/-/work_items/524)). A GNOME
-dispatcher therefore has to re-implement *both* halves, not swap one. The seam
-is in the right place; the implementation behind it is two things wearing one
-coat.
+**Finding 3: clipboard transfer still depends on the compositor.** Copy-only
+output uses ordinary backgrounding `wl-copy` and bounds launch to three seconds.
+It does not inject, restore selections, touch PRIMARY, or use `--paste-once`.
+Without data-control support, wl-clipboard's transparent-surface fallback may
+require focus and hang ([manual](https://man.archlinux.org/man/wl-clipboard.1.en)).
+The deadline limits waiting, not successfully forked ownership; killing an
+immediate child does not prove all descendants were cleaned up. No live GNOME
+verification was performed.
 
 ### 2.3 Linux, but not GNOME — the assumptions that do not matter here
 
@@ -208,7 +205,7 @@ protocols fail independently.
 | sway, Hyprland, river, Wayfire, niri, labwc | Yes | Yes | Works |
 | COSMIC | Yes | Yes | Should work; nobody has run it |
 | **KDE Plasma (KWin)** | **Yes**, via the `layer-shell-qt` implementation ([KDE/layer-shell-qt](https://github.com/KDE/layer-shell-qt)) | **No** ([KDE bug 497774](https://bugs.kde.org/show_bug.cgi?id=497774)) | HUD works; nothing is ever typed |
-| **GNOME (Mutter)** | **No** | **No** | Neither |
+| **GNOME (Mutter)** | **No** | **No** | Explicit manual-paste workflow; no HUD or injection; live validation needed |
 
 Mutter's two layer-shell tracking issues are both **closed without adoption**:
 [mutter#973](https://gitlab.gnome.org/GNOME/mutter/-/issues/973) (opened
@@ -467,7 +464,10 @@ roundtrip and returns a named error when `zwlr_layer_shell_v1` is not
 advertised. Exposing "which globals did this compositor offer" is the whole
 mechanism.
 
-### 4.2 Selection, per seam, not per desktop
+### 4.2 Future injection selection, per seam, not per desktop
+
+This is an unimplemented injection proposal, not current configuration. The
+current default is `paste`, with explicit `typing` and `clipboard` choices.
 
 ```mermaid
 flowchart TD
@@ -499,10 +499,10 @@ The rules the diagram implies, stated so they are not guessed at:
 - **One writer.** Exactly one dispatcher instance exists for the process
   lifetime, constructed during selection. Nothing re-selects, and nothing else
   may construct one — otherwise two portal sessions race for the same seat.
-- **Clipboard is not a driver, it is a floor.** Every dispatcher copies, always,
-  as `output.Wayland` does today. "Clipboard-only mode" is the state where the
-  injection half is known-absent and mavor says so out loud, not a silent
-  degradation.
+- **No silent clipboard fallback.** Current clipboard output is an explicit
+  driver, not a floor. Injection modes do not always copy. Any future injection
+  selection must preserve that distinction rather than silently overwrite user
+  selections or enable injection.
 - **Forbidden:** the daemon must never prompt for permission outside a
   dictation, must never retry a denied portal session automatically, and must
   never enable a `uinput` driver that the user did not name in config.
@@ -544,7 +544,7 @@ GNOME's, not ours.
 
 ### 5.1 The failure that exists today
 
-On GNOME, right now, at `ca2d8ff`:
+Historical injection failure path at `ca2d8ff` (not the explicit clipboard driver):
 
 1. `mavor doctor` reports every check green. `checkWayland` finds
    `$WAYLAND_DISPLAY`; `checkWtype` finds the binary
@@ -560,8 +560,8 @@ On GNOME, right now, at `ca2d8ff`:
    the cycle — and `reportError`, the only path that shows the error pill, is
    never reached.
 
-So the user sees nothing: no HUD, no error, no text. The transcript is on the
-clipboard and in the history log, which is the design working as intended, but
+So the user sees nothing: no HUD, no error, no text. The transcript is in the history log; it is on the clipboard only when
+additional copying was enabled and succeeded. However,
 nothing tells them to look there. **Any GNOME work must fix this first, because
 it is also the failure mode of every new dispatcher.** The design rule: a
 dispatcher whose injection half fails must reach the user, not only the log —
@@ -577,8 +577,8 @@ tests the compositor's capabilities rather than `$PATH`.
   context — there is no per-dictation timeout at
   [`daemon.go#L590`](../../internal/daemon/daemon.go#L590) — and the FSM
   transition to `Idle` happens only after `Emit` returns. A hung `wl-copy`
-  therefore wedges the daemon in `Transcribing` until it is killed. **Every
-  dispatcher gets a bounded per-emit deadline; my default is 3 s**, on the
+  therefore wedges the daemon in `Transcribing` until it is killed. **The clipboard driver now has a three-second launch deadline; broader
+  dispatcher deadlines remain proposed**, on the
   grounds that a successful emit is tens of milliseconds today and anything
   past a second is already a failure the user is staring at.
 - **No portal at all.** An old or absent `xdg-desktop-portal` means
@@ -607,7 +607,7 @@ tests the compositor's capabilities rather than `$PATH`.
   degrades to clipboard-only *and says which extension is missing and which
   Shell version it declared*.
 - **Two dispatchers.** Cannot arise: one is constructed at startup and nothing
-  re-selects ([§4.2](#42-selection-per-seam-not-per-desktop)).
+  re-selects ([§4.2](#42-future-injection-selection-per-seam-not-per-desktop)).
 
 ---
 

@@ -140,7 +140,7 @@ func runSetup(force bool) error {
 			fmt.Printf("⚠️  Automatic package installation had warnings: %v\n", err)
 		}
 	} else {
-		fmt.Println("✅ All required system runtime tools (parec, wtype, wl-copy) are available")
+		fmt.Println("✅ All required system runtime tools for the configured output driver are available")
 	}
 
 	// Step 3: Model cache directory
@@ -255,8 +255,10 @@ func getMissingTools(cfg config.Config) []string {
 	if _, err := exec.LookPath("parec"); err != nil {
 		missing = append(missing, "parec")
 	}
-	if _, err := exec.LookPath("wtype"); err != nil {
-		missing = append(missing, "wtype")
+	if cfg.Output.Driver != "clipboard" {
+		if _, err := exec.LookPath("wtype"); err != nil {
+			missing = append(missing, "wtype")
+		}
 	}
 	if _, err := exec.LookPath("wl-copy"); err != nil {
 		missing = append(missing, "wl-copy")
@@ -482,6 +484,13 @@ func checkAudio() (bool, string) {
 }
 
 func checkWtype() (bool, string) {
+	cfg, err := config.Load("")
+	if err != nil {
+		return false, err.Error()
+	}
+	if cfg.Output.Driver == "clipboard" {
+		return true, "copy-only output: virtual keyboard and wtype are not required"
+	}
 	if p, err := exec.LookPath("wtype"); err == nil {
 		return true, fmt.Sprintf("wtype installed at %s", p)
 	}
@@ -489,6 +498,16 @@ func checkWtype() (bool, string) {
 }
 
 func checkClipboard() (bool, string) {
+	cfg, err := config.Load("")
+	if err != nil {
+		return false, err.Error()
+	}
+	if cfg.Output.Driver == "clipboard" {
+		if _, err := exec.LookPath("wl-copy"); err != nil {
+			return false, "clipboard driver requires wl-copy (install wl-clipboard)"
+		}
+		return true, "wl-copy installed; helper availability does not verify a successful clipboard transfer"
+	}
 	copyOk := false
 	pasteOk := false
 	if _, err := exec.LookPath("wl-copy"); err == nil {
@@ -504,7 +523,14 @@ func checkClipboard() (bool, string) {
 }
 
 func checkOutput() (bool, string) {
-	cfg, _ := config.Load("")
+	cfg, err := config.Load("")
+	if err != nil {
+		return false, err.Error()
+	}
+	if cfg.Output.Driver == "clipboard" {
+		_, err := exec.LookPath("wl-copy")
+		return outputVerdict(cfg, false, err == nil, false, false, "")
+	}
 	_, wtypeErr := exec.LookPath("wtype")
 	_, copyErr := exec.LookPath("wl-copy")
 	_, pasteErr := exec.LookPath("wl-paste")
@@ -520,6 +546,15 @@ func checkOutput() (bool, string) {
 }
 
 func outputVerdict(cfg config.Config, wtypeFound, copyFound, pasteFound bool, pasteOnceSupported bool, kittyBinding string) (bool, string) {
+	if err := cfg.Output.ValidateDriver(); err != nil {
+		return false, err.Error()
+	}
+	if cfg.Output.Driver == "clipboard" {
+		if !copyFound {
+			return false, "clipboard driver requires wl-copy (install wl-clipboard)"
+		}
+		return true, "Copy-only output; paste manually. Virtual keyboard and wtype are not required. GNOME has no mavor HUD; the daemon logs overlay fallback. Helper availability does not verify a successful clipboard transfer."
+	}
 	if cfg.Output.Driver == "paste" {
 		if !copyFound || !pasteFound {
 			return false, "paste driver requires wl-copy and wl-paste (wl-clipboard tools missing)"

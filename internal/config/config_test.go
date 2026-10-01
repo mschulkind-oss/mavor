@@ -576,3 +576,21 @@ func TestSilenceFilterConfig(t *testing.T) {
 		t.Fatal("missing file enabled filtering")
 	}
 }
+
+func TestClipboardDriverRoundTripAndValidation(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "[output]\ndriver = \"clipboard\"\n"))
+	if err != nil || cfg.Output.Driver != "clipboard" || cfg.Output.Clipboard {
+		t.Fatalf("config = %+v, error = %v", cfg.Output, err)
+	}
+	body, err := toml.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := Load(writeConfig(t, string(body)))
+	if err != nil || !reflect.DeepEqual(cfg, again) {
+		t.Fatalf("roundtrip failed: %v", err)
+	}
+	if _, err := Load(writeConfig(t, "[output]\ndriver = \"clipbaord\"\n")); err == nil {
+		t.Fatal("unknown driver accepted")
+	}
+}

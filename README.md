@@ -2,8 +2,8 @@
 
 Tap a hotkey, talk, tap again: the words are transcribed on your own machine
 and typed into whatever window has focus. Your voice never leaves the box —
-no cloud API, no account, nothing to sign up for. The text is copied to the
-clipboard too, and a small "● Recording" pill sits at the top of the screen,
+no cloud API, no account, nothing to sign up for. Optional additional copying
+is controlled by `output.clipboard` (off by default), and a small "● Recording" pill sits at the top of the screen,
 clear of your bar, showing a live waveform and a running preview of the words
 while you speak. The preview is never what gets typed — the text you keep is
 transcribed once, when you let go.
@@ -31,14 +31,37 @@ CLI subcommands:
 > [!NOTE]
 > **Where it runs today:** Linux, on a Wayland compositor implementing
 > `wlr-layer-shell` (the overlay) and `virtual-keyboard-v1` (typing, via
-> `wtype`) — sway, Hyprland, river, Wayfire, niri, labwc. Not GNOME, which
-> implements neither.
+> `wtype`) — sway, Hyprland, river, Wayfire, niri, labwc. GNOME Wayland can
+> use explicit [copy-only output](docs/user-guide.md#gnome-wayland-manual-paste),
+> without a HUD or automatic injection; live GNOME verification is still needed.
 >
 > This is the first backend, not the design. Capture, transcription, overlay
 > and text output are four independent interfaces (§[Project layout](#project-layout)),
 > and only the overlay and the output emitter are Wayland-specific. Other
 > compositors and platforms are a matter of writing those two, not of
 > rearchitecting.
+
+## GNOME Wayland: copy, then paste
+
+Set this in your config and restart the daemon:
+
+```toml
+[output]
+driver = "clipboard"
+```
+
+This always replaces CLIPBOARD, even with `output.clipboard = false`, and never
+injects keys or modifies PRIMARY. Install `wl-copy` from wl-clipboard; `wtype`
+and `wl-paste` are not required for this driver. The default remains `paste`.
+In GNOME Settings → Keyboard → Custom Shortcuts (labels vary), bind the absolute
+installed path followed by `toggle`, for example `/home/you/.local/bin/mavor toggle`.
+Press once to record, again to transcribe; then paste normally (Ctrl+V in editors,
+usually Ctrl+Shift+V in terminals).
+
+There is no GNOME waveform or visible preview. Use `mavor status` and `mavor logs`;
+Idle means the cycle ended, **not** that copying succeeded. Notifications are
+not implemented. See the [manual-paste guide](docs/user-guide.md#gnome-wayland-manual-paste)
+for clipboard limitations and recovery.
 
 ## Why this exists
 

@@ -1,7 +1,5 @@
-// Package output dispatches transcribed text to the user — typing it into
-// the focused window via wtype AND placing it on the clipboard via wl-copy.
-// Both happen on every emission; if one fails the other is still attempted
-// and errors are joined.
+// Package output dispatches transcribed text through explicit paste, typing,
+// or copy-only clipboard strategies.
 //
 // Architecture and invariants: docs/reference/how-mavor-works.md
 package output
