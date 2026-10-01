@@ -406,6 +406,45 @@ proposals rather than descriptions.
   with `just bench`
 - [Roadmap](docs/roadmap.md) — open decisions and known blockers
 
+## Desktop storybooks
+
+Generate two linked local reports with real isolated desktop screenshots:
+
+```bash
+just storybook-nix
+just storybook-gnome-nix
+```
+
+The wrappers use the existing hash-pinned [Nix environment](test/gnome/environment.nix),
+unset inherited `LD_LIBRARY_PATH`, and supply the pinned C++ runtime. No host
+session, installation, service restart, or downloaded image assets are needed.
+Run these sequentially; each replaces its generated report.
+
+With dependencies already available, use `just storybook` and
+`just storybook-gnome` directly. Sway staging additionally needs `swaybg`, GTK4
+(4.12 or newer), `pkg-config`, and a C compiler; existing `sway`, `waybar`,
+`grim`, D-Bus, Go, and speech build dependencies remain required. GNOME needs
+Shell/Mutter with headless virtual-monitor support, working Mesa driver paths,
+`gdbus`, Python, GTK4, D-Bus, and `xclip`. Missing prerequisites fail, not skip.
+Ordinary overlay tests still start with their original black backdrop.
+
+Open [Sway HTML](test/reports/ui-storybook.html) or
+[GNOME HTML](test/reports/gnome-storybook.html) after generation. These and their
+PNG directories are ignored local artifacts, not committed files. GNOME also
+writes capture metadata beside its HTML. `MAVOR_GNOME_ARTIFACTS` chooses retained
+private-session diagnostics; keep that path short enough for Unix bus sockets.
+
+Both use an original local wallpaper and native session-notes editor. Sway's
+nine states are controlled fixture inputs to the real Go overlay, not actual
+recording or inference. GNOME has no mavor HUD or notifications: it demonstrates
+production X11 clipboard copy without moving focus, then a **test-driven manual
+Paste** using the editor's native action, not physical Ctrl+V or automatic
+production typing. The test clears the editor before each Paste to show replacement
+text; production copy does not edit it. Fixtures are local text, not model recognition. Shell's own
+private-session startup warning banners are dismissed before capture. Screenshots
+come from Grim on Sway and Shell's screenshot service on GNOME, never composites.
+GNOME clock/cursor animation means byte-identical captures are not promised.
+
 ## Development
 
 ### Dev container

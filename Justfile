@@ -146,7 +146,7 @@ test-e2e: (_ensure-model test_model)
 
 # Run the automated UI Storybook test and generate pixel-accurate HTML report with real headless screenshots.
 storybook:
-    go test -tags=integration -run TestUIStorybookReport ./test/integration/... -v
+    go test -tags=integration -run TestUIStorybookReport ./test/integration/... -v -count=1
     @echo ""
     @echo "UI Storybook Report: test/reports/ui-storybook.html"
 
@@ -263,3 +263,13 @@ _ensure-model name:
         curl -fSL --output "{{model_dir}}/$file" \
             "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$file"; \
     fi
+
+# Real isolated Shell screenshots, production clipboard copy, test-driven Paste.
+storybook-gnome:
+    go test -tags=gnome ./test/gnome/... -run '^(TestGNOMEStorybook|TestStorybookRegressions|TestStorybookMissingPrerequisite)$' -v -count=1 -timeout=130s
+
+storybook-nix:
+    env -u LD_LIBRARY_PATH NIX_BUILD_SHELL="$(readlink -f "$(command -v bash)")" nix-shell test/gnome/environment.nix --run 'just storybook'
+
+storybook-gnome-nix:
+    env -u LD_LIBRARY_PATH NIX_BUILD_SHELL="$(readlink -f "$(command -v bash)")" nix-shell test/gnome/environment.nix --run 'just storybook-gnome'

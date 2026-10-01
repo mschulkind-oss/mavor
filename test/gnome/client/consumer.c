@@ -38,6 +38,12 @@ static gboolean command(GIOChannel *channel, GIOCondition condition, gpointer un
         if (!gtk_widget_activate_action(GTK_WIDGET(view), "clipboard.paste", NULL)) {
             puts("ACTION_FAILED"); fflush(stdout);
         }
+    } else if (!strcmp(line, "state")) {
+        GtkTextBuffer *buffer = gtk_text_view_get_buffer(view);
+        GtkTextIter start, end;
+        gtk_text_buffer_get_bounds(buffer, &start, &end);
+        char *text = gtk_text_buffer_get_text(buffer, &start, &end, FALSE);
+        printf("STATE\t%s\tEND\n", text); fflush(stdout); g_free(text);
     } else {
         gboolean primary = !strcmp(line, "primary");
         gdk_clipboard_read_text_async(primary ? gdk_display_get_primary_clipboard(display) : gdk_display_get_clipboard(display), NULL, received, g_strdup(line));
@@ -55,7 +61,28 @@ int main(int argc, char **argv) {
     gtk_window_set_title(window, argc > 1 ? argv[1] : "Mavor native clipboard consumer");
     gtk_window_set_default_size(window, 600, 300);
     view = GTK_TEXT_VIEW(gtk_text_view_new());
-    gtk_window_set_child(window, GTK_WIDGET(view));
+    if (g_getenv("MAVOR_STORYBOOK")) {
+        gtk_window_set_default_size(window, 700, 360);
+        gtk_window_set_titlebar(window, gtk_header_bar_new());
+        gtk_text_view_set_left_margin(view, 28);
+        gtk_text_view_set_right_margin(view, 28);
+        gtk_text_view_set_top_margin(view, 24);
+        gtk_text_view_set_wrap_mode(view, GTK_WRAP_WORD_CHAR);
+        GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+        GtkWidget *label = gtk_label_new("Session notes — local fixture / explicit Paste");
+        gtk_widget_set_margin_top(label, 16);
+        gtk_box_append(GTK_BOX(box), label);
+        gtk_widget_set_vexpand(GTK_WIDGET(view), TRUE);
+        gtk_box_append(GTK_BOX(box), GTK_WIDGET(view));
+        gtk_window_set_child(window, box);
+        GtkCssProvider *css = gtk_css_provider_new();
+        gtk_css_provider_load_from_string(css, "textview { font: 22px sans-serif; color: #17243b; background: #f4f7fb; } window { background: #f4f7fb; }");
+        gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(css), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+        g_object_unref(css);
+        gtk_text_buffer_set_text(gtk_text_view_get_buffer(view), "Session notes: ready for a manual Paste.", -1);
+    } else {
+        gtk_window_set_child(window, GTK_WIDGET(view));
+    }
     g_signal_connect(gtk_text_view_get_buffer(view), "changed", G_CALLBACK(edited), NULL);
     g_signal_connect(window, "notify::is-active", G_CALLBACK(focus), NULL);
     g_io_add_watch(g_io_channel_unix_new(0), G_IO_IN | G_IO_HUP, command, NULL);

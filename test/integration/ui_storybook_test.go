@@ -5,6 +5,7 @@ package integration
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"image"
@@ -99,9 +100,9 @@ var speechEnvelope = []float64{
 }
 
 // generatedAt returns the report's timestamp. It is fixed by default so
-// regenerating the storybook produces a byte-identical HTML file and the
-// committed report only changes when the UI does. Set MAVOR_STORYBOOK_STAMP=1 for
-// a real wall-clock stamp.
+// the timestamp alone stays stable across regenerations. Compositor frames
+// and native editor caret animations are not byte-identical. Set
+// MAVOR_STORYBOOK_STAMP=1 for a real wall-clock stamp.
 func generatedAt() string {
 	if os.Getenv("MAVOR_STORYBOOK_STAMP") == "1" {
 		return time.Now().Format("2006-01-02 15:04:05 MST")
@@ -122,6 +123,7 @@ func TestUIStorybookReport(t *testing.T) {
 	// GTK application it starts must not outlive its compositor. The shared
 	// compositor is 1920x1080 with waybar, which is what this test wants.
 	h := StartWithBar(t)
+	stageDesktop(t, h)
 
 	t.Setenv("XDG_RUNTIME_DIR", h.XDGRuntime)
 	t.Setenv("WAYLAND_DISPLAY", h.WaylandDisp)
@@ -265,7 +267,7 @@ func TestUIStorybookReport(t *testing.T) {
 			Title:       "Transcribing",
 			Badge:       "TRANSCRIBING",
 			BadgeClass:  "badge-transcribing",
-			Description: "Whisper inference in progress — no audio is being captured in this state, so no waveform is shown. Amber pill with 'TRANSCRIBING' and a typing-dots indicator — the animated dots read as the ellipsis, so the label carries none — while the tail of the recording is transcribed.",
+			Description: "Fixture visualization of transcription in progress — no audio capture or inference runs in this storybook, and no waveform is shown. Amber pill with 'TRANSCRIBING' and a typing-dots indicator — the animated dots read as the ellipsis, so the label carries none — while the tail of the recording is transcribed.",
 			Visual:      overlay.Transcribing,
 			AudioLevel:  0.0,
 			LevelPct:    0,
@@ -325,7 +327,7 @@ func TestUIStorybookReport(t *testing.T) {
 			}
 		}
 
-		// Wait for GTK and Sway surface composition
+		// Wait for the native Go overlay and Sway surface composition
 		time.Sleep(350 * time.Millisecond)
 
 		fullBytes := h.Grim()
@@ -336,6 +338,10 @@ func TestUIStorybookReport(t *testing.T) {
 		fullImg, err := png.Decode(bytes.NewReader(fullBytes))
 		if err != nil {
 			t.Fatalf("decode full png: %v", err)
+		}
+
+		if err := stagedFrame(fullImg); err != nil {
+			t.Fatal(err)
 		}
 
 		croppedImg := cropTop(fullImg, cropHeight)
@@ -372,10 +378,16 @@ func TestUIStorybookReport(t *testing.T) {
 		})
 	}
 
+	var version struct {
+		HumanReadable string `json:"human_readable"`
+	}
+	if err := json.Unmarshal([]byte(h.swaymsg("-t", "get_version")), &version); err != nil {
+		t.Fatal(err)
+	}
 	reportData := ReportData{
 		GeneratedAt:  generatedAt(),
 		TotalStates:  len(captures),
-		Compositor:   "Headless Sway (wlroots / pixman)",
+		Compositor:   "Sway " + version.HumanReadable,
 		DisplayRes:   fmt.Sprintf("%dx%d", dispWidth, dispHeight),
 		WaybarHeight: waybarHeight,
 		TopMargin:    topMargin,
@@ -937,13 +949,14 @@ const storybookHTMLTemplate = `<!DOCTYPE html>
         <span class="logo-badge">mavor</span>
         <div class="header-title">
           <h1>UI Storybook Report</h1>
-          <p>Headless Wayland GTK4 Layer-Shell Visual Inspection</p>
+          <p>Controlled fixture inputs to the real Go overlay — no recording or inference</p>
         </div>
       </div>
       <div class="header-controls">
         <button class="btn theme-toggle" id="themeToggle" title="Toggle Light/Dark Theme">
           <span id="themeIcon">☀️</span> Light / Dark
         </button>
+        <a href="gnome-storybook.html" class="btn">GNOME storybook</a>
         <a href="#state-1" class="btn active">States ({{.TotalStates}})</a>
       </div>
     </div>
@@ -953,7 +966,7 @@ const storybookHTMLTemplate = `<!DOCTYPE html>
     <section class="stats-bar">
       <div class="stat-card">
         <div class="stat-label">Compositor</div>
-        <div class="stat-value">Sway 1.10</div>
+        <div class="stat-value">{{.Compositor}}</div>
         <div class="stat-sub">wlroots headless / pixman</div>
       </div>
       <div class="stat-card">
@@ -1061,7 +1074,7 @@ const storybookHTMLTemplate = `<!DOCTYPE html>
 
   <footer>
     <div class="container">
-      <p>mavor · Automated UI Storybook Report · Real GTK4 Layer-Shell Screenshots via Grim on Headless Sway</p>
+      <p>mavor · Automated UI Storybook Report · Real native Go Layer-Shell Screenshots via Grim on Headless Sway</p>
     </div>
   </footer>
 

@@ -30,6 +30,8 @@ signal.signal(signal.SIGTERM, interrupted)
 signal.signal(signal.SIGALRM, interrupted)
 signal.alarm(100)
 
+storybook_mode = sys.argv[2] == "storybook"
+
 TITLE = "Mavor native clipboard consumer"
 default_root = (
     (os.environ["YOLO_DURABLE_DIR"] + "/gnome-headless/tests")
@@ -39,6 +41,8 @@ default_root = (
         + "/mavor-gnome-tests"
     )
 )
+if storybook_mode and "YOLO_DURABLE_DIR" in os.environ:
+    default_root = os.environ["YOLO_DURABLE_DIR"] + "/storybooks/g"
 root = pathlib.Path(os.environ.get("MAVOR_GNOME_ARTIFACTS", default_root)).resolve()
 root.mkdir(parents=True, exist_ok=True)
 run = pathlib.Path(tempfile.mkdtemp(prefix=sys.argv[2] + "-", dir=root))
@@ -73,6 +77,10 @@ env.update(
     GDK_BACKEND="wayland",
     GTK_A11Y="none",
 )
+if storybook_mode:
+    env["MAVOR_STORYBOOK"] = "1"
+    env["GSK_RENDERER"] = "cairo"
+    env["SHELL_BACKGROUND_IMAGE"] = str((pathlib.Path(__file__).parent / "../desktop/wallpaper.png").resolve())
 processes = []
 files = []
 
@@ -222,28 +230,29 @@ try:
     (run / "xclip-version.txt").write_text(shutil.which("xclip") + "\n" + version.stdout + version.stderr)
     initial_events = (run / "shell.log").read_text()
     owner_title = "Mavor PRIMARY owner"
-    owner = launch(
-        [str(run / "consumer"), owner_title], "primary-owner", stdin=subprocess.PIPE
-    )
-    until(
-        lambda: (
-            owner_title
-            in evaluate(
-                "JSON.stringify(global.get_window_actors().map(a=>a.meta_window.title))"
-            )
-        ),
-        "PRIMARY owner mapped",
-    )
-    evaluate(
-        'Main.overview.hide(); global.get_window_actors().find(a=>a.meta_window.title === "'
-        + owner_title
-        + '").meta_window.activate(global.get_current_time()); true'
-    )
-    until(
-        lambda: "FOCUS\t1" in (run / "primary-owner.log").read_text(),
-        "PRIMARY owner active",
-    )
-    consumer_command("seed-primary", "SEEDED", owner, "primary-owner")
+    if not storybook_mode:
+        owner = launch(
+            [str(run / "consumer"), owner_title], "primary-owner", stdin=subprocess.PIPE
+        )
+        until(
+            lambda: (
+                owner_title
+                in evaluate(
+                    "JSON.stringify(global.get_window_actors().map(a=>a.meta_window.title))"
+                )
+            ),
+            "PRIMARY owner mapped",
+        )
+        evaluate(
+            'Main.overview.hide(); global.get_window_actors().find(a=>a.meta_window.title === "'
+            + owner_title
+            + '").meta_window.activate(global.get_current_time()); true'
+        )
+        until(
+            lambda: "FOCUS\t1" in (run / "primary-owner.log").read_text(),
+            "PRIMARY owner active",
+        )
+        consumer_command("seed-primary", "SEEDED", owner, "primary-owner")
     consumer = launch([str(run / "consumer"), TITLE], "consumer", stdin=subprocess.PIPE)
     until(
         lambda: (
@@ -310,6 +319,64 @@ try:
     # Focus is monitored by both native active-state events and every Shell
     # focus-window change; an event counter avoids final-state-only assertions.
     evaluate('globalThis.xclipFocusEvents = []; global.display.connect("notify::focus-window", () => xclipFocusEvents.push(global.display.focus_window?.title ?? "NONE")); true')
+    if storybook_mode:
+        from storybook import capture, report
+        reports = (pathlib.Path(__file__).parent / "../reports").resolve()
+        scenes = []
+        # Dismiss Shell's own private-session privileged-user warning through
+        # its native banner dismissal; never synthesize a mavor notification.
+        for _ in range(4):
+            evaluate('if (Main.messageTray._banner) Main.messageTray._hideNotification(true); true')
+            time.sleep(.4)
+        def scene(scene_id, caption, text):
+            consumer_command("state", "STATE\t" + text + "\tEND")
+            time.sleep(.5)
+            geometry = eval_value('global.get_window_actors().filter(a=>a.meta_window.title === "' + TITLE + '").map(a=>{let r=a.meta_window.get_frame_rect(); return [r.x,r.y,r.width,r.height]})')
+            assert len(geometry) == 1 and geometry[0][2] > 500 and geometry[0][3] > 250, geometry
+            image = "gnome-screenshots/" + scene_id + ".png"
+            evidence = capture(call, reports / image)
+            scenes.append(dict(id=scene_id, caption=caption, text=text, image=image,
+                               geometry=geometry[0], **evidence))
+            (run / "captures.json").write_text(json.dumps(scenes, indent=2, ensure_ascii=False))
+        def copy_without_edit(text, label):
+            offset = (run / "consumer.log").stat().st_size
+            evaluate('xclipFocusEvents.length = 0; true')
+            child = set_clipboard(text, label)
+            focus_barrier()
+            assert eval_value("xclipFocusEvents") == [], "copy changed Shell focus"
+            events = (run / "consumer.log").read_bytes()[offset:].decode()
+            assert "ACTION\t" not in events and "FOCUS\t0" not in events, events
+            return child
+        ready = "Session notes: ready for a manual Paste."
+        first = "Plan the afternoon walk. Bring a notebook."
+        replacement = "Remember to review the session notes tomorrow."
+        overview_text = "Back from overview: paste when the editor is ready."
+        scene("01-ready", "Native editor ready — before copying", ready)
+        previous = copy_without_edit(first, "storybook-first")
+        scene("02-copy-only", "Production clipboard copy — editor unchanged", ready)
+        consumer_command("action-paste", "ACTION\t" + first)
+        scene("03-manual-paste", "Explicit test-driven manual Paste — fixture transcript", first)
+        child = copy_without_edit(replacement, "storybook-replacement")
+        until(lambda: previous.poll() is not None, "replacement owner exit")
+        scene("04-replacement-copy", "Replacement copy — existing text unchanged", first)
+        consumer_command("action-paste", "ACTION\t" + replacement)
+        scene("05-replacement-paste", "Another explicit manual Paste — replacement fixture", replacement)
+        evaluate('Main.overview.show(); true')
+        time.sleep(1)
+        evaluate('global.display.unset_input_focus(global.get_current_time()); true')
+        until(lambda: eval_value('Main.overview.visible && !Main.overview.animationInProgress && !global.display.focus_window'), "mature overview")
+        copy_without_edit(overview_text, "storybook-overview")
+        assert eval_value('Main.overview.visible && !global.display.focus_window')
+        until(lambda: child.poll() is not None, "overview replaced owner exit")
+        scene("06-overview", "Mature GNOME overview — clipboard copy does not displace it", replacement)
+        evaluate('Main.overview.hide(); global.get_window_actors().find(a=>a.meta_window.title === "' + TITLE + '").meta_window.activate(global.get_current_time()); true')
+        until(lambda: eval_value('global.display.focus_window?.title === "' + TITLE + '" && !Main.overview.animationInProgress'), "editor returned")
+        consumer_command("action-paste", "ACTION\t" + overview_text)
+        scene("07-return-paste", "Return to editor — explicit manual Paste of overview fixture", overview_text)
+        report(reports / "gnome-storybook.html", scenes)
+        print("GNOME STORYBOOK PASS", flush=True)
+        sys.exit(0)
+
     owners = []
     for index, text in enumerate(("first transcript α", "replacement transcript β", "third transcript γ")):
         offset = (run / "consumer.log").stat().st_size
