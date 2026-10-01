@@ -197,7 +197,7 @@ sequenceDiagram
     M-->>D: listener: Recording → Transcribing
     D->>A: stop monitors, restore ducked audio
     D->>A: Stop() → WAV path
-    D->>D: VAD pre-filter — silence ends the cycle here
+    D->>D: Energy check — skip only if quiet and no preview recognized words
     D->>S: Transcribe(ctx, wav)
     S-->>D: text
     D->>D: strip non-speech markers — a marker-only transcript ends the cycle here
@@ -295,8 +295,16 @@ remove it as cosmetic.
 > cadence, and `zipformer-streaming` makes 7.3% word errors where the default
 > `model` makes 0.0%.
 
+The final recording's energy check measures loudness, not intelligibility. If
+any preview recognized words, final transcription runs even when the recording
+fails that check. This includes words recognized while finishing the preview at
+stop; only a quiet recording with no words recognized yet waits for that finish.
+Empty text and non-speech annotations do not count, and evidence is reset for
+every recording. Preview text still never becomes output.
+
 Setting `preview.enabled = false` disables the preview entirely; the level meter
-is unaffected.
+is unaffected. Without preview recognition, the energy check can still reject
+quiet or very short speech.
 
 ## The IPC protocol
 
@@ -435,7 +443,8 @@ Every row was traced through the code.
 | Capture fails to start (`parec` missing, no audio server) | `reportError`: the error visual, a pause, then `EventTranscribeFailed` → `Idle` | The error pill, then nothing typed |
 | Capture starts but records nothing | `Stop` rejects a zero-length WAV; same error path | The error pill |
 | A WAV with a header and no samples | Passes the size check, reaches the VAD pre-filter, ends the cycle as silence | Pill vanishes, nothing typed |
-| VAD finds no speech | `EventTranscribeDone` without calling the transcriber | Pill vanishes, nothing typed |
+| Energy check finds no speech and no preview recognized words | `EventTranscribeDone` without calling the transcriber | Pill vanishes, nothing typed |
+| Energy check rejects quiet or short speech, but the preview recognized words | Run final transcription despite low energy; never emit preview text | Main model's final transcript gets typed, if non-empty |
 | The transcriber errors | `reportError` → `Idle` | The error pill |
 | Whisper decodes near-silence to `[BLANK_AUDIO]` or `(machine whirring)` | `speech.StripNonSpeech` cuts the annotation; what is left is empty, so this becomes the empty-transcript row | Pill vanishes, nothing typed |
 | A dictation longer than ~30s | whisper-cli writes one line per window; `output.CleanText` joins them before the transcript is recorded or typed | One flowing line, and `mavor history` recovers the same string that was typed |

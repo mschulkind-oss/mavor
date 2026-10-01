@@ -65,15 +65,16 @@ type Daemon struct {
 	// (§10.3 of docs/design/configuration-surface.md) — and streamGen is how
 	// that is enforced: it moves on when a recording stops, so a result still
 	// in flight finds its generation gone and is dropped rather than painted.
-	streamMu      sync.Mutex
-	streamHistory string
-	streamGen     uint64
-	streamSource  speech.StreamTranscriber
+	streamMu        sync.Mutex
+	streamHistory   string
+	streamGen       uint64
+	streamSource    speech.StreamTranscriber
+	streamHadSpeech bool // Recognition evidence for this recording, never output text.
 
 	// streamDrain is closed when the previous recording's StopStream has
-	// returned. That call is made off the critical path because its result is
-	// discarded, but the recognizer it drains is the same object the next
-	// recording restarts, so the next StartStream waits on this.
+	// returned. Its text is never emitted; only a quiet recording with no
+	// recognition evidence waits for it before deciding to skip transcription.
+	// The next StartStream also waits before reusing the same recognizer.
 	streamDrain chan struct{}
 }
 
@@ -360,6 +361,7 @@ func (d *Daemon) startStreamingMonitoring(ctx context.Context) {
 	ctxStream, cancel := context.WithCancel(ctx)
 	d.streamCancel = cancel
 	d.streamHistory = ""
+	d.streamHadSpeech = false
 	d.streamGen++
 	gen := d.streamGen
 	d.streamSource = src
@@ -586,6 +588,7 @@ func (d *Daemon) appendPhrase(ctx context.Context, gen uint64, text string) {
 		d.logger.Debug("streaming: phrase result arrived after stop — dropped", "text", text)
 		return
 	}
+	d.streamHadSpeech = true
 	if d.streamHistory != "" {
 		d.streamHistory += " "
 	}
@@ -607,6 +610,9 @@ func (d *Daemon) setPreview(ctx context.Context, gen uint64, text string) {
 	if !d.previewLive(ctx, gen) {
 		d.logger.Debug("streaming: partial arrived after stop — dropped", "text", text)
 		return
+	}
+	if strings.TrimSpace(text) != "" {
+		d.streamHadSpeech = true
 	}
 	if d.overlay != nil {
 		_ = d.overlay.SetText(text)
@@ -631,6 +637,7 @@ func (d *Daemon) stopStreamingMonitoring() {
 	// discards the work still in flight: a phrase transcription or a partial
 	// that lands after this finds its generation gone and paints nothing.
 	d.streamGen++
+	stoppedGen := d.streamGen
 	d.streamHistory = ""
 	if d.overlay != nil {
 		_ = d.overlay.SetText("")
@@ -645,9 +652,10 @@ func (d *Daemon) stopStreamingMonitoring() {
 		return
 	}
 
-	// StopStream makes the recognizer decode whatever audio it still holds,
-	// and the answer is thrown away — the preview never contributes to the
-	// transcript. Waiting for it here charged the user twice for nothing:
+	// StopStream makes the recognizer decode whatever audio it still holds.
+	// Its text is never emitted, but recognition can prevent the energy
+	// filter from discarding a quiet recording. Waiting for it here charged
+	// the user twice for nothing:
 	// this runs on the FSM listener, which state.Machine.Apply calls before
 	// returning, so a slow final decode delayed BOTH the `mavor stop` /
 	// `toggle` command's own reply AND the spawn of runTranscription, the
@@ -657,6 +665,13 @@ func (d *Daemon) stopStreamingMonitoring() {
 		started := time.Now()
 		finalText, err := src.StopStream(context.Background())
 		if err == nil && finalText != "" {
+			if strings.TrimSpace(speech.StripNonSpeech(finalText)) != "" {
+				d.streamMu.Lock()
+				if d.streamGen == stoppedGen {
+					d.streamHadSpeech = true
+				}
+				d.streamMu.Unlock()
+			}
 			d.logger.Info("streaming: final preview text discarded",
 				"text", finalText, "drain_took", time.Since(started))
 		}
@@ -681,6 +696,29 @@ func (d *Daemon) awaitStreamDrain(ctx context.Context) {
 	}
 }
 
+// previewRecognizedSpeech checks recognition evidence before rejecting a quiet
+// recording. Once any words were recognized, later empty partials cannot erase
+// that evidence. Only a recording the energy filter would otherwise discard
+// needs to wait for the tail decode, and only if it has no recognized words yet.
+func (d *Daemon) previewRecognizedSpeech(ctx context.Context) bool {
+	d.streamMu.Lock()
+	hadSpeech, drain := d.streamHadSpeech, d.streamDrain
+	d.streamMu.Unlock()
+	if hadSpeech {
+		return true
+	}
+	if drain != nil {
+		select {
+		case <-drain:
+		case <-ctx.Done():
+			return false
+		}
+	}
+	d.streamMu.Lock()
+	defer d.streamMu.Unlock()
+	return d.streamHadSpeech
+}
+
 func (d *Daemon) runTranscription(ctx context.Context) {
 	cycleStart := time.Now()
 	d.logger.Info("pipeline: stopping recorder for transcription")
@@ -697,12 +735,17 @@ func (d *Daemon) runTranscription(ctx context.Context) {
 	}
 	d.logger.Info("pipeline: recorder.Stop ok", "wav", wav)
 
-	// VAD Silence Pre-Filter: if audio has no detectable speech, skip Whisper
+	// The energy filter measures loudness, not intelligibility: quiet or short
+	// speech can fail it even after the preview recognized words. Recognition
+	// wins that disagreement; only the main model's final transcript is emitted.
 	if wav != "" {
 		if hasSpeech, vadErr := audio.DetectSpeech(wav, 150*time.Millisecond); vadErr == nil && !hasSpeech {
-			d.logger.Info("pipeline: silence detected by VAD pre-filter — skipping transcription")
-			d.machine.Apply(state.EventTranscribeDone)
-			return
+			if !d.previewRecognizedSpeech(ctx) {
+				d.logger.Info("pipeline: silence detected by VAD pre-filter — skipping transcription")
+				d.machine.Apply(state.EventTranscribeDone)
+				return
+			}
+			d.logger.Info("pipeline: preview recognized speech below energy threshold — running final transcription")
 		}
 	}
 
