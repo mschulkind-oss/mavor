@@ -51,8 +51,13 @@ type SupervisorConfig struct {
 	CommandFunc func(ctx context.Context, cfg SupervisorConfig) *exec.Cmd
 
 	// ReadyTimeout is the maximum duration to wait for the server to accept connections.
-	// Defaults to 10 seconds.
+	// Defaults to 10 seconds with GPU enabled, or CPUReadyTimeout with NoGPU.
 	ReadyTimeout time.Duration
+
+	// CPUReadyTimeout allows a slower CPU model load after GPU recovery.
+	// Defaults to 60 seconds. Recovery is attempted only once, then the child
+	// remains on CPU until the daemon creates a new Supervisor.
+	CPUReadyTimeout time.Duration
 
 	// PollInterval is the polling interval for readiness checks.
 	// Defaults to 50 milliseconds.
@@ -86,8 +91,14 @@ func (s *Supervisor) Endpoint() string {
 
 // NewSupervisor creates a Supervisor with the given configuration.
 func NewSupervisor(cfg SupervisorConfig) *Supervisor {
+	if cfg.CPUReadyTimeout <= 0 {
+		cfg.CPUReadyTimeout = 60 * time.Second
+	}
 	if cfg.ReadyTimeout <= 0 {
 		cfg.ReadyTimeout = 10 * time.Second
+		if cfg.NoGPU {
+			cfg.ReadyTimeout = cfg.CPUReadyTimeout
+		}
 	}
 	if cfg.PollInterval <= 0 {
 		cfg.PollInterval = 50 * time.Millisecond
@@ -175,11 +186,92 @@ func freeLoopbackPort() (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
-// Start launches the child server process and blocks until it is ready to accept connections.
+// Start launches the child server and waits for readiness. A failed GPU-enabled
+// startup is retried once with GPU disabled; cancellation and launch errors are
+// not reasons to change devices.
 func (s *Supervisor) Start(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	err := s.startLocked(ctx)
+	var readinessErr *serverReadinessError
+	if err == nil || s.cfg.NoGPU || ctx.Err() != nil || !errors.As(err, &readinessErr) {
+		return err
+	}
+	if cpuErr := s.fallbackLocked(ctx, err); cpuErr != nil {
+		return errors.Join(err, cpuErr)
+	}
+	return nil
+}
+
+// GPUEnabled reports whether the supervised child may use a GPU. It does not
+// assert that the binary actually loaded a GPU backend.
+func (s *Supervisor) GPUEnabled() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.cfg.NoGPU
+}
+
+// FallbackToCPU stops the GPU-enabled child before starting its CPU replacement.
+// Callers can then retry the failed request using the original recording.
+func (s *Supervisor) FallbackToCPU(ctx context.Context, cause error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.cfg.NoGPU {
+		return nil
+	}
+	return s.fallbackLocked(ctx, cause)
+}
+
+func (s *Supervisor) fallbackLocked(ctx context.Context, cause error) error {
+	s.logger.Warn("speech: GPU-enabled whisper-server failed; retrying on CPU (transcription may be slower)",
+		"err", cause, "until", "daemon restart", "cpu_ready_timeout", s.cfg.CPUReadyTimeout)
+	if err := s.stopLocked(); err != nil {
+		return fmt.Errorf("speech: stop GPU-enabled server before CPU recovery: %w", err)
+	}
+	s.cfg.NoGPU = true
+	s.cfg.ReadyTimeout = s.cfg.CPUReadyTimeout
+	if err := s.startLocked(ctx); err != nil {
+		return fmt.Errorf("speech: CPU recovery failed: %w", err)
+	}
+	return nil
+}
+
+type serverReadinessError struct{ err error }
+
+func (e *serverReadinessError) Error() string { return e.err.Error() }
+func (e *serverReadinessError) Unwrap() error { return e.err }
+
+// childStderr retains the last 64 KiB of diagnostics. The subprocess copier
+// writes concurrently with readiness checks, so both accesses need a lock.
+type childStderr struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *childStderr) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	n, err := b.buf.Write(p)
+	if excess := b.buf.Len() - 64*1024; excess > 0 {
+		b.buf.Next(excess)
+	}
+	return n, err
+}
+
+func (b *childStderr) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func (s *Supervisor) startLocked(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if s.isRunningLocked() {
 		return nil
 	}
@@ -222,7 +314,7 @@ func (s *Supervisor) Start(ctx context.Context) error {
 		"model", s.cfg.ModelPath,
 	)
 
-	var stderrBuf bytes.Buffer
+	var stderrBuf childStderr
 	cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
 	cmd.Stdout = os.Stdout
 
@@ -251,14 +343,14 @@ func (s *Supervisor) Start(ctx context.Context) error {
 
 	if err := s.waitForReady(ctx, doneCh, &stderrBuf); err != nil {
 		_ = s.stopLocked()
-		return fmt.Errorf("speech: supervisor: server readiness check failed: %w", err)
+		return &serverReadinessError{err: fmt.Errorf("speech: supervisor: server readiness check failed: %w", err)}
 	}
 
 	s.logger.Info("speech: child server ready", "pid", cmd.Process.Pid)
 	return nil
 }
 
-func (s *Supervisor) waitForReady(ctx context.Context, doneCh chan struct{}, stderr *bytes.Buffer) error {
+func (s *Supervisor) waitForReady(ctx context.Context, doneCh chan struct{}, stderr *childStderr) error {
 	timeout := s.cfg.ReadyTimeout
 	if timeout <= 0 {
 		timeout = 10 * time.Second
@@ -349,7 +441,15 @@ func (s *Supervisor) IsRunning() bool {
 }
 
 func (s *Supervisor) isRunningLocked() bool {
-	return s.cmd != nil && s.cmd.Process != nil
+	if s.cmd == nil || s.cmd.Process == nil {
+		return false
+	}
+	select {
+	case <-s.done:
+		return false
+	default:
+		return true
+	}
 }
 
 // PID returns the child server process ID, or 0 if not running.

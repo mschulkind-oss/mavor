@@ -3,6 +3,7 @@ package speech
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -183,6 +184,23 @@ func (c *chunkingStreamTranscriber) FeedChunk(ctx context.Context, chunk []byte)
 
 func (c *chunkingStreamTranscriber) StopStream(ctx context.Context) (string, error) {
 	return c.stream.StopStream(ctx)
+}
+
+// Start preserves model warmup through the wrapper, including supervised
+// whisper-server startup and its CPU recovery before recordings are accepted.
+func (c *ChunkingTranscriber) Start(ctx context.Context) error {
+	if starter, ok := c.wrapped.(interface{ Start(context.Context) error }); ok {
+		return starter.Start(ctx)
+	}
+	return nil
+}
+
+// Close releases the underlying recognizer or supervised child on shutdown.
+func (c *ChunkingTranscriber) Close() error {
+	if closer, ok := c.wrapped.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
 }
 
 func (c *ChunkingTranscriber) Transcribe(ctx context.Context, wavPath string) (string, error) {

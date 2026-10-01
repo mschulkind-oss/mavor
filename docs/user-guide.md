@@ -635,6 +635,18 @@ says, because the ONNX Runtime vendored by the Go binding is a CPU-only build.
 `mavor doctor` reports which backend actually loaded, which is the only
 reliable answer.
 
+With the default `local-server` placement and `gpu = "auto"`, a failed
+GPU-enabled server startup, broken server connection, or server-side decoding
+error triggers one retry with GPU disabled. Mavor logs a warning and retries
+the **same recording**, never preview text. The child stays on CPU until the
+daemon restarts; transcription may be substantially slower. GPU startup has
+a 10-second readiness deadline; CPU startup gets 60 seconds. This recovery
+also applies when the GPU-enabled server times out, without claiming the
+cause was insufficient GPU memory. Cancellation, unreadable recordings, request
+rejections (HTTP 4xx responses), remote servers, `subprocess` placement, and
+explicit `gpu = "off"` do not trigger this recovery.
+If the CPU attempt also fails, mavor reports an error rather than retrying forever.
+
 > [!WARNING]
 > **`gpu_layers` is gone, and it was never a knob — it was a bug.** Any
 > non-zero value made mavor pass `-ngl` to whisper.cpp, which rejects the flag,

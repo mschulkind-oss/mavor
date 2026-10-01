@@ -81,6 +81,32 @@ func (s *ServerTranscriber) Close() error {
 
 // Transcribe sends the WAV file at wavPath to the server and returns the transcribed text.
 func (s *ServerTranscriber) Transcribe(ctx context.Context, wavPath string) (string, error) {
+	text, err := s.transcribeOnce(ctx, wavPath)
+	var serverErr *inferenceServerError
+	if err == nil || s.Supervisor == nil || ctx.Err() != nil ||
+		!errors.As(err, &serverErr) || !s.Supervisor.GPUEnabled() {
+		return text, err
+	}
+	if cpuErr := s.Supervisor.FallbackToCPU(ctx, err); cpuErr != nil {
+		return "", errors.Join(err, cpuErr)
+	}
+	// Nothing has been emitted yet. Replay the same WAV, not preview text or
+	// a new recording, and never recursively retry a failed CPU request.
+	text, cpuErr := s.transcribeOnce(ctx, wavPath)
+	if cpuErr != nil {
+		return "", errors.Join(err, cpuErr)
+	}
+	return text, nil
+}
+
+// inferenceServerError distinguishes transport/server failures from local file
+// errors and rejected requests, where changing devices cannot repair the input.
+type inferenceServerError struct{ err error }
+
+func (e *inferenceServerError) Error() string { return e.err.Error() }
+func (e *inferenceServerError) Unwrap() error { return e.err }
+
+func (s *ServerTranscriber) transcribeOnce(ctx context.Context, wavPath string) (string, error) {
 	log := s.Logger
 	if log == nil {
 		log = slog.Default()
@@ -158,13 +184,13 @@ func (s *ServerTranscriber) Transcribe(ctx context.Context, wavPath string) (str
 		start := time.Now()
 		resp, err := client.Do(req)
 		if err != nil {
-			return "", fmt.Errorf("speech: server request failed: %w", err)
+			return "", &inferenceServerError{err: fmt.Errorf("speech: server request failed: %w", err)}
 		}
 		elapsed := time.Since(start)
 		respBytes, err = io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
-			return "", fmt.Errorf("speech: server: read response: %w", err)
+			return "", &inferenceServerError{err: fmt.Errorf("speech: server: read response: %w", err)}
 		}
 		lastStatus = resp.StatusCode
 
@@ -180,7 +206,11 @@ func (s *ServerTranscriber) Transcribe(ctx context.Context, wavPath string) (str
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return "", fmt.Errorf("speech: server returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBytes)))
+			err := fmt.Errorf("speech: server returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBytes)))
+			if resp.StatusCode >= 500 {
+				return "", &inferenceServerError{err: err}
+			}
+			return "", err
 		}
 		s.rememberURL(reqURL)
 		break
@@ -196,7 +226,7 @@ func (s *ServerTranscriber) Transcribe(ctx context.Context, wavPath string) (str
 	}
 	if err := json.Unmarshal(respBytes, &jsonResp); err == nil {
 		if len(jsonResp.Error) > 0 && string(jsonResp.Error) != "null" {
-			return "", fmt.Errorf("speech: server error: %s", string(jsonResp.Error))
+			return "", &inferenceServerError{err: fmt.Errorf("speech: server error: %s", string(jsonResp.Error))}
 		}
 		if jsonResp.Text != nil {
 			return strings.TrimSpace(*jsonResp.Text), nil

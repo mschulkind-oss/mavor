@@ -182,6 +182,7 @@ func TestSupervisorReadinessTimeout(t *testing.T) {
 	sockPath := filepath.Join(t.TempDir(), "timeout-test.sock")
 	sup := NewSupervisor(SupervisorConfig{
 		ServerSocket: sockPath,
+		NoGPU:        true, // Test the terminal CPU failure, not GPU recovery.
 		PollInterval: 10 * time.Millisecond,
 		ReadyTimeout: 100 * time.Millisecond,
 		CommandFunc: func(ctx context.Context, cfg SupervisorConfig) *exec.Cmd {
@@ -206,6 +207,7 @@ func TestSupervisorPrematureExit(t *testing.T) {
 	sockPath := filepath.Join(t.TempDir(), "crash-test.sock")
 	sup := NewSupervisor(SupervisorConfig{
 		ServerSocket: sockPath,
+		NoGPU:        true, // Test the terminal CPU failure, not GPU recovery.
 		PollInterval: 10 * time.Millisecond,
 		ReadyTimeout: 2 * time.Second,
 		CommandFunc: func(ctx context.Context, cfg SupervisorConfig) *exec.Cmd {
