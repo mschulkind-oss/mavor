@@ -44,7 +44,8 @@ the failure-mode table this doc extends).
 **Do not port the HUD. Copy-only output is an explicit option; injection remains
 a separate, unimplemented proposal.**
 
-Set `[output] driver = "clipboard"` for manual paste. Default output is still
+Set `[output] driver = "clipboard", clipboard_backend = "x11"` for manual
+paste on measured GNOME. Default output is still
 `"paste"`; `"typing"` remains opt-in. No desktop auto-selection or permission
 mechanism is added. Read the [GNOME instructions](../user-guide.md#gnome-wayland-manual-paste)
 for missing visible preview, status/log feedback, and the limits of background
@@ -168,14 +169,16 @@ That matters because the native constructor currently uses a Wayland connection
 that also requires layer-shell. Overlay construction independently falls back
 to `Noop` with a warning when layer-shell is unavailable.
 
-**Finding 3: clipboard transfer still depends on the compositor.** Copy-only
-output uses ordinary backgrounding `wl-copy` and bounds launch to three seconds.
-It does not inject, restore selections, touch PRIMARY, or use `--paste-once`.
-Without data-control support, wl-clipboard's transparent-surface fallback may
-require focus and hang ([manual](https://man.archlinux.org/man/wl-clipboard.1.en)).
-The deadline limits waiting, not successfully forked ownership; killing an
-immediate child does not prove all descendants were cleaned up. No live GNOME
-verification was performed.
+**Finding 3: clipboard transfer still depends on the compositor.** The default
+Wayland clipboard backend uses backgrounding wl-copy with a three-second launch
+deadline. Its fallback steals focus on measured GNOME; the deadline does not
+make that focus-safe. Explicit `clipboard_backend = "x11"` uses a supervised
+foreground xclip owner through XWayland, with no injected keys or PRIMARY writes.
+Production acceptance on isolated Shell/Mutter 50.4 passes continuous focus,
+mature overview/no focus, native transfer and editable GTK Paste action.
+Replacement/shutdown reap the owner; startup deadlines do not expire successful
+ownership. This does not verify a full login session, lock/unlock, physical keys,
+or general GNOME support. See [measured QA](../qa/gnome-clipboard-qa.md#production-x11-verification).
 
 ### 2.3 Linux, but not GNOME — the assumptions that do not matter here
 
@@ -613,8 +616,9 @@ tests the compositor's capabilities rather than `$PATH`.
 
 ## 6. Non-goals
 
-- **X11 or XWayland as targets.** Not "later" — not at all. GNOME 50 removed
-  the X11 session.
+- **X11 sessions or XWayland injection/HUD as targets.** The separate explicit
+  clipboard backend uses only XWayland's selection bridge inside GNOME Wayland;
+  it does not implement those ports. GNOME 50 removed the X11 session.
 - **macOS and Windows.** A sibling document covers macOS.
 - **Any change to `audio.Recorder` or `speech.Transcriber`.** They are portable
   and this port does not touch them.

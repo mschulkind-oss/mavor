@@ -4,6 +4,14 @@
 #include <stdio.h>
 #include <string.h>
 static GtkWindow *window;
+static GtkTextView *view;
+static void edited(GtkTextBuffer *buffer, gpointer unused) {
+    (void)unused;
+    GtkTextIter start, end;
+    gtk_text_buffer_get_bounds(buffer, &start, &end);
+    char *text = gtk_text_buffer_get_text(buffer, &start, &end, FALSE);
+    printf("ACTION\t%s\n", text); fflush(stdout); g_free(text);
+}
 static void received(GObject *object, GAsyncResult *result, gpointer label) {
     GError *error = NULL;
     char *text = gdk_clipboard_read_text_finish(GDK_CLIPBOARD(object), result, &error);
@@ -23,6 +31,13 @@ static gboolean command(GIOChannel *channel, GIOCondition condition, gpointer un
     if (!strcmp(line, "seed-primary")) {
         gdk_clipboard_set_text(gdk_display_get_primary_clipboard(display), "primary sentinel α");
         puts("SEEDED"); fflush(stdout);
+    } else if (!strcmp(line, "action-paste")) {
+        // Test input invokes the editable widget's own Paste action. The
+        // production dispatcher never activates actions or injects keys.
+        gtk_text_buffer_set_text(gtk_text_view_get_buffer(view), "", -1);
+        if (!gtk_widget_activate_action(GTK_WIDGET(view), "clipboard.paste", NULL)) {
+            puts("ACTION_FAILED"); fflush(stdout);
+        }
     } else {
         gboolean primary = !strcmp(line, "primary");
         gdk_clipboard_read_text_async(primary ? gdk_display_get_primary_clipboard(display) : gdk_display_get_clipboard(display), NULL, received, g_strdup(line));
@@ -39,7 +54,9 @@ int main(int argc, char **argv) {
     window = GTK_WINDOW(gtk_window_new());
     gtk_window_set_title(window, argc > 1 ? argv[1] : "Mavor native clipboard consumer");
     gtk_window_set_default_size(window, 600, 300);
-    gtk_window_set_child(window, gtk_label_new("Native manual-paste selection consumer"));
+    view = GTK_TEXT_VIEW(gtk_text_view_new());
+    gtk_window_set_child(window, GTK_WIDGET(view));
+    g_signal_connect(gtk_text_view_get_buffer(view), "changed", G_CALLBACK(edited), NULL);
     g_signal_connect(window, "notify::is-active", G_CALLBACK(focus), NULL);
     g_io_add_watch(g_io_channel_unix_new(0), G_IO_IN | G_IO_HUP, command, NULL);
     gtk_window_present(window);

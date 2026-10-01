@@ -6,18 +6,17 @@ status: accepted
 
 ## Verdict
 
-**Experimentally verified 2026-10-01 at `c9fadca`: real isolated GNOME Shell
-starts in this jail and transfers UTF-8 clipboard text to a native Wayland GTK
-client. This is not a pass for focus-safe background copying.** With a focused
-consumer, wl-copy briefly steals focus, then returns it. With the overview open
-and no focused window, wl-copy waits; explicitly focusing its transient window
-unblocks ownership. No Sway compositor or mocked clipboard commands were used.
+**Adopt explicit X11 clipboard output for the measured GNOME case.** Verified
+2026-10-01 against uncommitted changes on `10139e1`: the real production
+foreground-owner dispatcher passes native GTK reads, continuous focus checks,
+mature overview/no-focus copying, PRIMARY preservation and editable Paste action
+on isolated Shell/Mutter 50.4 with xclip 0.13. This is not complete desktop support.
 
-A permanent GNOME integration harness is feasible now. There is no missing-tool
-or human-restart blocker. The remaining limitation is observed focus behavior,
-not package availability. This probe did not exercise mavor's daemon, its launch
-cancellation, real transcription, physical shortcuts, PRIMARY preservation,
-screen locking, or a complete GNOME login session.
+The original Wayland diagnostics remain valid: wl-copy transfers text but
+briefly steals focus. Both focused and overview diagnostics were rerun and still
+fail their original focus assertions. Deadline/forced-death cleanup pass.
+Earlier setup/JSON-decoding failures were not clipboard failures. See
+[production evidence](../qa/gnome-clipboard-qa.md#production-x11-verification).
 
 ## Existing output architecture
 
@@ -28,8 +27,11 @@ Source reviewed 2026-10-01:
 - [Paste output](../../internal/output/paste.go) owns CLIPBOARD and PRIMARY only
   briefly, injects a chord, and restores selections. Reuse is rejected for
   delayed manual paste; clipboard has a separate dispatcher.
-- [Clipboard output](../../internal/output/clipboard.go) launches ordinary
+- [Wayland clipboard output](../../internal/output/clipboard.go) launches ordinary
   backgrounding wl-copy with plain UTF-8 text, without paste-once.
+- [X11 clipboard output](../../internal/output/x11_clipboard.go) supervises a
+  foreground xclip owner. The launch deadline does not expire successful ownership;
+  replacement/shutdown/connection loss reap it. No keys are injected.
 - [DefaultRunner](../../internal/output/output.go) avoids inherited-pipe waits
   for daemonized wl-copy. Preserve this behavior; do not capture child
   stderr/stdout through pipes. A launch deadline is not clipboard readiness.
@@ -244,8 +246,9 @@ The retained failures precede any production repair. No production strategy
 change was made: Mutter rejects selection ownership from an unfocused client
 and this session advertises no data-control protocol. Longer timeouts, focusing
 its helper, or injecting keys do not repair focus-safe copy-only semantics.
-A permitted working replacement has **not** been established; do not merge this
-as verified GNOME support or convert these assertions into expected successes.
+These assertions remain diagnostics for the Wayland backend. The separate
+X11 backend passes the bounded acceptance below; do not convert the Wayland
+assertions into expected successes or generalize this to all GNOME sessions.
 
 ### Run without a jail restart
 
@@ -281,5 +284,58 @@ claim application Paste acceptance or complete-desktop lifecycle checks.
 
 Finalize evidence and cleanup limits are recorded in the
 [independent report](../reports/gnome-headless-qa.md#finalize-repair-and-rerun).
-The final run still fails focused and overview acceptance; deadline and forced
-worker-death cleanup pass. Production focus safety remains unresolved.
+The original Wayland run still fails focused and overview acceptance; deadline
+and forced worker-death cleanup pass. X11 acceptance is a separate result below.
+
+
+## Focus-safe XWayland production result
+
+**Measured 2026-10-01:** the recovered foreground-xclip proof passes, followed by
+production dispatcher acceptance. XWayland is the X server inside Mutter; its
+selection bridge offers X11 CLIPBOARD contents to native Wayland clients.
+CLIPBOARD and PRIMARY are separate selections; see the
+[X selection conventions](https://www.freedesktop.org/wiki/Specifications/ClipboardsWiki/).
+No native helper surface needs focus, unlike the wl-copy fallback.
+
+**Re-analyzed from source:** xclip 0.13 calls XSetSelectionOwner before its
+foreground request-loop message. That message precedes the event-loop flush and
+is not server-confirmed readiness. Ordinary silent-mode xclip forks at this
+point, which would hide owner lifecycle from mavor. Adopt quiet foreground mode
+and retain native consumer reads as proof of transfer. Source:
+[xclip 0.13](https://github.com/astrand/xclip/blob/0.13/xclip.c).
+
+Retained Mutter 50.4 source confirms that XFixes selection-owner notifications
+install the X11 source through the selection bridge, and that its clipboard
+manager can save/restore text on owner loss. Measured GTK offers returned exact
+text six seconds after production Close; this is bounded observation, not
+indefinite persistence or a promise for clipboard managers disabled.
+
+The recovered Eval decoder parses the D-Bus tuple and JSON exactly once for
+direct JavaScript values. Shell already serializes the result; adding
+JSON.stringify double-encodes it. Mature overview may retain focus_window despite
+its stage-input grab. The test clears destination focus explicitly after the
+animation, never focuses the owner, and verifies no subsequent focus events.
+
+Production runs cover delayed/repeated/replacement native consumption, unchanged
+external PRIMARY, ten-second delayed consumption, editable GTK Paste action,
+Close and post-Close retention. Startup deadline testing must freeze the private
+**XWayland server**: freezing Shell alone does not stop an existing X11 server,
+and xclip can still enter its request loop. Abrupt production-process death kills
+the owner through Linux parent-death signaling; the test subreaper reaps it.
+Compositor loss also ends ownership and the production wait goroutine reaps it.
+
+Use the [hash-pinned Nix environment](../../test/gnome/environment.nix), containing
+the measured nixpkgs revision rather than today's registry. Reproduction:
+
+```bash
+env -u LD_LIBRARY_PATH nix develop --impure \
+  --file test/gnome/environment.nix --command just test-gnome-x11 -v
+# Original focus diagnostics remain intentionally failing on measured GNOME:
+env -u LD_LIBRARY_PATH nix develop --impure \
+  --file test/gnome/environment.nix --command go test -tags=gnome \
+  ./test/gnome -run '^TestGNOMEClipboard$' -count=1 -v -timeout=130s
+```
+
+[QA](../qa/gnome-clipboard-qa.md#production-x11-verification) identifies the
+retained logs and known limits. No jail edit, restart, extension, production
+key injection, host desktop, deployment, or silence-filter change was used.

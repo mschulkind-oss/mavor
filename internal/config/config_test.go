@@ -594,3 +594,28 @@ func TestClipboardDriverRoundTripAndValidation(t *testing.T) {
 		t.Fatal("unknown driver accepted")
 	}
 }
+
+func TestClipboardBackend(t *testing.T) {
+	if Default().Output.ClipboardBackend != "wayland" {
+		t.Fatal("default changed")
+	}
+	for _, backend := range []string{"wayland", "x11"} {
+		cfg, err := Load(writeConfig(t, "[output]\ndriver = \"clipboard\"\nclipboard_backend = \""+backend+"\"\n"))
+		if err != nil || cfg.Output.ClipboardBackend != backend {
+			t.Fatalf("backend %s: %+v %v", backend, cfg.Output, err)
+		}
+		body, err := toml.Marshal(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		roundtrip, err := Load(writeConfig(t, string(body)))
+		if err != nil || roundtrip.Output.ClipboardBackend != backend {
+			t.Fatalf("roundtrip %s: %v", backend, err)
+		}
+	}
+	for _, body := range []string{"driver = \"clipboard\"\nclipboard_backend = \"typo\"", "driver = \"paste\"\nclipboard_backend = \"x11\"", "driver = \"typing\"\nclipboard_backend = \"x11\""} {
+		if _, err := Load(writeConfig(t, "[output]\n"+body)); err == nil {
+			t.Fatalf("accepted %s", body)
+		}
+	}
+}

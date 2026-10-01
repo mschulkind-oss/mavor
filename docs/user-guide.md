@@ -926,11 +926,14 @@ keyboard. Choose copy-only output explicitly; it is never a silent fallback:
 ```toml
 [output]
 driver = "clipboard"
+clipboard_backend = "x11"
 ```
 
-1. Install `wl-copy` (the wl-clipboard package), set the driver, run `mavor setup`
-   and `mavor doctor`, then restart the daemon. Other audio/model requirements
-   still apply. This output mode needs neither `wtype` nor `wl-paste`.
+1. Install `xclip`, set the driver/backend, run `mavor setup` and `mavor doctor`,
+   then restart the daemon. Supply the desktop session's DISPLAY and XAUTHORITY
+   to the daemon, including its user service environment when applicable; do not
+   hard-code another session's authorization path. Other audio/model requirements
+   still apply. This backend needs no wtype, wl-copy or wl-paste.
 2. Open **Settings → Keyboard → Custom Shortcuts** (labels vary by GNOME version).
    Add a shortcut whose command is the absolute installed binary path followed
    by `toggle`, for example `/home/you/.local/bin/mavor toggle`.
@@ -956,21 +959,33 @@ Notifications are deferred; status and logs are the available feedback.
 
 ### Copy failures and verification limits
 
-`wl-copy` startup is limited to three seconds, or earlier caller cancellation.
-This deadline does not expire a successfully forked clipboard holder. Without
-data-control support, wl-clipboard may use a transparent surface that requires
-focus and can hang. A timeout protects daemon responsiveness, not clipboard
-readiness, focus preservation, or cleanup of every forked descendant.
-See [wl-clipboard's manual](https://man.archlinux.org/man/wl-clipboard.1.en).
+X11 copying uses foreground xclip to serve CLIPBOARD as UTF8_STRING indefinitely,
+without paste-once or a timed ownership lease. Launch is limited to three seconds
+or earlier caller cancellation; successful ownership outlives that context. A
+later copy replaces the owner, and daemon shutdown kills/reaps it. Abrupt daemon
+process death and compositor loss also end ownership. Text survived six seconds
+after shutdown in the measured Mutter session because its clipboard manager
+retained it; persistence after shutdown is not guaranteed.
 
-`mavor doctor` checks helper availability without overwriting your clipboard.
-It does not prove that background copying works on your GNOME version.
-Idle does not prove copying succeeded: dispatch failures are logged and the
-cycle still ends. Check `mavor logs`; recover with `mavor history copy` or
-`mavor history --pick` (these also depend on working clipboard transfer).
+`clipboard_backend = "wayland"` remains the default when the backend is omitted.
+It uses ordinary backgrounding wl-copy. On measured GNOME its transparent-surface
+fallback steals focus; a timeout does not make it focus-safe. See
+[wl-clipboard's manual](https://man.archlinux.org/man/wl-clipboard.1.en) and the
+[measured backend comparison](research/gnome-clipboard-research.md#focus-safe-xwayland-production-result).
+No backend is automatically selected from desktop/compositor names.
 
-Sway persistence tests are not GNOME certification. Before relying on this,
-record GNOME and wl-clipboard versions and test background dictation into an
-editor and terminal, delayed/repeated paste, successive transcripts, clipboard
-managers enabled/disabled, lock/unlock, focus changes, timeouts, and history
-recovery. No live GNOME session was tested for this implementation.
+`mavor doctor` checks xclip, DISPLAY and a readable nonempty authorization file
+(XAUTHORITY, or the standard home-directory file) without reading or overwriting
+selections. It does not validate server authorization or clipboard transfer.
+A process startup acknowledgment also does not prove paste succeeded. Idle means
+the cycle ended; dispatch failures are logged even though the cycle completes.
+Check `mavor logs`; transcripts remain in `mavor history`. History copy/picker
+commands still use wl-copy and are not an X11-backend recovery guarantee.
+
+Isolated GNOME Shell/Mutter 50.4 with xclip 0.13 passed actual production output,
+continuous destination focus, mature overview/no focus, delayed/repeated/native
+reads, replacement, PRIMARY preservation and an editable GTK Paste action. This
+is not a full login session or physical Ctrl+V test. Before relying on your
+desktop, check editors/terminals, clipboard managers enabled/disabled, lock/unlock,
+shortcuts and daemon restart. There is no GNOME HUD or input injection.
+See [QA](qa/gnome-clipboard-qa.md#production-x11-verification) for evidence and limits.

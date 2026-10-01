@@ -105,6 +105,9 @@ verbose = %t
 # "typing" sends keystrokes into the focused window (in-process or via wtype).
 # "clipboard" always copies to CLIPBOARD only; paste manually. No injected keys.
 # driver = %q
+# Copy-only backend: "wayland" (wl-copy, default) or "x11" (xclip/XWayland).
+# x11 requires driver="clipboard", DISPLAY and X11 authorization.
+clipboard_backend = %q
 
 # Keystroke chord synthesized to trigger a paste when driver is "paste".
 # paste_chord = %q
@@ -169,6 +172,7 @@ preview_width = %v
 		strconv.FormatFloat(float64(d.Vocabulary.Boost), 'f', -1, 32),
 		d.Logging.Verbose,
 		d.Output.Driver,
+		d.Output.ClipboardBackend,
 		d.Output.PasteChord,
 		d.Output.RestoreSelection,
 		d.Output.Clipboard,

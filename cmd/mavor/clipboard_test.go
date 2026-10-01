@@ -77,3 +77,79 @@ func TestClipboardToolRequirements(t *testing.T) {
 		t.Fatal("unknown driver accepted")
 	}
 }
+
+func TestX11ClipboardSelectionAndRequirements(t *testing.T) {
+	cfg := config.Default()
+	cfg.Output.Driver = "clipboard"
+	cfg.Output.ClipboardBackend = "x11"
+	d, close, err := selectOutput(cfg.Output, nil)
+	if _, ok := d.(*output.X11Clipboard); !ok || err != nil || close == nil {
+		t.Fatalf("selection %T %v", d, err)
+	}
+	if err := close(); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := os.MkdirAll(filepath.Dir(config.Path()), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config.Path(), []byte("[output]\ndriver = \"clipboard\"\nclipboard_backend = \"x11\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"parec", "whisper-cli", "xclip"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\nexit 99\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if missing := getMissingTools(cfg); len(missing) != 0 {
+		t.Fatalf("missing %v", missing)
+	}
+	t.Setenv("DISPLAY", "")
+	if ok, _ := checkOutput(); ok {
+		t.Fatal("missing DISPLAY accepted")
+	}
+	t.Setenv("DISPLAY", ":99")
+	t.Setenv("XAUTHORITY", filepath.Join(dir, "auth"))
+	if ok, _ := checkClipboard(); ok {
+		t.Fatal("missing auth accepted")
+	}
+	if err := os.WriteFile(os.Getenv("XAUTHORITY"), []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, check := range []func() (bool, string){checkOutput, checkClipboard} {
+		if ok, msg := check(); !ok {
+			t.Fatal(msg)
+		}
+	}
+	if err := os.Remove(filepath.Join(dir, "xclip")); err != nil {
+		t.Fatal(err)
+	}
+	if missing := getMissingTools(cfg); len(missing) != 1 || missing[0] != "xclip" {
+		t.Fatalf("missing %v", missing)
+	}
+	if ok, _ := checkOutput(); ok {
+		t.Fatal("missing xclip accepted")
+	}
+}
+
+func TestX11SetupRequiresSessionEnvironment(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("DISPLAY", "")
+	if err := os.MkdirAll(filepath.Dir(config.Path()), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config.Path(), []byte("[output]\ndriver = \"clipboard\"\nclipboard_backend = \"x11\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"parec", "whisper-cli", "xclip"} {
+		if err := os.WriteFile(filepath.Join(os.Getenv("PATH"), name), []byte("#!/bin/sh\nexit 99\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := runSetup(false); err == nil || !strings.Contains(err.Error(), "DISPLAY") {
+		t.Fatalf("setup error: %v", err)
+	}
+}

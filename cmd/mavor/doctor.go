@@ -76,7 +76,7 @@ func runDoctor() error {
 		{"Audio capture (parec/Pulse)", checkAudio},
 		{"Output dispatch", checkOutput},
 		{"Virtual typing (wtype)", checkWtype},
-		{"Clipboard (wl-clipboard)", checkClipboard},
+		{"Clipboard backend", checkClipboard},
 		{"Runtime and placement", checkRuntime},
 		{"Inference threads", checkThreads},
 		{"GPU acceleration", checkGPU},
@@ -141,6 +141,12 @@ func runSetup(force bool) error {
 		}
 	} else {
 		fmt.Println("✅ All required system runtime tools for the configured output driver are available")
+	}
+
+	if cfg.Output.Driver == "clipboard" && cfg.Output.ClipboardBackend == "x11" {
+		if ok, msg := checkX11Clipboard(); !ok {
+			return fmt.Errorf("setup output: %s", msg)
+		}
 	}
 
 	// Step 3: Model cache directory
@@ -260,8 +266,12 @@ func getMissingTools(cfg config.Config) []string {
 			missing = append(missing, "wtype")
 		}
 	}
-	if _, err := exec.LookPath("wl-copy"); err != nil {
-		missing = append(missing, "wl-copy")
+	copyTool := "wl-copy"
+	if cfg.Output.Driver == "clipboard" && cfg.Output.ClipboardBackend == "x11" {
+		copyTool = "xclip"
+	}
+	if _, err := exec.LookPath(copyTool); err != nil {
+		missing = append(missing, copyTool)
 	}
 	if cfg.Output.Driver == "paste" {
 		if _, err := exec.LookPath("wl-paste"); err != nil {
@@ -328,6 +338,8 @@ func installSystemPackages(distro string, missing []string) error {
 			switch m {
 			case "parec":
 				pkgs = append(pkgs, "pipewire-pulse", "pulseaudio-utils")
+			case "xclip":
+				pkgs = append(pkgs, "xclip")
 			case "wtype":
 				pkgs = append(pkgs, "wtype")
 			case "wl-copy":
@@ -343,6 +355,8 @@ func installSystemPackages(distro string, missing []string) error {
 			switch m {
 			case "parec":
 				pkgs = append(pkgs, "pipewire-pulse", "pulseaudio-utils")
+			case "xclip":
+				pkgs = append(pkgs, "xclip")
 			case "wtype":
 				pkgs = append(pkgs, "wtype")
 			case "wl-copy":
@@ -358,6 +372,8 @@ func installSystemPackages(distro string, missing []string) error {
 			switch m {
 			case "parec":
 				pkgs = append(pkgs, "pipewire-pulseaudio", "pulseaudio-utils")
+			case "xclip":
+				pkgs = append(pkgs, "xclip")
 			case "wtype":
 				pkgs = append(pkgs, "wtype")
 			case "wl-copy":
@@ -503,6 +519,9 @@ func checkClipboard() (bool, string) {
 		return false, err.Error()
 	}
 	if cfg.Output.Driver == "clipboard" {
+		if cfg.Output.ClipboardBackend == "x11" {
+			return checkX11Clipboard()
+		}
 		if _, err := exec.LookPath("wl-copy"); err != nil {
 			return false, "clipboard driver requires wl-copy (install wl-clipboard)"
 		}
@@ -528,6 +547,9 @@ func checkOutput() (bool, string) {
 		return false, err.Error()
 	}
 	if cfg.Output.Driver == "clipboard" {
+		if cfg.Output.ClipboardBackend == "x11" {
+			return checkX11Clipboard()
+		}
 		_, err := exec.LookPath("wl-copy")
 		return outputVerdict(cfg, false, err == nil, false, false, "")
 	}
@@ -550,6 +572,9 @@ func outputVerdict(cfg config.Config, wtypeFound, copyFound, pasteFound bool, pa
 		return false, err.Error()
 	}
 	if cfg.Output.Driver == "clipboard" {
+		if cfg.Output.ClipboardBackend == "x11" {
+			return checkX11Clipboard()
+		}
 		if !copyFound {
 			return false, "clipboard driver requires wl-copy (install wl-clipboard)"
 		}
@@ -872,4 +897,33 @@ func execStartVerdict(unit, want string, exists func(string) bool) (bool, string
 		return true, fmt.Sprintf("ExecStart runs %s, not this %s", got, want)
 	}
 	return true, ""
+}
+
+// Availability only: never reads or overwrites either selection. An auth file
+// does not prove the server accepts its cookies; live transfer is a separate test.
+func checkX11Clipboard() (bool, string) {
+	if _, err := exec.LookPath("xclip"); err != nil {
+		return false, "x11 clipboard requires xclip"
+	}
+	if os.Getenv("DISPLAY") == "" {
+		return false, "x11 clipboard requires DISPLAY from the desktop session"
+	}
+	auth := os.Getenv("XAUTHORITY")
+	if auth == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return false, err.Error()
+		}
+		auth = filepath.Join(home, ".Xauthority")
+	}
+	f, err := os.Open(auth)
+	if err != nil {
+		return false, "x11 clipboard requires readable XAUTHORITY (or ~/.Xauthority); server authorization is not verified"
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+		return false, "x11 clipboard authorization file is empty or not regular"
+	}
+	return true, "Copy-only x11 output (xclip/XWayland); paste manually. DISPLAY and authorization file present; this does not verify server authorization or clipboard transfer. No virtual keyboard or GNOME HUD."
 }

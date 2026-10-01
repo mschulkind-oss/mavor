@@ -65,7 +65,8 @@ the transcript before the target window reads it.
    virtual keycodes via `zwp_virtual_keyboard_v1` using `wtype` (or native typing).
 3. **`output.Clipboard` (`driver = "clipboard"`):** Copies CLIPBOARD only, for
    manual paste. No chord, PRIMARY writes, selection reads, or restoration.
-   Ordinary backgrounding `wl-copy` is bounded to three seconds for launch;
+   Default `clipboard_backend = "wayland"` uses backgrounding `wl-copy`, bounded
+   to three seconds for launch;
    successfully forked ownership survives that deadline. It does not use the
    paste driver's 350 ms ownership window or `--paste-once`. Paste-only knobs
    are ignored and copying occurs regardless of `output.clipboard`.
@@ -123,8 +124,9 @@ applications read `CLIPBOARD` and succeed.
 
 `mavor doctor` verifies the output dispatch environment:
 
-For clipboard mode, doctor checks only `wl-copy` for output and explains manual
-paste and the missing GNOME HUD. It performs no clipboard write and cannot
+For Wayland clipboard mode, doctor checks only `wl-copy` for output and explains
+manual paste and the missing GNOME HUD. Explicit X11 clipboard mode checks xclip,
+DISPLAY and an authorization file; no injected keys or wl-copy are required. It performs no clipboard write and cannot
 verify clipboard readiness. Paste-specific checks below are skipped.
 
 1. **Driver Reporting:** Reports the active output driver (`paste`, `typing`, or `clipboard`) and
@@ -162,8 +164,8 @@ The boundary of this subsystem:
   and deferred on the roadmap.
 - **No rich-text clipboard formats:** Selection data is strictly plain text
   (`text/plain;charset=utf-8`). HTML or formatting payloads are not handled.
-- **No X11 clipboard synchronization:** Selection buffers are managed purely
-  through Wayland selection protocols via `wl-copy` and `wl-paste`.
+- **Paste/typing remain Wayland-only:** Explicit X11 clipboard output uses
+  XWayland selection bridging, not X11 injection or paste-chord dispatch.
 
 ---
 
@@ -196,3 +198,21 @@ the single place where numbers and defaults are recorded.
 | Default restore selection | `true` | `internal/config/config.go` (`DefaultRestoreSelection`) |
 | Default lease duration | `350ms` | `internal/output/paste.go` (`LeaseDuration`) |
 | Restore settle delay | `50ms` | `internal/output/paste.go` (`RestoreDelay`) |
+
+
+## Explicit X11 copy-only ownership
+
+`[output] driver = "clipboard", clipboard_backend = "x11"` selects foreground
+xclip with CLIPBOARD/UTF8_STRING and unlimited requests. The three-second launch
+deadline does not expire successful ownership. Replacement/Close kill and wait
+for tracked owners; connection loss and Linux parent-death signaling also end
+ownership. Startup acknowledgment is not successful native transfer. Neither
+PRIMARY nor any keys are touched. Paste/typing retain their previous behavior;
+X11 with either injection driver is a validation error.
+
+XWayland is the X server inside a Wayland compositor; its selection bridge
+supplies native Wayland offers. This explicit backend passed isolated GNOME
+50.4 focus and editable-Paste acceptance; wl-copy fallback still fails continuous
+focus diagnostics. Shutdown persistence depends on the clipboard manager.
+See [ownership design](../design/gnome-clipboard-design-plan.md#x11-ownership-lifecycle)
+and [QA](../qa/gnome-clipboard-qa.md#production-x11-verification).

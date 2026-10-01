@@ -49,13 +49,32 @@ The [plan](../design/gnome-clipboard-design-plan.md) owns behavior.
   frozen-compositor launch deadline, and failure-path process cleanup.
 - [x] Run output unit tests, existing real-Sway clipboard persistence, and
   `just check`; preserve [results](../research/gnome-clipboard-research.md#permanent-real-session-regression-suite).
-- [ ] Establish and verify an allowed focus-safe production strategy. Both
-  focus acceptance cases remain failing; no production repair is claimed.
+- [x] Establish and verify explicit X11 copy-only output through a supervised
+  foreground xclip owner. Original Wayland focus diagnostics remain failing;
+  the separate production X11 acceptance passes.
 - [ ] Verify full desktop lifecycle and GPU-free CI. Do not infer either from
   the isolated dispatcher suite.
 
 - [x] Repair worker forced-death cleanup with an external supervisor and verify
   real GNOME teardown after native transfer; process-only regressions also pass.
 
-The final delivery groups the harness, cleanup repair, and evidence in one
-commit. No baked dependency or production behavior changes were made.
+## Experimentally proven correction phase
+
+Work is uncommitted against `10139e1`; parent owns landing and integration.
+
+- [x] Add tests first for X11 owner lifetime/replacement/Close, literal stdin,
+  failed startup, cancellation, and preserving a previous owner on failed launch.
+- [x] Add explicit backend config/default/validation/scaffold/show round-trips;
+  keep Wayland as default and reject X11 with injection drivers.
+- [x] Require xclip plus desktop DISPLAY/authorization for X11 setup/doctor;
+  preserve Wayland requirements, with no clipboard write during diagnostics.
+- [x] Test actual production dispatcher in real GNOME with continuous destination
+  focus, mature overview/no-focus, delayed/repeated/replacement native reads,
+  external PRIMARY and editable GTK Paste action.
+- [x] Verify launch/cancel against frozen XWayland, normal Close, connection loss,
+  abrupt parent death, and reaping. Pin the measured Nix environment.
+- [x] Rerun unchanged Wayland focus diagnostics and retain their failures.
+- [ ] Parent review, final repairs/commit/integration and complete-desktop checks.
+
+No jail configuration, deployment, or silence-filter changes were made.
+[QA](../qa/gnome-clipboard-qa.md#production-x11-verification) owns final gate evidence.

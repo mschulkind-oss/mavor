@@ -132,9 +132,13 @@ dev:
 test-int *args:
     go test -tags=integration ./test/integration/... {{args}}
 
-# Real isolated GNOME acceptance: missing dependencies and focus regressions fail.
+# Real isolated GNOME diagnostics, including known-broken wl-copy focus checks.
 test-gnome *args:
     go test -tags=gnome ./test/gnome/... -count=1 -timeout=2m {{args}}
+
+# Focus-safe XWayland backend acceptance, plus process-supervisor regressions.
+test-gnome-x11 *args:
+    go test -tags=gnome ./test/gnome/... -run '^(TestGNOMEX11Clipboard|TestHarnessCleanup)$' -count=1 -timeout=130s {{args}}
 
 # End-to-end smoke test with real whisper transcription.
 test-e2e: (_ensure-model test_model)

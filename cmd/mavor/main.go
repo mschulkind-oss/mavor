@@ -385,7 +385,11 @@ func selectOutput(cfg config.Output, logger *slog.Logger) (output.Dispatcher, fu
 		logger = slog.Default()
 	}
 	if cfg.Driver == "clipboard" {
-		logger.Info("output: copy-only; paste manually")
+		logger.Info("output: copy-only; paste manually", "clipboard_backend", cfg.ClipboardBackend)
+		if cfg.ClipboardBackend == "x11" {
+			c := output.NewX11Clipboard()
+			return c, c.Close, nil
+		}
 		return output.NewClipboard(), nil, nil
 	}
 	if cfg.Driver == "paste" || cfg.Driver == "" {

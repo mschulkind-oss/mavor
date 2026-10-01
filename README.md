@@ -48,11 +48,12 @@ Set this in your config and restart the daemon:
 ```toml
 [output]
 driver = "clipboard"
+clipboard_backend = "x11"
 ```
 
 This always replaces CLIPBOARD, even with `output.clipboard = false`, and never
-injects keys or modifies PRIMARY. Install `wl-copy` from wl-clipboard; `wtype`
-and `wl-paste` are not required for this driver. The default remains `paste`.
+injects keys or modifies PRIMARY. Install `xclip` and supply the desktop session's DISPLAY/XAUTHORITY environment;
+`wtype`, `wl-copy`, and `wl-paste` are not required for this backend. The default remains `paste`.
 In GNOME Settings → Keyboard → Custom Shortcuts (labels vary), bind the absolute
 installed path followed by `toggle`, for example `/home/you/.local/bin/mavor toggle`.
 Press once to record, again to transcribe; then paste normally (Ctrl+V in editors,
@@ -61,7 +62,10 @@ usually Ctrl+Shift+V in terminals).
 There is no GNOME waveform or visible preview. Use `mavor status` and `mavor logs`;
 Idle means the cycle ended, **not** that copying succeeded. Notifications are
 not implemented. See the [manual-paste guide](docs/user-guide.md#gnome-wayland-manual-paste)
-for clipboard limitations and recovery.
+for clipboard limitations and verification. Isolated GNOME Shell/Mutter 50.4
+passes native GTK transfer/Paste and continuous-focus checks with xclip 0.13;
+complete desktop lifecycle is not certified. Wayland clipboard output remains
+the default backend and its wl-copy fallback is not focus-safe on measured GNOME.
 
 ## Why this exists
 

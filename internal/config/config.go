@@ -98,6 +98,10 @@ type Output struct {
 	// "paste" copies text to selection buffers and synthesizes a paste chord.
 	Driver string `toml:"driver"`
 
+	// ClipboardBackend selects wayland (default) or x11 for copy-only output.
+	// x11 is explicit and invalid for injection drivers.
+	ClipboardBackend string `toml:"clipboard_backend"`
+
 	// PasteChord is the keystroke chord synthesized to trigger a paste when
 	// Driver is "paste". Defaults to "shift+insert".
 	PasteChord string `toml:"paste_chord"`
@@ -155,7 +159,17 @@ type Output struct {
 func (o Output) ValidateDriver() error {
 	switch o.Driver {
 	case "", "paste", "typing", "clipboard":
-		return nil
+		switch o.ClipboardBackend {
+		case "", "wayland":
+			return nil
+		case "x11":
+			if o.Driver == "clipboard" {
+				return nil
+			}
+			return fmt.Errorf("config: output.clipboard_backend x11 requires output.driver clipboard")
+		default:
+			return fmt.Errorf("config: unknown output.clipboard_backend %q (want wayland or x11)", o.ClipboardBackend)
+		}
 	default:
 		return fmt.Errorf("config: unknown output.driver %q (want paste, typing, or clipboard)", o.Driver)
 	}
@@ -364,6 +378,7 @@ func Default() Config {
 		},
 		Output: Output{
 			Driver:           DefaultOutputDriver,
+			ClipboardBackend: "wayland",
 			PasteChord:       DefaultPasteChord,
 			RestoreSelection: DefaultRestoreSelection,
 			// nil: pass no -d, which is the fastest wtype types. See the
@@ -450,6 +465,9 @@ func (c *Config) Resolve() {
 
 	if c.Output.Driver == "" {
 		c.Output.Driver = DefaultOutputDriver
+	}
+	if c.Output.ClipboardBackend == "" {
+		c.Output.ClipboardBackend = "wayland"
 	}
 	if c.Output.PasteChord == "" {
 		c.Output.PasteChord = DefaultPasteChord

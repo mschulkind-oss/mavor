@@ -343,7 +343,7 @@ cgo.
 | `audio.Recorder` | `Start`, `Stop() (wavPath, error)`, `Level()` | `ParecRecorder` — a `parec` child writing 16 kHz mono s16le |
 | `audio.Ducker` | `Duck`, `Restore` | `CommandDucker` over `wpctl` or `pactl`, auto-detected |
 | `speech.Transcriber` | `Transcribe(ctx, wavPath) (string, error)` | chosen by `speech.Factory` — see below |
-| `output.Dispatcher` | `Emit(ctx, text) error` | `Paste` (default), `Native` / `Wayland` (typing), or `Clipboard` (copy only) |
+| `output.Dispatcher` | `Emit(ctx, text) error` | `Paste` (default), `Native` / `Wayland` (typing), or `Clipboard` / `X11Clipboard` (copy only) |
 | `overlay.Overlay` | `Show(Visual)`, `SetLevel`, `SetText`, `Close` | `overlay.WL` — a `wlr-layer-shell` surface |
 
 Two optional interfaces are discovered by type assertion, so an implementation
@@ -530,9 +530,12 @@ The empty space, verified by search rather than assumed:
 - **No multi-seat or multi-instance story.** One socket path per user runtime
   directory.
 - **No keybinding of its own.** Binding is entirely the compositor's job.
-- **No X11 support or GNOME injection/HUD.** GNOME Wayland has explicit
+- **No X11 injection or GNOME HUD.** GNOME Wayland has explicit
   [copy-only output](../user-guide.md#gnome-wayland-manual-paste), without visible
-  preview. Clipboard startup is bounded to three seconds; ownership is not.
+  preview. Clipboard startup is bounded to three seconds; ownership is not. Explicit
+  `clipboard_backend = "x11"` uses a supervised xclip owner through XWayland;
+  replacement/daemon shutdown reap it. See
+  [the ownership design](../design/gnome-clipboard-design-plan.md#x11-ownership-lifecycle).
   Dispatch errors still only reach logs, so Idle does not establish success.
 
 ## Testing surfaces
