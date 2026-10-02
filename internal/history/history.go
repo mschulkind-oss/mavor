@@ -24,8 +24,11 @@ const DefaultMax = 500
 
 // Entry is one completed transcription.
 type Entry struct {
-	At   time.Time `json:"at"`
-	Text string    `json:"text"`
+	Source  string    `json:"source,omitempty"`
+	Model   string    `json:"model,omitempty"`
+	Warning string    `json:"warning,omitempty"`
+	At      time.Time `json:"at"`
+	Text    string    `json:"text"`
 }
 
 // Store is an append-only JSONL log of transcripts. JSONL keeps appends atomic

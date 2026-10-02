@@ -63,6 +63,18 @@ func serveOverlay() error {
 	encoder := json.NewEncoder(os.Stdout)
 	var last uint64
 	visual := overlay.Hidden
+	var backupClose func() error
+	defer func() {
+		if backupClose != nil {
+			_ = backupClose()
+		}
+	}()
+	var lifecycle *desktop.Lifecycle
+	defer func() {
+		if lifecycle != nil {
+			_ = lifecycle.Close()
+		}
+	}()
 	ready := false
 	applied := false
 	for scanner.Scan() {
@@ -94,6 +106,41 @@ func serveOverlay() error {
 		}
 		last = command.Sequence
 		switch command.Command {
+		case "backup_run":
+			evidence, cleanup, e := desktop.RunBackup(o)
+			if e != nil {
+				return e
+			}
+			backupClose = cleanup
+			err = encoder.Encode(map[string]any{"sequence": last, "evidence": evidence})
+		case "backup_stop":
+			if e := backupClose(); e != nil {
+				return e
+			}
+			backupClose = nil
+			err = encoder.Encode(map[string]any{"sequence": last, "status": "stopped", "child_reaped": true})
+		case "daemon_start":
+			if lifecycle != nil {
+				return fmt.Errorf("lifecycle already running")
+			}
+			lifecycle, err = desktop.StartLifecycle(o, command.Visual == "error")
+			if err != nil {
+				return err
+			}
+			err = encoder.Encode(map[string]any{"sequence": last, "status": "initializing"})
+		case "daemon_release":
+			lifecycle.Release()
+			response, e := lifecycle.Await()
+			if e != nil {
+				return e
+			}
+			err = encoder.Encode(map[string]any{"sequence": last, "state": response.State, "error": response.Error})
+		case "daemon_stop":
+			if e := lifecycle.Close(); e != nil {
+				return e
+			}
+			lifecycle = nil
+			err = encoder.Encode(map[string]any{"sequence": last, "status": "stopped"})
 		case "apply":
 			next := visual
 			switch command.Visual {
@@ -106,6 +153,10 @@ func serveOverlay() error {
 				next = overlay.Transcribing
 			case "error":
 				next = overlay.Error
+			case "initializing":
+				next = overlay.Initializing
+			case "degraded":
+				next = overlay.Degraded
 			default:
 				return fmt.Errorf("invalid visual")
 			}
@@ -144,6 +195,12 @@ func serveOverlay() error {
 				return e
 			}
 			err = encoder.Encode(map[string]any{"sequence": last, "receipt": receipt})
+		case "recent_frames":
+			history, ok := o.(overlay.FrameHistory)
+			if !ok {
+				return fmt.Errorf("frame history required")
+			}
+			err = encoder.Encode(map[string]any{"sequence": last, "receipts": history.RecentFrames()})
 		case "close":
 			if err := o.Close(); err != nil {
 				return err
@@ -407,3 +464,5 @@ func TestGNOMEHUDClipboardCoexistence(t *testing.T) {
 		})
 	}
 }
+
+func TestDesktopGPUFailureChild(t *testing.T) { desktop.GPUFailureChild() }

@@ -37,6 +37,9 @@ func TestFinalCompanionDiagnostics(t *testing.T) {
 			chunks := make([][]byte, 40)
 			for i := range chunks {
 				chunks[i] = []byte{1, 0}
+				if failure == "queue" {
+					chunks[i] = make([]byte, 40000)
+				}
 			}
 			rec.SetChunks(chunks...)
 			if err := rec.Start(t.Context()); err != nil {

@@ -65,9 +65,9 @@ type Scene struct {
 	Visual Visual
 	// Levels is the waveform history, oldest first, each in [0,1].
 	Levels []float64
-	// Preview is the partial transcription strip below the pill; empty hides it.
+	// Preview is the recording partial or lifecycle diagnostic strip; empty hides it.
 	//
-	// It is drawn on ONE line. The preview exists to show that recognition is
+	// It is drawn on ONE line. During recording the preview shows recognition is
 	// keeping up, not to be read back, so a long dictation shows its tail
 	// rather than growing a surface nobody can fit on screen.
 	Preview string
@@ -104,7 +104,7 @@ func FixedSurfaceSize(maxPreviewWidth int) (int, int, error) {
 	}
 	// The widest pill of any state, so the canvas fits whichever is showing.
 	w := 0
-	for _, v := range []Visual{Recording, Transcribing, Error} {
+	for _, v := range []Visual{Recording, Transcribing, Error, Initializing, Degraded} {
 		pw, _ := pillSize(f, Scene{Visual: v})
 		if pw > w {
 			w = pw
@@ -556,7 +556,7 @@ func SceneSize(s Scene) (int, int, error) {
 	}
 	pillW, pillH := pillSize(f, s)
 	w, h := pillW, pillH
-	if s.Visual == Recording && s.Preview != "" {
+	if hasSubtitle(s) {
 		pw := previewStripWidth(f, s)
 		ph := previewSize + 2*previewPadY + 4
 		if pw > w {
@@ -576,12 +576,12 @@ func pillSize(f *faces, s Scene) (int, int) {
 		w += recDotBoxW + 10
 		w += int(math.Ceil(textWidth(f.label, recordingLabelText, labelTracking*labelSize)))
 		w += 12 + waveCols*waveColWidth
-	case Transcribing:
-		w += int(math.Ceil(textWidth(f.label, transcribingLabelText, labelTracking*labelSize)))
+	case Transcribing, Initializing:
+		w += int(math.Ceil(textWidth(f.label, activityLabel(s.Visual), labelTracking*labelSize)))
 		w += 12 + 3*typingDotPitch
-	case Error:
+	case Error, Degraded:
 		w += errIconBox + 10
-		w += int(math.Ceil(textWidth(f.label, errorLabelText, labelTracking*labelSize)))
+		w += int(math.Ceil(textWidth(f.label, warningLabel(s.Visual), labelTracking*labelSize)))
 	}
 	return w, h
 }
@@ -624,7 +624,7 @@ func SceneBounds(s Scene) (image.Rectangle, error) {
 	pillX := (w - pillW) / 2
 	r := image.Rect(pillX, 0, pillX+pillW, pillH)
 
-	if s.Visual == Recording && s.Preview != "" {
+	if hasSubtitle(s) {
 		pw := previewStripWidth(f, s)
 		ph := previewSize + 2*previewPadY + 4
 		px := (w - pw) / 2
@@ -688,7 +688,7 @@ func RenderInto(img *image.RGBA, s Scene) error {
 
 	top, bottom := recTop, recBottom
 	switch s.Visual {
-	case Transcribing:
+	case Transcribing, Initializing, Degraded:
 		top, bottom = tscTop, tscBottom
 	case Error:
 		top, bottom = errTop, errBottom
@@ -723,9 +723,9 @@ func RenderInto(img *image.RGBA, s Scene) error {
 
 		drawWave(img, s.Levels, x, float64(barPaddingY), waveHeight)
 
-	case Transcribing:
-		drawText(img, f.label, transcribingLabelText, x, baseline, inkWhite, labelTracking*labelSize)
-		x += textWidth(f.label, transcribingLabelText, labelTracking*labelSize) + 12
+	case Transcribing, Initializing:
+		drawText(img, f.label, activityLabel(s.Visual), x, baseline, inkWhite, labelTracking*labelSize)
+		x += textWidth(f.label, activityLabel(s.Visual), labelTracking*labelSize) + 12
 		cy := float64(pillH) / 2
 		for i := 0; i < 3; i++ {
 			// Each dot leads the next by a fixed slice of the cycle.
@@ -737,14 +737,14 @@ func RenderInto(img *image.RGBA, s Scene) error {
 			fillCircle(img, float32(dx), float32(cy), typingDotRadius, c)
 		}
 
-	case Error:
+	case Error, Degraded:
 		cy := float64(pillH) / 2
 		drawWarning(img, x, cy, errIconBox, errInk)
 		x += errIconBox + 10
-		drawText(img, f.label, errorLabelText, x, baseline, inkWhite, labelTracking*labelSize)
+		drawText(img, f.label, warningLabel(s.Visual), x, baseline, inkWhite, labelTracking*labelSize)
 	}
 
-	if s.Visual == Recording && s.Preview != "" {
+	if hasSubtitle(s) {
 		pw := previewStripWidth(f, s)
 		ph := previewSize + 2*previewPadY + 4
 		px := (w - pw) / 2
@@ -853,3 +853,20 @@ func (c *stripCache) strip(f *faces, s Scene, pw, ph int) *image.RGBA {
 // screen at a time, and the storybook renders scenes one after another. A
 // second overlay would only ever cost the two of them a redraw each.
 var cache stripCache
+
+// Diagnostics share the existing subtitle strip; they are not live transcripts.
+func hasSubtitle(s Scene) bool {
+	return s.Preview != "" && (s.Visual == Recording || s.Visual == Initializing || s.Visual == Error || s.Visual == Degraded)
+}
+func activityLabel(v Visual) string {
+	if v == Initializing {
+		return "INITIALIZING"
+	}
+	return transcribingLabelText
+}
+func warningLabel(v Visual) string {
+	if v == Degraded {
+		return "BACKUP TRANSCRIPT"
+	}
+	return errorLabelText
+}

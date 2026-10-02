@@ -62,6 +62,7 @@ type finalSession struct {
 	pending                   int64
 	capturedBytes             int64
 	digest                    hash.Hash
+	terminalGPU               error
 	reason                    string
 	finished, closed, started bool
 	abandoned                 bool
@@ -254,6 +255,11 @@ func (s *finalSession) decodeSegment() error {
 	}
 	text, err := s.t.Transcribe(s.ctx, path)
 	if err != nil {
+		if IsGPURequestFailure(err) {
+			s.mu.Lock()
+			s.terminalGPU = err
+			s.mu.Unlock()
+		}
 		return err
 	}
 	if err := s.ctx.Err(); err != nil {
@@ -359,6 +365,7 @@ func (s *finalSession) Finish(ctx context.Context, path string) (FinalResult, er
 	s.join()
 	s.mu.Lock()
 	r.ReplayReason = s.reason
+	terminalGPU := s.terminalGPU
 	r.Stats = s.stats
 	r.Stats.PendingSamplesAtRelease = s.pending
 	s.mu.Unlock()
@@ -368,6 +375,10 @@ func (s *finalSession) Finish(ctx context.Context, path string) (FinalResult, er
 	if s.isAbandoned() {
 		_ = s.abort(context.Background())
 		return r, context.Canceled
+	}
+	if terminalGPU != nil {
+		s.cancel()
+		return r, terminalGPU
 	}
 	if ctx.Err() != nil || s.ctx.Err() != nil && r.ReplayReason == "" {
 		_ = s.abort(context.Background())

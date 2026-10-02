@@ -34,8 +34,19 @@ import (
 )
 
 type Daemon struct {
-	finalMode  models.FinalMode
-	finalCycle *incrementalCycle
+	backup                    *BackupCycle
+	cycleID                   uint64
+	provenanceMu              sync.Mutex
+	warningWG                 sync.WaitGroup
+	source, warning           string
+	startupError              string
+	warningUntil              time.Time
+	warningGen                uint64
+	initialize                func(context.Context) (Initialized, error)
+	initializationTimeout     time.Duration
+	mainModel, companionModel string
+	finalMode                 models.FinalMode
+	finalCycle                *incrementalCycle
 
 	socket            string
 	machine           *state.Machine
@@ -76,8 +87,8 @@ type Daemon struct {
 	streamSource    speech.StreamTranscriber
 	streamHadSpeech bool // Recognition evidence for this recording, never output text.
 
-	// streamDrain is closed when the previous recording's StopStream has
-	// returned. Its text is never emitted. With SilenceFilter enabled, a quiet
+	// streamDrain closes when the previous main-preview StopStream or companion
+	// BackupCycle finalization has returned. Main-preview text never emits. With SilenceFilter enabled, a quiet
 	// recording without recognition evidence waits for it before deciding to
 	// skip transcription.
 	// The next StartStream also waits before reusing the same recognizer.
@@ -86,8 +97,17 @@ type Daemon struct {
 	streamUsesMain bool
 }
 
+type Initialized struct {
+	Transcriber               speech.Transcriber
+	PreviewMode               speech.PreviewMode
+	PreviewCompanion          speech.StreamTranscriber
+	MainModel, CompanionModel string
+}
+
 type Config struct {
-	FinalMode models.FinalMode
+	Initialize            func(context.Context) (Initialized, error)
+	InitializationTimeout time.Duration
+	FinalMode             models.FinalMode
 
 	Socket        string
 	Recorder      audio.Recorder
@@ -98,9 +118,9 @@ type Config struct {
 	Logger        *slog.Logger
 	ErrorDuration time.Duration
 
-	// PreviewEnabled shows partial text in the overlay while the user
-	// speaks. It never emits output: the transcript is typed once, when
-	// transcription completes.
+	// PreviewEnabled shows provisional partial text in the overlay. Only a
+	// finalized, completely covered companion may substitute for a qualified
+	// GPU-enabled server request failure; partials never emit.
 	PreviewEnabled bool
 
 	// PreviewMode is where that text comes from, decided once at daemon
@@ -111,8 +131,8 @@ type Config struct {
 
 	// PreviewCompanion is the small streaming recognizer loaded alongside
 	// the main model, read only when PreviewMode is speech.PreviewCompanion.
-	// It paints the overlay and nothing else: it never reaches the output
-	// emitter and never contributes to the final transcript.
+	// It paints provisional text; BackupCycle may finalize it for the narrowly
+	// qualified request-failure exception. Normal main success always wins.
 	PreviewCompanion speech.StreamTranscriber
 
 	// SilenceFilter opts into the final-recording energy check. Preview
@@ -162,25 +182,27 @@ func New(c Config) *Daemon {
 		upgradeInterval = defaultUpgradeInterval
 	}
 	return &Daemon{
-		socket:            c.Socket,
-		finalMode:         c.FinalMode,
-		machine:           state.New(),
-		recorder:          c.Recorder,
-		transcriber:       c.Transcriber,
-		output:            c.Output,
-		overlay:           c.Overlay,
-		ducker:            ducker,
-		logger:            c.Logger,
-		errorDuration:     errDur,
-		previewEnabled:    c.PreviewEnabled,
-		previewMode:       c.PreviewMode,
-		companion:         c.PreviewCompanion,
-		history:           c.History,
-		silenceFilter:     c.SilenceFilter,
-		silenceThreshold:  silenceThresh,
-		minPhraseDuration: minPhrase,
-		binaryPath:        c.BinaryPath,
-		upgradeInterval:   upgradeInterval,
+		initialize:            c.Initialize,
+		initializationTimeout: c.InitializationTimeout,
+		socket:                c.Socket,
+		finalMode:             c.FinalMode,
+		machine:               state.New(),
+		recorder:              c.Recorder,
+		transcriber:           c.Transcriber,
+		output:                c.Output,
+		overlay:               c.Overlay,
+		ducker:                ducker,
+		logger:                c.Logger,
+		errorDuration:         errDur,
+		previewEnabled:        c.PreviewEnabled,
+		previewMode:           c.PreviewMode,
+		companion:             c.PreviewCompanion,
+		history:               c.History,
+		silenceFilter:         c.SilenceFilter,
+		silenceThreshold:      silenceThresh,
+		minPhraseDuration:     minPhrase,
+		binaryPath:            c.BinaryPath,
+		upgradeInterval:       upgradeInterval,
 	}
 }
 
@@ -205,8 +227,72 @@ func (d *Daemon) Run(ctx context.Context) error {
 	})
 	defer unsub()
 
+	var initWG sync.WaitGroup
+	var initErr error
+	if d.initialize != nil {
+		d.machine.Apply(state.EventInitialize)
+	}
 	srv := ipc.NewServer(d.socket, d.handleRequest)
-	err := srv.Serve(ctx)
+	err := srv.ServeReady(ctx, func() {
+		if d.initialize == nil {
+			return
+		}
+		initWG.Add(1)
+		go func() {
+			defer initWG.Done()
+			budget := d.initializationTimeout
+			if budget <= 0 {
+				budget = 180 * time.Second
+			}
+			initCtx, cancel := context.WithTimeout(ctx, budget)
+			defer cancel()
+			d.syncHUD(initCtx)
+			loaded, e := d.initialize(initCtx)
+			if e == nil && loaded.Transcriber == nil {
+				e = errors.New("initialization returned no main transcriber")
+			}
+			if e == nil {
+				e = initCtx.Err()
+			}
+			d.controlMu.Lock()
+			if e == nil {
+				e = ctx.Err()
+			}
+			if e == nil {
+				d.transcriber = loaded.Transcriber
+				d.companion = loaded.PreviewCompanion
+				d.previewMode = loaded.PreviewMode
+				d.mainModel = loaded.MainModel
+				d.companionModel = loaded.CompanionModel
+				d.machine.Apply(state.EventReady)
+				d.controlMu.Unlock()
+				return
+			}
+			d.controlMu.Unlock()
+			closeInitialized(loaded)
+			initErr = e
+			d.provenanceMu.Lock()
+			d.startupError = e.Error()
+			d.provenanceMu.Unlock()
+			if ctx.Err() == nil {
+				d.machine.Apply(state.EventInitializeFailed)
+				_ = d.overlay.SetText(e.Error())
+				d.syncHUD(ctx)
+				timer := time.NewTimer(d.errorDuration)
+				select {
+				case <-timer.C:
+				case <-ctx.Done():
+				}
+				timer.Stop()
+			}
+			stop()
+		}()
+	})
+	stop()
+	initWG.Wait()
+	if initErr != nil {
+		err = initErr
+	}
 
 	// Wait for any in-flight transcription pipeline before returning so we
 	// don't leave a goroutine writing to wl-copy after the binary exits.
@@ -220,9 +306,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 	}
 	wg.Wait()
+	d.warningWG.Wait()
 	d.stopLevelMonitoring()
 	d.stopStreamingMonitoring()
 	d.awaitStreamDrain(context.Background())
+	if d.backup != nil {
+		_ = d.backup.Cancel(context.Background())
+	}
 	if !d.incrementalFinal() && d.machine.State() == state.Recording {
 		if wav, e := d.recorder.Stop(); e == nil {
 			_ = os.Remove(wav)
@@ -232,7 +322,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// An error here now means the device would not confirm the restore —
 	// i.e. it may still be muted — which is worth a log line on the way out
 	// rather than silence.
-	if err := d.ducker.Restore(); err != nil {
+	if err := func() error {
+		if d.cycleID == 0 {
+			return nil
+		}
+		return d.ducker.Restore()
+	}(); err != nil {
 		d.logger.Warn("ducking: restore on shutdown failed — background audio may still be ducked", "err", err)
 	}
 	_ = d.overlay.Close()
@@ -248,7 +343,15 @@ func (d *Daemon) Run(ctx context.Context) error {
 	return err
 }
 
-func (d *Daemon) handleRequest(req ipc.Request) ipc.Response {
+func (d *Daemon) handleRequest(req ipc.Request) (resp ipc.Response) {
+	defer func() {
+		resp.Source, resp.Warning = d.statusProvenance()
+		if resp.State == "failed" {
+			d.provenanceMu.Lock()
+			resp.Error = d.startupError
+			d.provenanceMu.Unlock()
+		}
+	}()
 	if req.Action == "toggle" || req.Action == "start" || req.Action == "stop" {
 		d.controlMu.Lock()
 		defer d.controlMu.Unlock()
@@ -275,13 +378,22 @@ func (d *Daemon) handleRequest(req ipc.Request) ipc.Response {
 	}
 }
 
-func (d *Daemon) reportError(reason string, err error) {
+func (d *Daemon) reportError(ctx context.Context, reason string, err error) {
+	d.provenanceMu.Lock()
+	d.warning = err.Error()
+	d.provenanceMu.Unlock()
 	d.logger.Error(reason, "err", err)
 	if d.overlay != nil {
 		_ = d.overlay.Show(overlay.Error)
+		_ = d.overlay.SetText(err.Error())
 	}
 	if d.errorDuration > 0 {
-		time.Sleep(d.errorDuration)
+		timer := time.NewTimer(d.errorDuration)
+		select {
+		case <-ctx.Done():
+		case <-timer.C:
+		}
+		timer.Stop()
 	}
 	d.machine.Apply(state.EventTranscribeFailed)
 }
@@ -290,7 +402,22 @@ func (d *Daemon) reportError(reason string, err error) {
 // it's free to call back into Apply (e.g. EventTranscribeDone).
 func (d *Daemon) onTransition(ctx context.Context, s state.State, wg *sync.WaitGroup) {
 	d.logger.Info("state: transitioned", "to", s)
-	if err := d.overlay.Show(visualFor(s)); err != nil {
+	d.provenanceMu.Lock()
+	keepWarning := s == state.Idle && time.Now().Before(d.warningUntil)
+	if s == state.Recording {
+		d.source = ""
+		d.warning = ""
+		d.warningUntil = time.Time{}
+		d.warningGen++
+		d.cycleID++
+	}
+	d.provenanceMu.Unlock()
+	if err := func() error {
+		if keepWarning {
+			return nil
+		}
+		return d.overlay.Show(visualFor(s))
+	}(); err != nil {
 		d.logger.Warn("overlay show failed", "state", s, "err", err)
 	} else {
 		d.logger.Info("overlay: shown", "state", s, "visual", visualFor(s))
@@ -299,7 +426,12 @@ func (d *Daemon) onTransition(ctx context.Context, s state.State, wg *sync.WaitG
 	case state.Idle:
 		d.stopLevelMonitoring()
 		d.stopStreamingMonitoring()
-		if err := d.ducker.Restore(); err != nil {
+		if err := func() error {
+			if d.cycleID == 0 {
+				return nil
+			}
+			return d.ducker.Restore()
+		}(); err != nil {
 			d.logger.Warn("ducking: restore failed", "err", err)
 		} else {
 			d.logger.Info("ducking: volume restored")
@@ -312,7 +444,7 @@ func (d *Daemon) onTransition(ctx context.Context, s state.State, wg *sync.WaitG
 		}
 		d.logger.Info("pipeline: starting recorder")
 		if err := d.recorder.Start(ctx); err != nil {
-			d.reportError("pipeline: recorder start failed — returning to idle", err)
+			d.reportError(ctx, "pipeline: recorder start failed — returning to idle", err)
 			return
 		}
 		d.startLevelMonitoring(ctx)
@@ -322,7 +454,7 @@ func (d *Daemon) onTransition(ctx context.Context, s state.State, wg *sync.WaitG
 					_ = os.Remove(wav)
 					_ = os.Remove(wav + ".txt")
 				}
-				d.reportError("pipeline: final session start failed", err)
+				d.reportError(ctx, "pipeline: final session start failed", err)
 				return
 			}
 		} else {
@@ -393,7 +525,7 @@ func (d *Daemon) stopLevelMonitoring() {
 // user speaks. It never emits output: partial results are provisional, and the
 // cleaned-up transcript is inserted once, when transcription completes.
 func (d *Daemon) startStreamingMonitoring(ctx context.Context) {
-	if !d.previewEnabled {
+	if !d.previewEnabled && d.companion == nil {
 		d.logger.Info("streaming: preview disabled (preview.enabled = false)")
 		return
 	}
@@ -417,6 +549,15 @@ func (d *Daemon) startStreamingMonitoring(ctx context.Context) {
 	d.streamUsesMain = d.previewMode != speech.PreviewCompanion
 	d.streamMu.Unlock()
 
+	if d.previewMode == speech.PreviewCompanion && d.companion != nil {
+		d.streamMu.Lock()
+		d.streamSource = nil
+		d.streamUsesMain = false
+		d.streamMu.Unlock()
+		d.startBackup(ctx, gen)
+		d.runBackupPump(ctxStream)
+		return
+	}
 	if src != nil {
 		d.runStreamPreview(ctxStream, gen, src)
 		return
@@ -685,6 +826,9 @@ func (d *Daemon) previewLive(ctx context.Context, gen uint64) bool {
 }
 
 func (d *Daemon) stopStreamingMonitoring() {
+	d.provenanceMu.Lock()
+	keepDiagnostic := d.machine.State() == state.Failed || time.Now().Before(d.warningUntil)
+	d.provenanceMu.Unlock()
 	d.streamMu.Lock()
 	if d.streamCancel != nil {
 		d.streamCancel()
@@ -700,7 +844,7 @@ func (d *Daemon) stopStreamingMonitoring() {
 	d.streamGen++
 	stoppedGen := d.streamGen
 	d.streamHistory = ""
-	if d.overlay != nil {
+	if d.overlay != nil && !keepDiagnostic {
 		_ = d.overlay.SetText("")
 	}
 	drain := make(chan struct{})
@@ -710,6 +854,13 @@ func (d *Daemon) stopStreamingMonitoring() {
 	d.streamMu.Unlock()
 
 	if src == nil && done == nil {
+		return
+	}
+	if d.backup != nil && src == nil {
+		if done != nil {
+			<-done
+		}
+		close(drain)
 		return
 	}
 
@@ -793,8 +944,10 @@ func (d *Daemon) runTranscription(ctx context.Context) {
 	if err != nil {
 		if d.incrementalFinal() {
 			d.cancelFinalCycle()
+		} else if d.backup != nil {
+			_ = d.backup.Cancel(context.Background())
 		}
-		d.reportError("pipeline: recorder.Stop failed — aborting", err)
+		d.reportError(ctx, "pipeline: recorder.Stop failed — aborting", err)
 		return
 	}
 	if wav != "" {
@@ -804,6 +957,34 @@ func (d *Daemon) runTranscription(ctx context.Context) {
 		}()
 	}
 	d.logger.Info("pipeline: recorder.Stop ok", "wav", wav)
+	type completedBackup struct {
+		result BackupResult
+		err    error
+	}
+	var backupDone chan completedBackup
+	if d.backup != nil {
+		b := d.backup
+		backupDone = make(chan completedBackup, 1)
+		drain := make(chan struct{})
+		d.streamMu.Lock()
+		gen := d.streamGen
+		d.streamDrain = drain
+		d.streamMu.Unlock()
+		go func() {
+			defer close(drain)
+			r, e := b.Finish(ctx, wav)
+			if e == nil && strings.TrimSpace(speech.StripNonSpeech(r.Text)) != "" {
+				d.streamMu.Lock()
+				if d.streamGen == gen {
+					d.streamHadSpeech = true
+				}
+				d.streamMu.Unlock()
+			}
+			backupDone <- completedBackup{r, e}
+		}()
+		defer func() { <-backupDone }()
+	}
+	selectedSource, selectedModel, warning := "main", d.mainModel, ""
 
 	// The energy filter measures loudness, not intelligibility: quiet or short
 	// speech can fail it even after the preview recognized words. Recognition
@@ -851,8 +1032,49 @@ func (d *Daemon) runTranscription(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		d.reportError("pipeline: transcribe failed — aborting", err)
-		return
+		mainErr := err
+		if speech.IsGPURequestFailure(err) {
+			_ = d.overlay.Show(overlay.Error)
+			_ = d.overlay.SetText(mainErr.Error())
+			d.syncHUD(ctx)
+			timer := time.NewTimer(d.errorDuration)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			if backupDone != nil {
+				var completed completedBackup
+				select {
+				case <-ctx.Done():
+					return
+				case completed = <-backupDone:
+				}
+				backupDone <- completed
+				r := completed.result
+				if completed.err == nil && usableBackup(r, d.cycleID) {
+					text = r.Text
+					err = nil
+					selectedSource = "companion-backup"
+					selectedModel = r.Model
+					warning = fmt.Sprintf("GPU-enabled server request failed: %v; finalized companion backup: %s", mainErr, r.Model)
+					d.logger.Warn("pipeline: using finalized companion backup", "warning", warning, "cycle", r.CycleID)
+					_ = d.overlay.Show(overlay.Degraded)
+					_ = d.overlay.SetText(warning)
+					d.provenanceMu.Lock()
+					d.warning = warning
+					d.warningUntil = time.Now().Add(3 * time.Second)
+					d.provenanceMu.Unlock()
+				} else {
+					d.logger.Warn("pipeline: finalized backup unavailable", "err", completed.err, "complete", r.Complete, "cycle", r.CycleID)
+				}
+			}
+		}
+		if err != nil {
+			d.reportError(ctx, "pipeline: transcribe failed — aborting", mainErr)
+			return
+		}
 	}
 	transcribeMS := time.Since(transcribeStart).Milliseconds()
 	d.logger.Info("pipeline: transcript received", "text_len", len(text), "transcribe_ms", transcribeMS)
@@ -886,7 +1108,7 @@ func (d *Daemon) runTranscription(ctx context.Context) {
 	// Record before typing: a failed or mis-targeted emit is exactly when the
 	// user needs the transcript back, so it must already be on disk.
 	if d.history != nil {
-		if err := d.history.Append(history.Entry{Text: text, At: time.Now()}); err != nil {
+		if err := d.history.Append(history.Entry{Text: text, At: time.Now(), Source: selectedSource, Model: selectedModel, Warning: warning}); err != nil {
 			d.logger.Warn("history: append failed", "err", err)
 		}
 	}
@@ -899,6 +1121,13 @@ func (d *Daemon) runTranscription(ctx context.Context) {
 		d.logger.Warn("pipeline: output dispatch reported error (continuing)", "err", err)
 	} else {
 		d.logger.Info("pipeline: output dispatch ok")
+	}
+	d.provenanceMu.Lock()
+	d.source = selectedSource
+	d.warning = warning
+	d.provenanceMu.Unlock()
+	if warning != "" {
+		d.retainWarning(ctx)
 	}
 	emitMS := time.Since(emitStart).Milliseconds()
 	d.machine.Apply(state.EventTranscribeDone)
@@ -921,6 +1150,10 @@ func (d *Daemon) runTranscription(ctx context.Context) {
 
 func visualFor(s state.State) overlay.Visual {
 	switch s {
+	case state.Initializing:
+		return overlay.Initializing
+	case state.Failed:
+		return overlay.Error
 	case state.Recording:
 		return overlay.Recording
 	case state.Transcribing:
@@ -964,4 +1197,25 @@ func soften(s string) string {
 		return s
 	}
 	return strings.ToLower(s)
+}
+
+func closeInitialized(v Initialized) {
+	if c, ok := v.Transcriber.(io.Closer); ok {
+		_ = c.Close()
+	}
+	if c, ok := v.PreviewCompanion.(io.Closer); ok {
+		_ = c.Close()
+	}
+}
+
+// syncHUD confirms a production frame submission where the backend supports it;
+// it is not compositor screenshot proof. Never delay controls for this wait.
+func (d *Daemon) syncHUD(ctx context.Context) {
+	if observer, ok := d.overlay.(overlay.FrameObserver); ok {
+		frameCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		if _, err := observer.SyncFrame(frameCtx); err != nil {
+			d.logger.Warn("overlay: frame submission unavailable", "err", err)
+		}
+	}
 }

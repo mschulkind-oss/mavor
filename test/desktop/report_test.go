@@ -11,8 +11,11 @@ import (
 )
 
 func TestSharedCatalogAndTemplate(t *testing.T) {
-	want := []string{"hidden", "recording-00", "recording-15", "recording-35", "recording-55", "recording-75", "recording-100", "transcribing", "error", "preview-short", "preview-long", "preview-cleared"}
+	want := []string{"hidden", "recording-00", "recording-15", "recording-35", "recording-55", "recording-75", "recording-100", "transcribing", "error", "preview-short", "preview-long", "preview-cleared", "initializing", "ready-after-initializing", "initializing-before-error", "initialization-error", "gpu-request-error", "degraded", "motion-quiet", "motion-speech", "motion-pause", "motion-recovery", "motion-decayed"}
 	scenes := Scenes()
+	if len(scenes) != len(want) {
+		t.Fatalf("catalog IDs changed: got %d want %d", len(scenes), len(want))
+	}
 	for i, s := range scenes {
 		if s.ID != want[i] || s.Index != i+1 {
 			t.Fatalf("catalog drift %v", s)
@@ -21,13 +24,13 @@ func TestSharedCatalogAndTemplate(t *testing.T) {
 		if s.Visual == overlay.Recording {
 			n = 50
 		}
-		if s.FeedFrames != n {
+		if s.Motion == "" && s.FeedFrames != n {
 			t.Fatal("shared driver frame schedule drift")
 		}
 	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "report.html")
-	if err := GenerateHTMLReport(path, ReportData{Compositor: "GNOME <measured>", CaptureMethod: "Shell Screenshot", TotalStates: 12, Captures: []StateCapture{{State: StoryState{Title: "<unsafe>", Index: 1}}}}); err != nil {
+	if err := GenerateHTMLReport(path, ReportData{Compositor: "GNOME <measured>", CaptureMethod: "Shell Screenshot", TotalStates: len(scenes), Captures: []StateCapture{{State: StoryState{Title: "<unsafe>", Index: 1}}}}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -73,5 +76,17 @@ func TestReportRejectsUnpresentedSubmission(t *testing.T) {
 		if _, err = os.Stat(filepath.Join(dir, "absent"+ext)); !os.IsNotExist(err) {
 			t.Fatalf("failed capture published report %s: %v", ext, err)
 		}
+	}
+}
+
+func TestMotionEvidenceRejectsMissingTimingAndStaticHistory(t *testing.T) {
+	var e []Evidence
+	for _, s := range Scenes() {
+		if s.Motion != "" {
+			e = append(e, Evidence{ID: s.ID})
+		}
+	}
+	if err := validateMotion(e); err == nil {
+		t.Fatal("untimed frames accepted")
 	}
 }

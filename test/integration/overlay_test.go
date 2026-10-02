@@ -26,6 +26,7 @@ func TestOverlayDoesNotOverlapWaybar(t *testing.T) {
 		LaunchWaybar: true,
 	})
 	socket, _ := h.RunDaemon(t.Context(), MavorBinary, "whisper-tiny.en")
+	h.WaitForState(socket, "idle") // Binding precedes model readiness; early hotkeys intentionally do not queue.
 
 	// Toggle into Recording so the overlay shows.
 	if _, err := ipc.Send(socket, ipc.Request{Action: "toggle"}, 2*time.Second); err != nil {
@@ -75,6 +76,7 @@ func TestOverlayDoesNotOverlapWaybar(t *testing.T) {
 func TestOverlayWithoutWaybarStillFloats(t *testing.T) {
 	h := Start(t, Options{Width: testWidth, Height: testHeight})
 	socket, _ := h.RunDaemon(t.Context(), MavorBinary, "whisper-tiny.en")
+	h.WaitForState(socket, "idle") // Binding precedes model readiness; early hotkeys intentionally do not queue.
 
 	if _, err := ipc.Send(socket, ipc.Request{Action: "toggle"}, 2*time.Second); err != nil {
 		t.Fatalf("toggle: %v", err)

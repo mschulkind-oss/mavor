@@ -56,3 +56,18 @@ func TestWLReceiptDoesNotInventAbsolutePlacement(t *testing.T) {
 		t.Fatalf("invented global placement: %+v", r)
 	}
 }
+
+func TestRecentFramesOwnSnapshotsAndBoundHistory(t *testing.T) {
+	var f frameStore
+	for i := 0; i < 100; i++ {
+		f.publish(FrameReceipt{Scene: Scene{Levels: []float64{float64(i)}}})
+	}
+	got := f.recent()
+	if len(got) != 64 || got[0].Frame != 37 {
+		t.Fatalf("unbounded/lost history: %v", got)
+	}
+	got[0].Scene.Levels[0] = -1
+	if f.recent()[0].Scene.Levels[0] != 36 {
+		t.Fatal("history aliases observer")
+	}
+}

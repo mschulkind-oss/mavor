@@ -4,6 +4,7 @@ package integration
 
 import (
 	"fmt"
+	"github.com/mschulkind-oss/mavor/test/desktop"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 var MavorBinary string
 
 func TestMain(m *testing.M) {
+	desktop.GPUFailureChild() // Controlled server child must not recursively rebuild the CLI.
 	dir, err := os.MkdirTemp("", "mavor-integration-*")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "tempdir:", err)

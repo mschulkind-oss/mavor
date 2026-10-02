@@ -5,16 +5,18 @@ import (
 	"errors"
 	"image"
 	"sync"
+	"time"
 )
 
 // FrameReceipt describes a production submission, not compositor presentation.
 // Scene and its Levels are owned snapshots. See docs/design/gnome-hud.md.
 type FrameReceipt struct {
-	Backend  string      `json:"backend"`
-	Revision uint64      `json:"revision"`
-	Frame    uint64      `json:"frame"`
-	Scene    Scene       `json:"scene"`
-	Canvas   image.Point `json:"canvas"`
+	SubmittedAt time.Time   `json:"submitted_at"`
+	Backend     string      `json:"backend"`
+	Revision    uint64      `json:"revision"`
+	Frame       uint64      `json:"frame"`
+	Scene       Scene       `json:"scene"`
+	Canvas      image.Point `json:"canvas"`
 	// Screen is X protocol placement on GNOME. Layer-shell does not report
 	// global placement, so Wayland receipts carry an empty rectangle.
 	Screen image.Rectangle `json:"screen"`
@@ -30,6 +32,7 @@ type FrameObserver interface {
 type frameStore struct {
 	mu          sync.Mutex
 	receipt     FrameReceipt
+	history     []FrameReceipt
 	notify      chan struct{}
 	unavailable error
 }
@@ -45,8 +48,14 @@ func (f *frameStore) publish(r FrameReceipt) {
 	defer f.mu.Unlock()
 	r.Scene.Levels = append([]float64(nil), r.Scene.Levels...)
 	r.Frame = f.receipt.Frame + 1
+	r.SubmittedAt = time.Now()
 	r.Status = "submitted"
 	f.receipt = r
+	if len(f.history) == 64 {
+		copy(f.history, f.history[1:])
+		f.history = f.history[:63]
+	}
+	f.history = append(f.history, r)
 	f.unavailable = nil
 	f.signal()
 }
@@ -91,4 +100,18 @@ func (f *frameStore) wait(ctx context.Context, revision uint64, done <-chan stru
 		case <-ch:
 		}
 	}
+}
+
+// FrameHistory exposes bounded real submissions for independent capture matching.
+// These are evidence candidates, never proof that a compositor presented them.
+type FrameHistory interface{ RecentFrames() []FrameReceipt }
+
+func (f *frameStore) recent() []FrameReceipt {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := append([]FrameReceipt(nil), f.history...)
+	for i := range out {
+		out[i].Scene.Levels = append([]float64(nil), out[i].Scene.Levels...)
+	}
+	return out
 }

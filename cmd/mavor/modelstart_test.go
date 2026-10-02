@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -84,5 +85,36 @@ func TestABackgroundStartFailureStillReachesTheCaller(t *testing.T) {
 func TestATranscriberWithNoEngineWaitsForNothing(t *testing.T) {
 	if err := beginStart(context.Background(), struct{}{})(); err != nil {
 		t.Fatalf("wait() = %v, want nil", err)
+	}
+}
+
+// Legacy concurrency test helper; production startup is owned by initializeModels.
+// beginStart brings a transcriber's engine up in the background and returns
+// the function that waits for it.
+//
+// The main model and the preview companion are independent — the companion
+// never influences the transcript and the main model never sees the preview —
+// but they were loaded one after the other, so the wait before the daemon was
+// usable was main + companion rather than max(main, companion). Both are
+// multi-hundred-megabyte ONNX or GGML loads; on a cold cache that difference
+// is the several seconds a user spends wondering whether the preview works.
+//
+// The returned wait function MUST be called on every path out, including
+// error paths, before the transcriber is closed: it is what guarantees the
+// background Start has finished touching it.
+func beginStart(ctx context.Context, t any) func() error {
+	s, ok := t.(starter)
+	if !ok {
+		return func() error { return nil }
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- s.Start(ctx) }()
+
+	return func() error {
+		if err := <-done; err != nil {
+			return fmt.Errorf("start transcriber engine: %w", err)
+		}
+		return nil
 	}
 }

@@ -174,7 +174,7 @@ config, `whisper-base.en` and `zipformer-streaming` — skips whatever is
 already in the cache, and is safe to re-run after you edit `config.toml`. The
 preview companion adds 161 MB resident, held for as long as the daemon runs; it
 is picked for how continuously it updates rather than for accuracy, because the
-text you keep always comes from the main model. Set `preview.source` to
+main text remains authoritative on success. Set `preview.source` to
 `zipformer-streaming-20m` (112 MB) if you want that smaller still, or
 `preview.enabled = false` for no companion at all. `mavor config init` scaffolds the file on its own if you would
 rather start there.
@@ -182,9 +182,31 @@ rather start there.
 For experimental recognition during capture, see the
 [opt-in final modes](docs/choosing-a-model.md#opt-in-final-recognition-prototypes).
 Native streaming and offline segment processing are different capabilities;
-`after-stop` remains the default, and only finalized main text emits after release.
+`after-stop` remains the default; only finalized text emits after release.
 The [paced observations](docs/reports/incremental-final-prototype.md) include the
 quality drift observed with offline segments.
+
+## Model initialization and request failures
+
+The daemon shows **INITIALIZING** and serves status/hotkeys before loading models.
+Hotkeys during initialization return `initializing`; they do not queue recording.
+Readiness includes actual inference on a short generated, non-private voiced
+fixture, with the result discarded and streams reset. Default budgets are
+120 seconds for GPU server startup, 180 seconds overall and 30 seconds per probe.
+A native model call may outlive cancellation while cleanup waits safely for it.
+Startup failure shows the actual diagnostic and exits; no recording starts first.
+
+Automatic main-model CPU recovery remains **off** (`advanced.cpu_fallback = false`).
+A failed **supervised local GPU-enabled main request** can instead use the
+already-running streaming companion's finalized text from the same recording,
+only when complete audio coverage and final drain succeed. The HUD first shows
+ERROR, then BACKUP TRANSCRIPT; status and history retain the actual source and
+warning. Provisional/stale previews never emit, and successful main results
+always win. Missing/empty/incomplete backup retains the original error.
+Startup, canceled/invalid, remote and CPU requests do not qualify. No fresh
+backup model is loaded and the failed main is not replayed on CPU by this path.
+See the [failure and coverage contract](docs/design/visible-model-initialization.md)
+and [measured acceptance limits](docs/qa/visible-model-initialization-qa.md).
 
 ## Compositor integration
 

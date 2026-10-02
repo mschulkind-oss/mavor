@@ -10,6 +10,9 @@ in p.mkShell {
   packages = [ p.gtk4 p.pkg-config p.gcc p.glib p.xclip p.wl-clipboard p.dbus p.python3 p.sway p.swaybg p.waybar p.grim ];
   # Go integration binaries link the vendored sherpa C++ runtime.
   LD_LIBRARY_PATH = "${p.stdenv.cc.cc.lib}/lib";
+  # Isolated child environments deliberately strip LD_LIBRARY_PATH. The
+  # model-linked test executable must locate C++ independently of that variable.
+  CGO_LDFLAGS = "-Wl,--disable-new-dtags,-rpath,${p.stdenv.cc.cc.lib}/lib";
   MAVOR_GNOME_SHELL = "${p.gnome-shell}/bin/gnome-shell";
   GBM_BACKENDS_PATH = "${p.mesa}/lib/gbm";
   LIBGL_DRIVERS_PATH = "${p.mesa}/lib/dri";

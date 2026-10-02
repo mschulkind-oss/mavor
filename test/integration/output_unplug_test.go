@@ -23,6 +23,7 @@ import (
 func TestOverlayReturnsAfterOutputUnplug(t *testing.T) {
 	h := Start(t, Options{Width: testWidth, Height: testHeight})
 	socket, _ := h.RunDaemon(t.Context(), MavorBinary, "whisper-tiny.en")
+	h.WaitForState(socket, "idle") // Binding precedes model readiness; early hotkeys intentionally do not queue.
 
 	// Baseline: the overlay shows on the only output there is.
 	h.ShowOverlay(socket)

@@ -1,6 +1,6 @@
-// Package state holds the daemon's three-state finite state machine
-// (Idle → Recording → Transcribing → Idle) and the listener plumbing the
-// overlay uses to redraw on every transition. It is pure Go and has no
+// Package state holds the daemon's finite state machine: initialization reaches
+// Idle or Failed; dictation cycles Idle → Recording → Transcribing → Idle. The
+// listener plumbing lets the overlay redraw on every transition. It is pure Go and has no
 // dependencies outside the standard library so the FSM can be exercised
 // without any Wayland/audio harness.
 //
@@ -15,10 +15,16 @@ const (
 	Idle State = iota
 	Recording
 	Transcribing
+	Initializing
+	Failed
 )
 
 func (s State) String() string {
 	switch s {
+	case Initializing:
+		return "initializing"
+	case Failed:
+		return "failed"
 	case Idle:
 		return "idle"
 	case Recording:
@@ -46,6 +52,9 @@ const (
 	// FSM as Done — return to Idle — but reported separately so callers can
 	// surface the error.
 	EventTranscribeFailed
+	EventInitialize
+	EventReady
+	EventInitializeFailed
 )
 
 type Machine struct {
@@ -108,7 +117,17 @@ func (m *Machine) Subscribe(fn func(State)) func() {
 
 func transition(s State, e Event) State {
 	switch s {
+	case Initializing:
+		if e == EventReady {
+			return Idle
+		}
+		if e == EventInitializeFailed {
+			return Failed
+		}
 	case Idle:
+		if e == EventInitialize {
+			return Initializing
+		}
 		if e == EventToggle || e == EventRecordStart {
 			return Recording
 		}

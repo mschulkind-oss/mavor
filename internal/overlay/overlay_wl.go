@@ -698,7 +698,7 @@ func blit(img *image.RGBA, buf *wayland.Buffer, region image.Rectangle) {
 // Show transitions to a visual state. Never dropped: it is recorded as the
 // latest wanted state, and the next frame paints it.
 func (o *WL) Show(v Visual) error {
-	if v < Hidden || v > Error {
+	if v < Hidden || v > Degraded {
 		return errors.New("overlay: invalid visual")
 	}
 	select {
@@ -823,3 +823,5 @@ func carryWLScene(fresh, st *wlState) {
 func wlReceipt(st *wlState, sw, sh int) FrameReceipt {
 	return FrameReceipt{Backend: "wayland", Revision: st.revision, Scene: st.scene, Canvas: image.Pt(sw, sh), Scale: 1}
 }
+
+func (o *WL) RecentFrames() []FrameReceipt { return o.frames.recent() }

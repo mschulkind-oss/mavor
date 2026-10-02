@@ -31,6 +31,7 @@ func TestOSCDuckingMutesWhileRecording(t *testing.T) {
 			"paths = [\"/ch/15/mix/on\", \"/ch/16/mix/on\"]\n",
 		mixer.port())
 	socket, _ := h.RunDaemon(t.Context(), MavorBinary, "whisper-tiny.en")
+	h.WaitForState(socket, "idle") // Binding precedes model readiness; early hotkeys intentionally do not queue.
 
 	if _, err := ipc.Send(socket, ipc.Request{Action: "start"}, 2*time.Second); err != nil {
 		t.Fatalf("start: %v", err)

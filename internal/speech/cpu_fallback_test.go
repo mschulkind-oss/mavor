@@ -378,7 +378,7 @@ func TestCPURecoveryDoesNotRetryMissingServerBinary(t *testing.T) {
 func TestCPURecoveryDefaultStartupDeadlines(t *testing.T) {
 	gpu := NewSupervisor(SupervisorConfig{})
 	cpu := NewSupervisor(SupervisorConfig{NoGPU: true})
-	if gpu.cfg.ReadyTimeout != 10*time.Second || cpu.cfg.ReadyTimeout != 60*time.Second || gpu.cfg.CPUReadyTimeout != 60*time.Second {
+	if gpu.cfg.ReadyTimeout != 120*time.Second || cpu.cfg.ReadyTimeout != 60*time.Second || gpu.cfg.CPUReadyTimeout != 60*time.Second {
 		t.Fatal("unexpected startup deadlines")
 	}
 }

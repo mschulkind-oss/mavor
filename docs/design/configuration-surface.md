@@ -391,10 +391,11 @@ was not CPU but how their text arrives, which
 **The designated companion is `zipformer-streaming`.**
 [OQ-2](#decision-ledger) has now been answered four times — on download size,
 then twice on the question *does the preview get the opening words right?*,
-then on this. The opening words do not matter. A preview never emits — the typed text is always
-the main model's authoritative finalized result — in default `after-stop` mode,
-a single final `Transcribe` — so every word the companion gets
-right is discarded on release. What the user is left with is the *feel* of the
+then on this. The opening partials do not determine the authoritative result.
+Successful main transcription remains authoritative; provisional preview never
+emits. The later [qualified GPU request exception](./visible-model-initialization.md#the-qualified-exception)
+allows fully covered finalized companion backup on failed requests, so companion
+accuracy matters in that narrow case. What the user is left with is the *feel* of the
 line, which is set by **update cadence**: how often the painted text changes,
 and how long the longest gap between two changes lasts. (The term is this
 document's own, for the property the benchmark harness has no metric for. Its

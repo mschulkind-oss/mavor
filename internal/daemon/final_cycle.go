@@ -12,13 +12,10 @@ import (
 )
 
 type incrementalCycle struct {
-	session         speech.FinalSession
-	cancel          context.CancelFunc
-	done            chan struct{}
-	once            sync.Once
-	companionQueue  chan []byte
-	companionCancel context.CancelFunc
-	companionWarn   sync.Once
+	session speech.FinalSession
+	cancel  context.CancelFunc
+	done    chan struct{}
+	once    sync.Once
 }
 
 func (d *Daemon) incrementalFinal() bool {
@@ -60,49 +57,15 @@ func (d *Daemon) startFinalCycle(ctx context.Context) error {
 	pumpCtx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 	d.finalCycle = c
-	if d.previewEnabled && d.previewMode == speech.PreviewCompanion && d.companion != nil {
-		// The companion has a disposable bounded queue: it can never backpressure
-		// the main consumer or own authoritative text. Reuse waits for its drain.
-		c.companionQueue = make(chan []byte, 32)
-		previewCtx, previewCancel := context.WithCancel(ctx)
-		c.companionCancel = previewCancel
-		drain := make(chan struct{})
-		d.streamMu.Lock()
-		d.streamDrain = drain
-		d.streamMu.Unlock()
-		go func() {
-			defer close(drain)
-			src := d.companion
-			if err := src.StartStream(previewCtx); err != nil {
-				d.logger.Warn("preview: companion start failed — dictation is unaffected", "err", err)
-				return
-			}
-			for {
-				select {
-				case <-previewCtx.Done():
-					final, err := src.StopStream(context.Background())
-					if err == nil && speech.StripNonSpeech(final) != "" {
-						d.streamMu.Lock()
-						if d.streamGen == gen+1 {
-							d.streamHadSpeech = true
-						}
-						d.streamMu.Unlock()
-					}
-					return
-				case pcm := <-c.companionQueue:
-					text, err := src.FeedChunk(previewCtx, pcm)
-					if err == nil {
-						d.setPreview(previewCtx, gen, soften(text))
-					} else if previewCtx.Err() == nil {
-						c.companionWarn.Do(func() { d.logger.Warn("preview: companion feed failed — dictation is unaffected", "err", err) })
-					}
-				}
-			}
-		}()
+	if d.previewMode == speech.PreviewCompanion && d.companion != nil {
+		d.startBackup(ctx, gen)
 	}
 	cr, ok := d.recorder.(audio.ChunkReader)
 	if !ok {
 		session.FailLive("recorder does not implement ChunkReader")
+		if d.backup != nil {
+			_ = d.backup.Cancel(context.Background())
+		}
 		close(c.done)
 		return nil
 	}
@@ -118,21 +81,16 @@ func (d *Daemon) startFinalCycle(ctx context.Context) error {
 				pcm, err := cr.ReadChunk()
 				if err != nil {
 					session.FailLive("ReadChunk: " + err.Error())
+					if d.backup != nil {
+						_ = d.backup.Cancel(context.Background())
+					}
 					continue
 				}
 				if len(pcm) == 0 {
 					continue
 				}
 				_ = session.Feed(pcm)
-				if c.companionQueue != nil {
-					select {
-					case c.companionQueue <- append([]byte(nil), pcm...):
-					default:
-						c.companionWarn.Do(func() {
-							d.logger.Warn("preview: companion queue full — dropping preview audio, dictation is unaffected")
-						})
-					}
-				}
+				d.feedBackup(pcm)
 			}
 		}
 	}()
@@ -152,13 +110,13 @@ func (d *Daemon) stopFinalPump() {
 			_ = d.overlay.SetText("")
 		}
 		d.streamMu.Unlock()
-		if c.companionCancel != nil {
-			c.companionCancel()
-		}
 	})
 }
 func (d *Daemon) cancelFinalCycle() {
 	d.stopFinalPump()
+	if d.backup != nil {
+		_ = d.backup.Cancel(context.Background())
+	}
 	if d.finalCycle != nil {
 		_ = d.finalCycle.session.Cancel(context.Background())
 	}

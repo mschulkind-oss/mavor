@@ -29,7 +29,7 @@ User Keybind ($mod+grave)
     ├── audio.Recorder (parec / PipeWire audio capture) + audio.VAD
     ├── audio.Ducker (automatic background media ducking via pactl)
     ├── speech.Transcriber (the model that produces the text you get typed)
-    │     └── speech.LoadedPreview (a second, streaming model — overlay only)
+    │     └── speech.LoadedPreview (a second, streaming model — provisional preview / qualified final backup)
     ├── overlay.Overlay (layer-shell or GNOME XWayland HUD, shared Go painter)
     └── output.Dispatcher (wtype synthetic keyboard injection + wl-copy)
 ```
@@ -42,12 +42,15 @@ Two facts about that tree are easy to get wrong:
   `[advanced]` decides the *placement* (`in-process`, `local-server`,
   `subprocess`, `remote`). `models.Select` is where that derivation happens and
   `speech.Resolve` is what the daemon calls.
-- **The preview never emits.** A companion model — a small streaming
-  recognizer loaded alongside the main one — paints the overlay while you
-  speak, and the text you actually get always comes from the main model's
-  authoritative finalized result. Default `after-stop` uses a single final
+- **Provisional preview never emits.** The main model remains authoritative on
+  success. Only a failed supervised local GPU-enabled main request may use the
+  already-running companion's finalized, fully covered text from that same
+  recording, with a visible warning and retained source. Missing/incomplete
+  backup retains the original error; startup, cancellation, CPU and remote
+  failures are excluded. See the [qualified exception](docs/design/visible-model-initialization.md#the-qualified-exception). Default `after-stop` uses a single final
   `Transcribe`; opt-in [live-final modes](docs/design/incremental-final-transcription.md)
-  finish main work begun during capture, with complete-WAV replay on failure. `speech.ResolvePreview` picks between reading
+  finish main work begun during capture, with complete-WAV replay on ordinary failure, but no failed GPU request
+  replay before qualified companion selection. `speech.ResolvePreview` picks between reading
   the main model's own partials, running the companion, and phrase mode.
 
 ## Directory Layout

@@ -247,8 +247,9 @@ assertion on the main transcriber:
   project's own, for the thing the benchmark report has no column for; its
   liveness measure, time to first token, says when the preview starts and
   nothing about what follows.) Cadence is the right criterion because the
-  preview never emits, so a companion's word error rate buys nothing that
-  survives the recording while a stall in the overlay is felt immediately.
+  provisional preview never emits, while a stall in the overlay is felt
+  immediately. The [qualified finalized-backup exception](../design/visible-model-initialization.md#the-qualified-exception)
+  now makes companion accuracy relevant on failed GPU-enabled main requests.
   Three earlier occupants were chosen on download size, on opening words and on
   accuracy in turn, and each was replaced
   ([`choosing-a-model.md`](../choosing-a-model.md#you-do-not-have-to-choose-the-preview-companion)).
@@ -290,13 +291,14 @@ and arrives in visible lumps.
 remove it as cosmetic.
 
 > [!WARNING]
-> The preview never emits. Partial text is provisional, and the text the user
-> receives always comes from the single final `Transcribe` by the **main** model
-> over the whole recording. Do not wire `SetText` into `Emit` to "save a step" —
-> the two disagree by construction, and the companion is deliberately the
-> provisional one, and deliberately the less accurate one: it is chosen on
-> cadence, and `zipformer-streaming` makes 7.3% word errors where the default
-> `model` makes 0.0%.
+> Provisional preview never emits. Successful main results remain authoritative.
+> Only a failed supervised local GPU-enabled main request may use finalized,
+> fully covered companion text from that same recording, with a visible warning
+> and one whole-result dispatch. Startup, context, invalid input, CPU and remote
+> failures do not qualify. Incomplete or empty backup preserves the original
+> error. Do not wire partial `SetText` into `Emit`. See the
+> [qualified exception](../design/visible-model-initialization.md#the-qualified-exception).
+
 
 By default, captured audio goes directly to final transcription, regardless of
 energy or preview evidence; it does not wait for the preview to finish decoding.

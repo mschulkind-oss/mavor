@@ -60,6 +60,7 @@ func (h *Harness) WaitForOverlayOn(output string, within time.Duration) bool {
 func TestOverlayRecoversAfterAGapWithNoOutputAtAll(t *testing.T) {
 	h := Start(t, Options{Width: testWidth, Height: testHeight})
 	socket, _ := h.RunDaemon(t.Context(), MavorBinary, "whisper-tiny.en")
+	h.WaitForState(socket, "idle") // Binding precedes model readiness; early hotkeys intentionally do not queue.
 
 	// Baseline. Without this the rest of the test cannot tell "recovered"
 	// from "was never drawn in the first place".
@@ -116,6 +117,7 @@ func TestOverlayRecoversAfterAGapWithNoOutputAtAll(t *testing.T) {
 func TestOverlayRecoversAfterCompositorRestart(t *testing.T) {
 	h := Start(t, Options{Width: testWidth, Height: testHeight})
 	socket, _ := h.RunDaemon(t.Context(), MavorBinary, "whisper-tiny.en")
+	h.WaitForState(socket, "idle") // Binding precedes model readiness; early hotkeys intentionally do not queue.
 
 	h.ShowOverlay(socket)
 	if !h.WaitForOverlayOn("HEADLESS-1", 2*time.Second) {

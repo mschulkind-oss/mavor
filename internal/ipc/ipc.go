@@ -22,8 +22,10 @@ type Request struct {
 }
 
 type Response struct {
-	State string `json:"state,omitempty"`
-	Error string `json:"error,omitempty"`
+	Source  string `json:"source,omitempty"`
+	Warning string `json:"warning,omitempty"`
+	State   string `json:"state,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 type Handler func(Request) Response
@@ -40,13 +42,20 @@ func NewServer(socket string, h Handler) *Server {
 // Serve listens on the configured socket until ctx is cancelled. A stale
 // socket file from a crashed previous daemon is silently replaced; a *live*
 // socket (a process still listening) returns ErrAddrInUse.
-func (s *Server) Serve(ctx context.Context) error {
+func (s *Server) Serve(ctx context.Context) error { return s.ServeReady(ctx, nil) }
+
+// ServeReady calls ready after binding, before accepting requests.
+func (s *Server) ServeReady(ctx context.Context, ready func()) error {
 	if err := prepareSocket(s.socket); err != nil {
 		return err
 	}
 	listener, err := net.Listen("unix", s.socket)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", s.socket, err)
+	}
+
+	if ready != nil {
+		ready()
 	}
 
 	// Close the listener when ctx is done; this unblocks Accept and lets us

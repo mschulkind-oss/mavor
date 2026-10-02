@@ -22,6 +22,10 @@ const (
 	Transcribing
 	// Error is the "⚠ ERROR" red warning pill.
 	Error
+	// Initializing shows model loading and readiness inference, without progress claims.
+	Initializing
+	// Degraded warns that a finalized companion supplied the transcript.
+	Degraded
 )
 
 func (v Visual) String() string {
@@ -34,6 +38,10 @@ func (v Visual) String() string {
 		return "transcribing"
 	case Error:
 		return "error"
+	case Initializing:
+		return "initializing"
+	case Degraded:
+		return "degraded"
 	}
 	return "unknown"
 }
@@ -43,7 +51,7 @@ type Overlay interface {
 	Show(v Visual) error
 	// SetLevel updates the live audio energy level [0.0, 1.0] for active metering.
 	SetLevel(level float64) error
-	// SetText updates the live partial token transcription preview subtitle text.
+	// SetText updates a recording preview or a lifecycle diagnostic subtitle.
 	SetText(text string) error
 	// Close releases resources. Idempotent.
 	Close() error

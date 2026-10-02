@@ -24,7 +24,6 @@ import (
 	"github.com/mschulkind-oss/mavor/internal/models"
 	"github.com/mschulkind-oss/mavor/internal/output"
 	"github.com/mschulkind-oss/mavor/internal/overlay"
-	"github.com/mschulkind-oss/mavor/internal/speech"
 )
 
 func main() {
@@ -150,41 +149,8 @@ func runDaemon(verbose bool, logFile string) error {
 	// setting that is silently ignored is worse than one that is refused.
 	cfgFile.LogWarnings(logger)
 
-	// The model decides the runtime, the runtime and [advanced] decide the
-	// placement, and both are resolved once here — config is read at daemon
-	// start and never reloaded.
-	resolved, err := speech.Resolve(cfg)
-	if err != nil {
-		return err
-	}
-	transcriber, err := speech.FactoryFor(cfg, resolved, logger)
-	if err != nil {
-		return err
-	}
-	if closer, ok := transcriber.(io.Closer); ok {
-		defer closer.Close()
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-
-	// Where the overlay's text comes from, decided here and once (§6.2). A
-	// companion model is loaded now rather than at the first recording, so
-	// the first dictation is not the slow one; a model NAMED in the config
-	// and missing is the one preview failure that stops the daemon.
-	// The main model's engine comes up concurrently with the companion's:
-	// nothing about either load depends on the other, and doing them in
-	// series doubled the wait before the daemon was usable.
-	startedAt := time.Now()
-	waitForEngine := beginStart(ctx, transcriber)
-
-	preview, err := speech.LoadPreview(ctx, cfg, logger)
-	if err != nil {
-		waitOrLog(waitForEngine, logger.Warn)
-		return err
-	}
-	defer preview.Close()
-
 	recDir := filepath.Join(os.TempDir(), "mavor-recordings")
 	ov, err := overlay.NewDefault(cfg.Overlay.TopMargin, cfg.Overlay.PreviewWidth, logger)
 	if err != nil {
@@ -248,14 +214,12 @@ func runDaemon(verbose bool, logFile string) error {
 		FinalMode:         finalMode,
 		Socket:            cfg.Paths.Socket,
 		Recorder:          recorder,
-		Transcriber:       transcriber,
+		Initialize:        func(ctx context.Context) (daemon.Initialized, error) { return initializeModels(ctx, cfg, logger) },
 		Output:            outDispatch,
 		Overlay:           ov,
 		Ducker:            ducker,
 		Logger:            logger,
 		PreviewEnabled:    cfg.Preview.Enabled,
-		PreviewMode:       preview.Mode,
-		PreviewCompanion:  preview.Companion,
 		History:           transcriptStore(logger),
 		BinaryPath:        upgradeWatch,
 		SilenceFilter:     cfg.Advanced.SilenceFilter,
@@ -263,46 +227,7 @@ func runDaemon(verbose bool, logFile string) error {
 		MinPhraseDuration: time.Duration(cfg.Preview.MinPhraseMS) * time.Millisecond,
 	})
 
-	if err := waitForEngine(); err != nil {
-		return err
-	}
-	logger.Info("models: ready", "took", time.Since(startedAt))
-
-	logger.Info("daemon starting",
-		"socket", cfg.Paths.Socket,
-		"model", cfg.Model,
-		"runtime", string(resolved.Runtime),
-		"placement", string(resolved.Placement),
-		"placement_reason", resolved.Reason,
-		"model_path", resolved.ModelPath,
-		"model_dir", resolved.ModelDir,
-		"server", resolved.Server,
-		"preview_enabled", cfg.Preview.Enabled,
-		"preview_source", cfg.Preview.Source,
-		"preview_mode", string(preview.Mode),
-		"preview_companion", preview.Model,
-		"preview_reason", preview.Reason,
-		"gpu", cfg.Advanced.GPU,
-		"threads", cfg.Advanced.Threads,
-		"silence_filter", cfg.Advanced.SilenceFilter,
-		"recording_dir", recDir,
-		"top_margin", cfg.Overlay.TopMargin,
-		"duck_enabled", cfg.Ducking.Enabled,
-		"duck_volume", cfg.Ducking.Volume,
-		"duck_sink", cfg.Ducking.Sink,
-		"duck_apps", cfg.Ducking.Apps,
-		"duck_osc_enabled", cfg.Ducking.OSC.Enabled,
-		"duck_osc_address", cfg.Ducking.OSC.Address,
-		"duck_osc_port", cfg.Ducking.OSC.Port,
-		"duck_osc_paths", cfg.Ducking.OSC.Paths,
-		"pause_ms", cfg.Preview.PauseMS,
-		"min_phrase_ms", cfg.Preview.MinPhraseMS,
-		"pulse_source", os.Getenv("PULSE_SOURCE"),
-		"wayland_display", os.Getenv("WAYLAND_DISPLAY"),
-		"xdg_runtime_dir", os.Getenv("XDG_RUNTIME_DIR"),
-		"log_file", logFile,
-		"upgrade_watch", upgradeWatch,
-	)
+	logger.Info("daemon starting", "socket", cfg.Paths.Socket, "model", cfg.Model, "gpu", cfg.Advanced.GPU, "cpu_fallback", cfg.Advanced.CPUFallback, "final_mode", cfg.Advanced.FinalMode)
 	return d.Run(ctx)
 }
 
@@ -363,10 +288,27 @@ func runStatus() error {
 	if err != nil {
 		return fmt.Errorf("status: %w (is the daemon running?)", err)
 	}
+	return writeStatus(os.Stdout, os.Stderr, resp)
+}
+
+// writeStatus preserves machine-readable state stdout; diagnostics and actual
+// completed source are separate so an idle state does not erase a backup warning.
+func writeStatus(out, diagnostic io.Writer, resp ipc.Response) error {
 	if resp.Error != "" {
 		return errors.New(resp.Error)
 	}
-	fmt.Println(resp.State)
+	if _, err := fmt.Fprintln(out, resp.State); err != nil {
+		return err
+	}
+	if resp.Source != "" {
+		if _, err := fmt.Fprintln(diagnostic, "source:", resp.Source); err != nil {
+			return err
+		}
+	}
+	if resp.Warning != "" {
+		_, err := fmt.Fprintln(diagnostic, "warning:", resp.Warning)
+		return err
+	}
 	return nil
 }
 

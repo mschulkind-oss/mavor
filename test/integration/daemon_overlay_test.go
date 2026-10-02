@@ -24,6 +24,7 @@ import (
 func TestDaemonOverlaySurvivesAStateCycle(t *testing.T) {
 	h := Start(t, Options{Width: testWidth, Height: testHeight})
 	socket, _ := h.RunDaemon(t.Context(), MavorBinary, "whisper-tiny.en")
+	h.WaitForState(socket, "idle") // Binding precedes model readiness; early hotkeys intentionally do not queue.
 
 	overlayVisible := func(when string) bool {
 		t.Helper()

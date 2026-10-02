@@ -55,7 +55,7 @@ type SupervisorConfig struct {
 	CommandFunc func(ctx context.Context, cfg SupervisorConfig) *exec.Cmd
 
 	// ReadyTimeout is the maximum duration to wait for the server to accept connections.
-	// Defaults to 10 seconds with GPU enabled, or CPUReadyTimeout with NoGPU.
+	// Defaults to 120 seconds with GPU enabled, or CPUReadyTimeout with NoGPU.
 	ReadyTimeout time.Duration
 
 	// CPUReadyTimeout allows a slower CPU model load after GPU recovery.
@@ -99,7 +99,7 @@ func NewSupervisor(cfg SupervisorConfig) *Supervisor {
 		cfg.CPUReadyTimeout = 60 * time.Second
 	}
 	if cfg.ReadyTimeout <= 0 {
-		cfg.ReadyTimeout = 10 * time.Second
+		cfg.ReadyTimeout = 120 * time.Second
 		if cfg.NoGPU {
 			cfg.ReadyTimeout = cfg.CPUReadyTimeout
 		}
@@ -316,11 +316,15 @@ func (s *Supervisor) startLocked(ctx context.Context) error {
 	childCfg := s.cfg
 	childCfg.ServerSocket = endpoint
 
+	// Readiness has a deadline, but the transferred warm child is owned by
+	// Supervisor.Stop, not by that temporary operation context. On readiness
+	// cancellation/failure waitForReady still calls stopLocked and joins it.
+	childCtx := context.WithoutCancel(ctx)
 	var cmd *exec.Cmd
 	if s.cfg.CommandFunc != nil {
-		cmd = s.cfg.CommandFunc(ctx, childCfg)
+		cmd = s.cfg.CommandFunc(childCtx, childCfg)
 	} else {
-		cmd = DefaultServerCommand(ctx, childCfg)
+		cmd = DefaultServerCommand(childCtx, childCfg)
 	}
 
 	s.logger.Info("speech: supervisor launching child server",
@@ -369,7 +373,7 @@ func (s *Supervisor) startLocked(ctx context.Context) error {
 func (s *Supervisor) waitForReady(ctx context.Context, doneCh chan struct{}, stderr *childStderr) error {
 	timeout := s.cfg.ReadyTimeout
 	if timeout <= 0 {
-		timeout = 10 * time.Second
+		timeout = 120 * time.Second
 	}
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()

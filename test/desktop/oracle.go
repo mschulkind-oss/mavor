@@ -78,6 +78,25 @@ func Validate(base, actual image.Image, r overlay.FrameReceipt) (image.Rectangle
 		return image.Rectangle{}, fmt.Errorf("report requires native 1x capture")
 	}
 	w, h := ref.Bounds().Dx(), ref.Bounds().Dy()
+	// Mask ONLY pixels whose production indicator changes with animation phase.
+	// RMS columns and subtitle/label pixels never depend on Phase; their oracle
+	// stays exact at the original 1.5 threshold. No fabricated capture is exported.
+	animated := make([]bool, w*h)
+	for _, phase := range []float64{0, .125, .25, .375, .5, .625, .75, .875, 1} {
+		scene := r.Scene
+		scene.Phase = phase
+		sample, e := overlay.Render(scene)
+		if e != nil {
+			return image.Rectangle{}, e
+		}
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				if sample.RGBAAt(x, y) != ref.RGBAAt(x, y) {
+					animated[y*w+x] = true
+				}
+			}
+		}
+	}
 	best := 1e9
 	pos := image.Point{}
 	score := func(p image.Point, step int) float64 {
@@ -85,12 +104,12 @@ func Validate(base, actual image.Image, r overlay.FrameReceipt) (image.Rectangle
 		for y := 0; y < h; y += step {
 			for x := 0; x < w; x += step {
 				c := ref.RGBAAt(x, y)
-				if c.A < 200 {
+				if c.A < 200 || animated[y*w+x] {
 					continue
 				}
 				br, bg, bb := rgb(base.At(x+p.X, y+p.Y))
 				a := int(c.A)
-				expect := color.RGBA{uint8(int(c.R) + br*(255-a)/255), uint8(int(c.G) + bg*(255-a)/255), uint8(int(c.B) + bb*(255-a)/255), 255}
+				expect := color.RGBA{uint8(int(c.R) + (br*(255-a)+127)/255), uint8(int(c.G) + (bg*(255-a)+127)/255), uint8(int(c.B) + (bb*(255-a)+127)/255), 255}
 				sum += distance(expect, actual.At(x+p.X, y+p.Y))
 				n++
 			}

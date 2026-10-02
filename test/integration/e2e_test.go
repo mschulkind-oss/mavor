@@ -20,6 +20,7 @@ func TestEndToEndRealWhisper(t *testing.T) {
 		// No FakeTranscript: drives real whisper-cli with whisper-tiny.en model
 	})
 	socket, _ := h.RunDaemon(t.Context(), MavorBinary, "whisper-tiny.en")
+	h.WaitForState(socket, "idle") // Binding precedes model readiness; early hotkeys intentionally do not queue.
 
 	if r, err := ipc.Send(socket, ipc.Request{Action: "toggle"}, 2*time.Second); err != nil {
 		t.Fatalf("toggle to record: %v", err)

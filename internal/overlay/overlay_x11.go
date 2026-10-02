@@ -55,7 +55,7 @@ func (o *X11) mutate(change func(*desired)) error {
 	return nil
 }
 func (o *X11) Show(v Visual) error {
-	if v < Hidden || v > Error {
+	if v < Hidden || v > Degraded {
 		return errors.New("overlay: invalid visual")
 	}
 	err := o.mutate(func(d *desired) {
@@ -75,7 +75,7 @@ func (o *X11) Show(v Visual) error {
 }
 func (o *X11) SetText(text string) error {
 	return o.mutate(func(d *desired) {
-		if d.visual == Recording {
+		if d.visual == Recording || d.visual == Initializing || d.visual == Error || d.visual == Degraded {
 			d.preview = text
 		}
 	})
@@ -264,3 +264,5 @@ func (o *X11) run(t *xTransport) {
 		ticker.Reset(interval)
 	}
 }
+
+func (o *X11) RecentFrames() []FrameReceipt { return o.frames.recent() }

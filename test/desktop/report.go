@@ -21,6 +21,7 @@ type StoryState struct {
 	Description string
 	Visual      overlay.Visual
 	FeedFrames  int
+	Motion      string // ordered timed controlled-fixture phase, never microphone evidence
 	Preview     string
 	AudioLevel  float64 // 0.0 - 1.0 (used if Visual == overlay.Recording)
 	LevelPct    int
@@ -43,6 +44,7 @@ type StateCapture struct {
 }
 
 type ReportData struct {
+	MotionFile    string
 	GeneratedAt   string
 	TotalStates   int
 	CaptureMethod string
@@ -247,7 +249,31 @@ func Scenes() []StoryState {
 	for _, p := range []struct{ id, text string }{{"preview-short", "Live preview"}, {"preview-long", "A deliberately long preview sentence that exceeds the available width and keeps only the most recent words while speaking to the local transcription model"}, {"preview-cleared", ""}} {
 		states = append(states, StoryState{Index: len(states) + 1, ID: p.id, Title: p.id, Badge: "RECORDING", BadgeClass: "badge-recording", Visual: overlay.Recording, AudioLevel: .55, Preview: p.text, Description: "Preview is overlay-only; no output is emitted.", Specs: map[string]string{}})
 	}
+
+	for _, s := range []StoryState{
+		{ID: "initializing", Title: "Initializing", Badge: "INITIALIZING", BadgeClass: "badge-transcribing", Visual: overlay.Initializing, Preview: "Loading main model and running readiness inference", Description: "Controlled fixture diagnostic: indeterminate activity, no percentage or readiness claim."},
+		{ID: "ready-after-initializing", Title: "Ready (hidden HUD)", Badge: "READY / HIDDEN", BadgeClass: "badge-hidden", Visual: overlay.Hidden, Description: "Controlled fixture initialization → ready presentation: the HUD hides. No model readiness is asserted by this painter test."},
+		{ID: "initializing-before-error", Title: "Initializing before failure", Badge: "INITIALIZING", BadgeClass: "badge-transcribing", Visual: overlay.Initializing, Preview: "Running readiness inference: controlled fixture", Description: "Separate controlled fixture initialization → failure sequence, not real model inference."},
+		{ID: "initialization-error", Title: "Initialization failed", Badge: "ERROR", BadgeClass: "badge-error", Visual: overlay.Error, Preview: "Readiness inference failed: controlled fixture diagnostic", Description: "Controlled fixture failure shown by the production painter, not a real model failure."},
+		{ID: "gpu-request-error", Title: "GPU-enabled server request failure", Badge: "ERROR", BadgeClass: "badge-error", Visual: overlay.Error, Preview: "GPU-enabled server request failed: controlled fixture diagnostic", Description: "Separate request failure fixture before finalized backup warning. Not a startup fallback or evidence of hardware OOM."},
+		{ID: "degraded", Title: "Finalized companion backup", Badge: "BACKUP TRANSCRIPT", BadgeClass: "badge-transcribing", Visual: overlay.Degraded, Preview: "GPU-enabled server request failed; finalized companion backup", Description: "Controlled fixture warning, not evidence of hardware OOM or emitted text."},
+	} {
+		s.Index = len(states) + 1
+		states = append(states, s)
+	}
+	for _, phase := range []struct {
+		id     string
+		level  float64
+		frames int
+	}{
+		{"quiet", .003, 50}, {"speech", .04, 12}, {"pause", 0, 12}, {"recovery", .015, 12}, {"decayed", 0, 50},
+	} {
+		states = append(states, StoryState{Index: len(states) + 1, ID: "motion-" + phase.id, Title: "Timed waveform: " + phase.id, Badge: "RECORDING", BadgeClass: "badge-recording", Visual: overlay.Recording, AudioLevel: phase.level, FeedFrames: phase.frames, Motion: phase.id, Description: "Controlled timed RMS fixture, not real microphone audio or model inference. Continuous production history: quiet → speech → pause → recovery → full decay."})
+	}
 	for i := range states {
+		if states[i].Motion != "" {
+			continue
+		}
 		states[i].FeedFrames = 1
 		if states[i].Visual == overlay.Recording {
 			states[i].FeedFrames = 50
@@ -849,6 +875,8 @@ const storybookHTMLTemplate = `<!DOCTYPE html>
         <button class="btn" data-filter="transcribing">Transcribing</button>
         <button class="btn" data-filter="error">Error</button>
         <button class="btn" data-filter="hidden">Hidden</button>
+        <button class="btn" data-filter="initializing">Initializing</button>
+        <button class="btn" data-filter="degraded">Backup warning</button>
       </div>
       <div class="view-group">
         <span class="filter-label">View Mode:</span>
@@ -859,9 +887,10 @@ const storybookHTMLTemplate = `<!DOCTYPE html>
       </div>
     </div>
 
+    {{if .MotionFile}}<section class="state-card"><div class="card-body"><h2>Timed changing waveform</h2><p>Five real compositor captures: quiet → speech → pause → recovery → decay. Controlled RMS fixture, not real microphone/model evidence. GIF dwell times reflect measured capture intervals; the final frame is held for one second. This is a sparse capture sequence, not an invented smooth movie.</p><img src="{{.MotionFile}}" alt="Timed real HUD captures" style="width:100%"></div></section>{{end}}
     <div class="state-feed">
       {{range .Captures}}
-      <article class="state-card" id="state-{{.State.Index}}" data-category="{{if eq .State.Visual 1}}recording{{else if eq .State.Visual 2}}transcribing{{else if eq .State.Visual 3}}error{{else}}hidden{{end}}">
+      <article class="state-card" id="state-{{.State.Index}}" data-category="{{if eq .State.Visual 1}}recording{{else if eq .State.Visual 2}}transcribing{{else if eq .State.Visual 3}}error{{else if eq .State.Visual 4}}initializing{{else if eq .State.Visual 5}}degraded{{else}}hidden{{end}}">
         <div class="card-header">
           <div class="card-title-group">
             <span class="state-index">#0{{.State.Index}}</span>

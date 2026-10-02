@@ -81,10 +81,16 @@ func (s *ServerTranscriber) Close() error {
 
 // Transcribe sends the WAV file at wavPath to the server and returns the transcribed text.
 func (s *ServerTranscriber) Transcribe(ctx context.Context, wavPath string) (string, error) {
+	gpu := s.Supervisor != nil && s.Supervisor.GPUEnabled()
 	text, err := s.transcribeOnce(ctx, wavPath)
 	var serverErr *inferenceServerError
 	if err == nil || s.Supervisor == nil || ctx.Err() != nil ||
 		!errors.As(err, &serverErr) || !s.Supervisor.CPUFallbackAllowed() || !s.Supervisor.GPUEnabled() {
+		if err != nil && gpu && s.Supervisor != nil && s.Supervisor.GPUEnabled() && ctx.Err() == nil && errors.As(err, &serverErr) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			if _, wavErr := readFinalPCM(wavPath); wavErr == nil {
+				return text, &GPURequestError{Err: err}
+			}
+		}
 		return text, err
 	}
 	if cpuErr := s.Supervisor.FallbackToCPU(ctx, err); cpuErr != nil {
@@ -190,6 +196,9 @@ func (s *ServerTranscriber) transcribeOnce(ctx context.Context, wavPath string) 
 		respBytes, err = io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
+			if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+				return "", fmt.Errorf("speech: rejected request %d: read response: %w", resp.StatusCode, err)
+			}
 			return "", &inferenceServerError{err: fmt.Errorf("speech: server: read response: %w", err)}
 		}
 		lastStatus = resp.StatusCode
@@ -226,7 +235,7 @@ func (s *ServerTranscriber) transcribeOnce(ctx context.Context, wavPath string) 
 	}
 	if err := json.Unmarshal(respBytes, &jsonResp); err == nil {
 		if len(jsonResp.Error) > 0 && string(jsonResp.Error) != "null" {
-			return "", &inferenceServerError{err: fmt.Errorf("speech: server error: %s", string(jsonResp.Error))}
+			return "", fmt.Errorf("speech: server error: %s", string(jsonResp.Error))
 		}
 		if jsonResp.Text != nil {
 			return strings.TrimSpace(*jsonResp.Text), nil
@@ -337,4 +346,19 @@ func (s *ServerTranscriber) buildClient() *http.Client {
 		return &http.Client{Transport: transport}
 	}
 	return &http.Client{Transport: http.DefaultTransport}
+}
+
+// GPURequestError means a supervised GPU-enabled server request failed, not
+// proof of an OOM or even of hardware GPU use. Startup and validation failures
+// and unsuccessful explicit CPU retries never receive this classification.
+type GPURequestError struct{ Err error }
+
+func (e *GPURequestError) Error() string { return e.Err.Error() }
+func (e *GPURequestError) Unwrap() error { return e.Err }
+func IsGPURequestFailure(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var e *GPURequestError
+	return errors.As(err, &e)
 }

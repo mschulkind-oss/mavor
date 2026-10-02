@@ -99,9 +99,12 @@ final_mode = "segments"
 ```
 
 These examples do not change preview or silence-filter defaults. Preview text
-**never emits**: a companion remains overlay-only, and main partials are also
-provisional. Successful live-final work avoids complete after-stop replay;
-failed or overloaded live work retains the original recording for safe replay.
+**never emits provisionally**: main partials and companion partials stay in the
+overlay. A [qualified failed GPU-enabled request](./design/visible-model-initialization.md#the-qualified-exception)
+may use fully covered finalized companion text, not partials. Successful live-final work avoids complete after-stop replay;
+ordinary failed or overloaded live work retains the original recording for safe
+replay; eligible GPU request failures select whole finalized backup or retain
+the error without replaying the failed main.
 Unsupported model/mode selections are errors rather than silent substitutions.
 
 ### What moving work before release can and cannot buy
