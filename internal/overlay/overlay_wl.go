@@ -1,6 +1,7 @@
 package overlay
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"image"
@@ -18,7 +19,8 @@ import (
 // because the connection is not safe to drive from two places at once and the
 // daemon calls SetLevel from its audio path.
 type WL struct {
-	log *slog.Logger
+	log    *slog.Logger
+	frames frameStore
 
 	// topMargin and previewFraction are kept because the surface may have to
 	// be built more than once — see rebuild.
@@ -83,8 +85,9 @@ type desired struct {
 
 // wlState is everything the render goroutine owns exclusively.
 type wlState struct {
-	display *wayland.Display
-	surface *wayland.Surface
+	revision uint64
+	display  *wayland.Display
+	surface  *wayland.Surface
 	// bufs is a small pool. A committed wl_buffer belongs to the compositor
 	// until it releases it, so one buffer cannot be redrawn every frame —
 	// three gives it room to hold one while another is being painted.
@@ -301,12 +304,7 @@ func (o *WL) rebuild(st *wlState) error {
 	// Carry the dictation across. The user did not stop talking because their
 	// monitor blinked, so the scene and its waveform history come along; only
 	// the compositor-side state — buffers, damage, assigned size — is new.
-	fresh.scene = st.scene
-	copy(fresh.levels, st.levels)
-	fresh.scene.Levels = fresh.levels
-	fresh.lastLevel = st.lastLevel
-	fresh.sceneSetAt = st.sceneSetAt
-	fresh.animate = st.animate
+	carryWLScene(fresh, st)
 	*st = *fresh
 	return nil
 }
@@ -353,6 +351,7 @@ func (o *WL) run(st *wlState) {
 		if d.visual != st.scene.Visual {
 			resetWave(st.levels)
 		}
+		st.revision = seen
 		st.scene.Visual = d.visual
 		st.scene.Preview = d.preview
 		// EXACTLY ONE column per frame, whatever arrived.
@@ -401,6 +400,7 @@ func (o *WL) run(st *wlState) {
 		if !connLost {
 			if err := st.display.DispatchPending(); err != nil {
 				o.log.Warn("overlay: wayland connection lost — will rebuild", "err", err)
+				o.frames.lost(errors.New("overlay: Wayland unavailable"))
 				connLost = true
 			}
 		}
@@ -437,7 +437,7 @@ func (o *WL) run(st *wlState) {
 		// it is how a state the producer asked for reaches the screen.
 		// A rebuild is such a change: the new surface has never been
 		// painted, whatever the producers have or have not asked for since.
-		changed := apply() || rebuilt
+		changed := apply() || rebuilt || !st.mapped
 
 		// Scroll here rather than in apply: apply returns early when
 		// nothing arrived, and a frame with no new sample must still
@@ -460,6 +460,7 @@ func (o *WL) run(st *wlState) {
 					return
 				}
 				o.log.Warn("overlay: wayland connection lost while painting — will rebuild", "err", err)
+				o.frames.lost(errors.New("overlay: Wayland unavailable"))
 				connLost = true
 				continue
 			}
@@ -638,6 +639,7 @@ func (o *WL) paint(st *wlState, start time.Time) error {
 	}
 	st.lastDamage = bounds
 	st.mapped = true
+	o.frames.publish(wlReceipt(st, sw, sh))
 	return nil
 }
 
@@ -696,6 +698,9 @@ func blit(img *image.RGBA, buf *wayland.Buffer, region image.Rectangle) {
 // Show transitions to a visual state. Never dropped: it is recorded as the
 // latest wanted state, and the next frame paints it.
 func (o *WL) Show(v Visual) error {
+	if v < Hidden || v > Error {
+		return errors.New("overlay: invalid visual")
+	}
 	select {
 	case <-o.done:
 		return errors.New("overlay: closed")
@@ -792,4 +797,29 @@ func (o *WL) debug(msg string, args ...any) {
 		return
 	}
 	o.log.Debug(msg, args...)
+}
+
+// SyncFrame waits for a submission covering current desired state.
+func (o *WL) SyncFrame(ctx context.Context) (FrameReceipt, error) {
+	o.mu.Lock()
+	revision := o.wantSeq
+	o.mu.Unlock()
+	return o.frames.wait(ctx, revision, o.done)
+}
+
+func carryWLScene(fresh, st *wlState) {
+	fresh.revision = st.revision
+	fresh.scene = st.scene
+	copy(fresh.levels, st.levels)
+	fresh.scene.Levels = fresh.levels
+	fresh.lastLevel = st.lastLevel
+	fresh.sceneSetAt = st.sceneSetAt
+	fresh.animate = st.animate
+}
+
+// Layer-shell configure reports size but not global position or exclusive zones
+// reserved by other clients. An empty rectangle is honest unknown placement,
+// not an inferred margin that silently omits bars such as Waybar.
+func wlReceipt(st *wlState, sw, sh int) FrameReceipt {
+	return FrameReceipt{Backend: "wayland", Revision: st.revision, Scene: st.scene, Canvas: image.Pt(sw, sh), Scale: 1}
 }

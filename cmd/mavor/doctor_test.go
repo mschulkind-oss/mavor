@@ -338,3 +338,12 @@ func TestCheckPasteOnceSupport(t *testing.T) {
 		t.Error("expected false when paste-once is absent")
 	}
 }
+
+func TestHUDUnavailableIndependentOfClipboard(t *testing.T) {
+	t.Setenv("XDG_CURRENT_DESKTOP", "GNOME")
+	t.Setenv("DISPLAY", "")
+	ok, msg := checkHUD()
+	if ok || !strings.Contains(msg, "XWayland HUD unavailable") || !strings.Contains(msg, "DISPLAY") {
+		t.Fatalf("%v %s", ok, msg)
+	}
+}

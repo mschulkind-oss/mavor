@@ -25,7 +25,7 @@ ExecStart=%s daemon
 Restart=on-failure
 RestartSec=2s
 Environment=PULSE_LATENCY_MSEC=30
-PassEnvironment=WAYLAND_DISPLAY XDG_CURRENT_DESKTOP
+PassEnvironment=WAYLAND_DISPLAY XDG_CURRENT_DESKTOP DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS
 
 [Install]
 WantedBy=graphical-session.target

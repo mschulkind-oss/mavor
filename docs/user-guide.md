@@ -65,7 +65,7 @@ For high-level architecture see [`how-mavor-works.md`](./reference/how-mavor-wor
 
 1. **Activation:** Keypress signals `mavor start` (push-to-talk) or `mavor toggle`. Daemon enters `recording`.
 2. **Audio Capture & Ducking:** Audio capture initializes via PipeWire (`parec`). If `[ducking]` is enabled, background media streams (Spotify, Firefox) are automatically ducked.
-3. **Live HUD Waveform and preview:** The layer-shell HUD overlay appears 8px below Waybar, rendering a live volume waveform meter across 6 discrete energy levels (0% to 100%). If the preview is on, provisional text appears there too — see [§7.2](#72-preview--text-in-the-overlay-while-you-speak). **The preview is never typed.**
+3. **Live HUD Waveform and preview:** The HUD appears below the usable-area reservation with the configured margin (8px by default). Layer-shell desktops and GNOME XWayland use the same painter and decibel-mapped live volume waveform. If the preview is on, provisional text appears there too — see [§7.2](#72-preview--text-in-the-overlay-while-you-speak). **The preview is never typed.**
 4. **Final Transcription:** On release (`mavor stop` / second `toggle`), captured audio goes to the model named by `model`, including quiet, short, or silent recordings. Optional `advanced.silence_filter = true` rejects recordings lacking both sufficient energy and recognized preview words; it is off by default. This choice affects rejection before transcription, not preview pauses, long-audio chunking, or removal of non-speech annotations from final text.
 5. **Output Emission:** The default paste driver copies selections and injects a paste chord. Typing sends keystrokes; clipboard output copies only for manual paste. Additional copying in injection modes is off by default. Temporary recording files in `/tmp/mavor-recordings/` are immediately purged.
 
@@ -919,7 +919,7 @@ There is one build and it is cgo, so there is no `build-sherpa` recipe and no
 | Every setting appears to be ignored | The config predates the schema rewrite, so every key is unknown | `mavor doctor` reports it; `mavor config init --force` scaffolds the new file |
 | `doctor` says the placement fell back to `subprocess` | No `whisper-server` on `$PATH`, so the model cannot be kept warm | Dictation still works, slower. Install a whisper.cpp that ships the server, or set `advanced.placement = "subprocess"` to silence it |
 | `toggle: connect: no such file or directory` | Daemon is not running or socket mismatch | Run `mavor daemon -v` or `mavor doctor` to inspect status |
-| Overlay does not appear | Compositor does not implement `wlr-layer-shell` | Ensure a wlroots session (sway, hyprland, river) is active; `mavor daemon -v` logs the reason it fell back to a silent overlay |
+| Overlay does not appear | Selected presentation backend is unavailable | Run `mavor doctor` and inspect daemon logs. GNOME needs XWayland, current session DISPLAY/XAUTHORITY and D-Bus; other desktops need `wlr-layer-shell` |
 | Audio volume does not duck | Ducking is off by default | Set `enabled = true` under `[ducking]`, and check `apps` if you narrowed it |
 | No text in the overlay while speaking | The preview is off, or fell back to phrase mode | `mavor doctor`'s `Live preview source` line names the mode and the reason; pull `zipformer-streaming` for the live preview |
 | Preview shows words that were never said | Phrase mode feeding whisper short clips, which it fills with plausible text | Pull `zipformer-streaming` so `auto` uses the companion instead, or turn the preview off with `enabled = false` |
@@ -932,8 +932,9 @@ There is one build and it is cgo, so there is no `build-sherpa` recipe and no
 
 ## GNOME Wayland: manual paste
 
-GNOME does not provide the protocols mavor uses for its overlay and synthetic
-keyboard. Choose copy-only output explicitly; it is never a silent fallback:
+GNOME does not provide the synthetic-keyboard protocol. Its HUD automatically
+uses XWayland (the X11 compatibility server), while output remains a separate
+choice. Choose copy-only output explicitly; it is never a silent fallback:
 
 ```toml
 [output]
@@ -964,10 +965,19 @@ as is `typing_delay_ms`. Whitespace is normalized, like the injection drivers.
 The selection remains available for delayed and repeated manual paste until
 another application replaces it or the session/selection holder ends.
 
-There is **no GNOME HUD, waveform, or visible preview**. Missing layer-shell
-causes a logged no-overlay fallback; internal preview processing may still run.
-Set `[preview] enabled = false` to avoid preview work you cannot see.
-Notifications are deferred; status and logs are the available feedback.
+GNOME displays the same passive HUD, waveform and preview as Sway, using the
+shared Go painter without an extension. Supply `XDG_CURRENT_DESKTOP=GNOME`,
+DISPLAY/XAUTHORITY and the current session D-Bus address to the daemon, including
+its user service environment. Do not copy credentials from another login.
+`mavor doctor` separately selects and probes the HUD; a failed constructor logs
+an unavailable/no-overlay fallback. Copying can continue independently. Preview
+is display-only, never a transcript dispatched to the clipboard.
+
+The HUD follows the primary monitor's usable area, not pointer/focus. Monitor
+changes are polled and can briefly hide it. Fractional XWayland output is resampled,
+not guaranteed native-sharp on each output. Shell overview, lock and secure UI
+remain authoritative. Notifications are deferred. See [HUD QA](qa/gnome-hud-qa.md)
+for measured geometry, recovery and lifecycle limits.
 
 ### Copy failures and verification limits
 
@@ -984,7 +994,8 @@ It uses ordinary backgrounding wl-copy. On measured GNOME its transparent-surfac
 fallback steals focus; a timeout does not make it focus-safe. See
 [wl-clipboard's manual](https://man.archlinux.org/man/wl-clipboard.1.en) and the
 [measured backend comparison](research/gnome-clipboard-research.md#focus-safe-xwayland-production-result).
-No backend is automatically selected from desktop/compositor names.
+No **output** backend is automatically selected from desktop/compositor names;
+HUD selection is independent and automatic.
 
 `mavor doctor` checks xclip, DISPLAY and a readable nonempty authorization file
 (XAUTHORITY, or the standard home-directory file) without reading or overwriting
@@ -999,5 +1010,5 @@ continuous destination focus, mature overview/no focus, delayed/repeated/native
 reads, replacement, PRIMARY preservation and an editable GTK Paste action. This
 is not a full login session or physical Ctrl+V test. Before relying on your
 desktop, check editors/terminals, clipboard managers enabled/disabled, lock/unlock,
-shortcuts and daemon restart. There is no GNOME HUD or input injection.
+shortcuts and daemon restart. There is no automatic GNOME input injection.
 See [QA](qa/gnome-clipboard-qa.md#production-x11-verification) for evidence and limits.

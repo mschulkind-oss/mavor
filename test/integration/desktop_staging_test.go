@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/mschulkind-oss/mavor/test/desktop"
 	"image"
 	"image/png"
 	"io"
@@ -164,8 +165,8 @@ func TestStagingCleanup(t *testing.T) {
 
 func TestStorybookReportLabelsAndPaths(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "report.html")
-	data := ReportData{Compositor: "measured Sway", TotalStates: 1, Captures: []StateCapture{{State: StoryState{Title: "<fixture>", ID: "fixture", Index: 1}, FullRelPath: "screenshots/01_fixture_full.png"}}}
-	if err := generateHTMLReport(path, data); err != nil {
+	data := desktop.ReportData{Compositor: "measured Sway", TotalStates: 1, Captures: []desktop.StateCapture{{State: desktop.StoryState{Title: "<fixture>", ID: "fixture", Index: 1}, FullRelPath: "screenshots/01_fixture_full.png"}}}
+	if err := desktop.GenerateHTMLReport(path, data); err != nil {
 		t.Fatal(err)
 	}
 	content, err := os.ReadFile(path)

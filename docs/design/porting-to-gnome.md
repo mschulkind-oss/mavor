@@ -9,7 +9,7 @@ vantage:
   status-chip: true
 ---
 
-# GNOME is two ports, not one — and only one of them is worth doing
+# GNOME presentation and injection are separate ports
 
 **Status:** Injection design sketch, 2026-09-06; not implemented.
 The explicit clipboard workflow is separate: see the
@@ -17,16 +17,16 @@ The explicit clipboard workflow is separate: see the
 code was verified against `ca2d8ff` on 2026-09-06; every claim about the outside
 world carries a link and the date I checked it.
 
-**The short version.** mavor loses two things off wlroots: the HUD
-(`wlr-layer-shell`) and the typing (`virtual-keyboard-v1`, via `wtype`). These
-are not one problem — the typing is also missing on KDE, where the HUD works
-fine, so the injection port buys two desktops and the HUD port buys one. My
-recommendation is to build a second `output.Dispatcher` and **not** a GNOME HUD:
-a HUD on GNOME can only be a GNOME Shell extension, which is a JavaScript
-artifact on a six-month breakage cadence bought for a decoration. And I would
-not start either until [OQ-GN2](#OQ-GN2) is answered, because the standards-blessed
-injection route puts an **Allow Remote Interaction** dialog in front of the
-user and nobody has shown me it can be made to stop.
+**Current presentation:** the passive XWayland HUD now uses the same Go painter
+as layer-shell, without an extension. The earlier claim that only an extension
+could provide a GNOME HUD was false. See the [implemented system](../reference/how-mavor-works.md#the-overlay-and-why-it-does-not-steal-focus)
+and [measured HUD QA](../qa/gnome-hud-qa.md). Automatic HUD selection does not
+select output: manual paste still requires explicit X11 clipboard configuration.
+
+The remaining injection/portal proposal below is historical research, not shipped
+behavior. Its extension-only HUD recommendation and before-porting failure examples
+are superseded by that measured backend; external claims retain their original dates.
+No input-injection extension, portal dispatcher or GlobalShortcuts client was added.
 
 **The most important section** is [§3.1](#31-injection--the-port-that-actually-matters):
 everything else follows from whether text can be injected without a prompt.
@@ -41,14 +41,14 @@ the failure-mode table this doc extends).
 
 ## 1. The verdict
 
-**Do not port the HUD. Copy-only output is an explicit option; injection remains
-a separate, unimplemented proposal.**
+**The HUD is implemented independently. Copy-only output is explicit; injection
+remains a separate, unimplemented proposal.**
 
 Set `[output] driver = "clipboard", clipboard_backend = "x11"` for manual
 paste on measured GNOME. Default output is still
 `"paste"`; `"typing"` remains opt-in. No desktop auto-selection or permission
 mechanism is added. Read the [GNOME instructions](../user-guide.md#gnome-wayland-manual-paste)
-for missing visible preview, status/log feedback, and the limits of background
+for visible preview, status/log feedback, and the limits of background
 clipboard copying. The external GNOME/version claims below were not reverified
 for this implementation.
 
@@ -62,7 +62,7 @@ win: KWin implements `wlr-layer-shell`, so the HUD is free there. It does
 "compositor does not support the virtual keyboard protocol", which is mavor's
 exact failure (checked 2026-09-06). So the typing is broken on *everything that
 is not wlroots*, and a second dispatcher is one piece of work that buys KDE and
-GNOME together. The HUD, by contrast, is broken on GNOME alone.
+GNOME together. The HUD now has a separate measured XWayland backend.
 
 **Both shipped GNOME dictation extensions gave up on injection.** Blurt
 ([extensions.gnome.org #6742](https://extensions.gnome.org/extension/6742/blurt/),
@@ -208,7 +208,7 @@ protocols fail independently.
 | sway, Hyprland, river, Wayfire, niri, labwc | Yes | Yes | Works |
 | COSMIC | Yes | Yes | Should work; nobody has run it |
 | **KDE Plasma (KWin)** | **Yes**, via the `layer-shell-qt` implementation ([KDE/layer-shell-qt](https://github.com/KDE/layer-shell-qt)) | **No** ([KDE bug 497774](https://bugs.kde.org/show_bug.cgi?id=497774)) | HUD works; nothing is ever typed |
-| **GNOME (Mutter)** | **No** | **No** | Explicit manual-paste workflow; no HUD or injection; live validation needed |
+| **GNOME (Mutter)** | **No** | **No** | Passive XWayland HUD and explicit manual paste; no injection; lifecycle limits in HUD QA |
 
 Mutter's two layer-shell tracking issues are both **closed without adoption**:
 [mutter#973](https://gitlab.gnome.org/GNOME/mutter/-/issues/973) (opened
@@ -323,6 +323,10 @@ and I am recording it so the option is re-openable.
 Mutter's `unsafe-mode` since GNOME 42 and is not available to a normal session.
 
 ### 3.2 The HUD — the port I do not think is worth doing
+
+> [!NOTE]
+> Historical alternatives below omit the now-measured passive XWayland backend.
+> They do not constrain current presentation or require an extension.
 
 On GNOME a Wayland client cannot position its own window, full stop. Asked
 directly whether a GTK4 window can be made always-on-top programmatically, a
@@ -778,11 +782,11 @@ for injection first, with the HUD riding along.
    **Answer:**
    > _(empty — fill in when decided)_
 
-5. 💬 **OQ-GN5: Do we own a GNOME Shell extension?** It is the only thing that
+5. 💬 **OQ-GN5: Do we own a GNOME Shell extension for injection?** It is one route that
    can draw the HUD and the only no-prompt injection path that is not a
    systemwide privilege grant — and it is JavaScript in this repository, on
    GNOME's six-month cadence, with review turnaround outside our control. Says
-   whether "GNOME support" ever includes the pill.
+   whether a future input-injection backend uses Shell APIs; the pill is already independent.
 
    <!-- vantage: oq id=OQ-GN5 leaning="No. A second painter in a second language on someone else's release train, for a status indicator, is the worst trade in this document." -->
 

@@ -7,10 +7,12 @@ property worth preserving: the only outbound request in the program is
 
 Its first and current backend is Linux on a wlroots Wayland compositor — sway,
 Hyprland, river, Wayfire, niri, labwc — which is what `wlr-layer-shell` (the
-overlay) and `virtual-keyboard-v1` (typing) require. Treat that as the platform
-that exists rather than the platform the design assumes: `audio.Recorder`,
+overlay) and `virtual-keyboard-v1` (typing) require. GNOME selects a passive
+XWayland HUD with the same painter; explicitly configured X11 clipboard output
+supports manual paste, not typing. Shell/Mutter 50.4 has isolated-session evidence,
+not full desktop lifecycle certification. Presentation and output remain separate: `audio.Recorder`,
 `speech.Transcriber`, `overlay.Overlay` and `output.Dispatcher` are four
-independent interfaces, and only the last two are Wayland-specific. Porting is
+independent interfaces, and only the last two are desktop-specific. Porting is
 a matter of implementing those, not of restructuring.
 
 ## Architecture
@@ -28,7 +30,7 @@ User Keybind ($mod+grave)
     ├── audio.Ducker (automatic background media ducking via pactl)
     ├── speech.Transcriber (the model that produces the text you get typed)
     │     └── speech.LoadedPreview (a second, streaming model — overlay only)
-    ├── overlay.Overlay (wlr-layer-shell HUD, painted in Go, live waveform)
+    ├── overlay.Overlay (layer-shell or GNOME XWayland HUD, shared Go painter)
     └── output.Dispatcher (wtype synthetic keyboard injection + wl-copy)
 ```
 
@@ -81,7 +83,7 @@ Two facts about that tree are easy to get wrong:
   no such literal. A non-empty check does not catch them, which is why
   `speech.StripNonSpeech` runs before the daemon's empty-transcript guard rather
   than after it.
-- `internal/overlay/` — Layer-shell HUD: `paint.go` turns state into pixels with no compositor involved, `overlay_wl.go` puts them on screen.
+- `internal/overlay/` — Shared HUD: `paint.go` turns state into pixels without a compositor; `overlay_wl.go` presents on layer-shell and `overlay_x11.go` on GNOME XWayland. Optional frame receipts prove submission only; capture drivers independently measure screenshot placement.
 - `internal/wayland/` — Minimal hand-written Wayland client: the wire protocol, wlr-layer-shell, and shared-memory buffers. No cgo in this package (the binary as a whole is cgo — see below).
 - `internal/ipc/` — JSON-over-Unix-socket IPC server and client.
 - `internal/output/` — Synthetic keystroke typing (`wtype`) and clipboard synchronization (`wl-copy`).
@@ -142,10 +144,12 @@ itself (the release tarball, `bin/`) or one directory up in `lib/`
 absolute path into the *build host's* module cache and the binary runs
 nowhere else.
 
-Two build tags remain, and both are test-only:
+Three build tags remain, all test-only:
 
 - `integration`: Enables the headless Sway + PipeWire integration test harness.
 - `e2e`: Enables end-to-end transcription tests with real downloaded models.
+- `gnome`: Enables isolated Shell/Mutter HUD and clipboard acceptance. Native
+  wl-copy diagnostics remain unsupported; gate the X11 clipboard workflow.
 
 ## Key CLI Commands
 

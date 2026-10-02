@@ -24,7 +24,9 @@ summary: "As-built reference for the mavor daemon: the three-state machine, the 
 
 # How `mavor` works
 
-**Status:** CURRENT as of 2026-09-05, verified against `7e52f94`.
+**Status:** Core reference verified 2026-09-05 against `7e52f94`; overlay and
+GNOME/output statements reconciled 2026-10-02 against `f8c9f02`-based
+work, with [measured HUD QA](../qa/gnome-hud-qa.md). No new whole-system stamp is claimed.
 
 `mavor` is one long-lived daemon whose entire shared mutable state is a
 three-value enum. A hotkey-launched CLI pokes it over a Unix socket; the enum
@@ -42,7 +44,7 @@ own tests run in milliseconds with no compositor and no audio server.
 | The model catalog, and the runtime and placement it implies | `internal/models` (`Catalog`, `RuntimeFor`, `Select`) |
 | The config file, and the defaults `config init` scaffolds | `internal/config` (`Config`, `Default`, `Resolve`) |
 | Output dispatch (paste and typing) | `internal/output` (`Dispatcher`, `Paste`, `Wayland`) — see [`paste-based-output-dispatch.md`](paste-based-output-dispatch.md) |
-| The HUD | `internal/overlay` (`Overlay`, `Visual`, `Scene`) — `paint.go` is pixels, `overlay_wl.go` is the compositor |
+| The HUD | `internal/overlay` (`Overlay`, `Visual`, `Scene`) — the shared painter supplies both layer-shell and GNOME XWayland presenters |
 | Wayland wire protocol, layer-shell, shm | `internal/wayland` — hand-written, no cgo in this package |
 | Transcript recovery log | `internal/history` (`Store`, `Entry`) |
 | Process wiring, every subcommand | `cmd/mavor` (`runDaemon` builds the daemon) |
@@ -75,8 +77,8 @@ package.** `audio.MockRecorder`, `audio.MockDucker`, `speech.Mock`,
 production package, not in `_test.go` files, so any package can drive the
 daemon.
 
-**P5. Degrade, don't die.** No compositor, or one without layer-shell → the
-`Noop` overlay; output still depends on the selected driver. Typing can copy
+**P5. Degrade, don't die.** An unavailable selected HUD backend → the
+logged `Noop` overlay; output still depends on the selected driver. Typing can copy
 when `output.clipboard` is enabled; it is off by default. Copy-only output never
 attempts injection. Output errors → the cycle still completes and the transcript is
 already in the history log.
@@ -344,7 +346,7 @@ cgo.
 | `audio.Ducker` | `Duck`, `Restore` | `CommandDucker` over `wpctl` or `pactl`, auto-detected |
 | `speech.Transcriber` | `Transcribe(ctx, wavPath) (string, error)` | chosen by `speech.Factory` — see below |
 | `output.Dispatcher` | `Emit(ctx, text) error` | `Paste` (default), `Native` / `Wayland` (typing), or `Clipboard` / `X11Clipboard` (copy only) |
-| `overlay.Overlay` | `Show(Visual)`, `SetLevel`, `SetText`, `Close` | `overlay.WL` — a `wlr-layer-shell` surface |
+| `overlay.Overlay` | `Show(Visual)`, `SetLevel`, `SetText`, `Close` | `overlay.WL` — layer-shell; `overlay.X11` — passive GNOME XWayland |
 
 Two optional interfaces are discovered by type assertion, so an implementation
 opts in by having the methods: `audio.ChunkReader` (a recorder that can hand
@@ -353,9 +355,11 @@ incrementally). A transcriber that implements `io.Closer` is closed at shutdown,
 and one with a `Start(context.Context) error` method is started before the
 daemon serves — that is how the warm whisper-server child is supervised.
 
-**Only the speech seam varies, and it is derived rather than chosen.** The
-other four are constructed by name in `runDaemon`; the only decision there is
-the overlay's fallback to `Noop` when the compositor has no layer-shell.
+**The seams are independent.** Speech runtime is derived from the model; output
+is explicitly configured. `overlay.NewDefault` selects XWayland for GNOME desktop
+tokens (case-insensitive, colon-separated), layer-shell otherwise. Constructor
+failure is logged before the daemon falls back to `Noop`. Neither selection nor
+capability probing proves compositor presentation or final text delivery.
 
 ### Runtime and placement
 
@@ -494,22 +498,36 @@ Every row was traced through the code.
 
 ## The overlay, and why it does not steal focus
 
-The HUD is split so that almost none of it needs a compositor. `paint.go` is a
-pure function from a `Scene` to an RGBA image — the pill, the waveform, the
-preview text — and is fully unit-tested with no Wayland at all. `overlay_wl.go`
-owns the connection and puts that image on a `wlr-layer-shell` surface through
-`internal/wayland`, a hand-written protocol client with no cgo behind it.
+The HUD separates painting from presentation. `overlay.RenderInto` turns a Scene
+into pixels: pill, waveform and fitted preview. Both real backends consume this
+same painter. `overlay.WL` presents a layer-shell surface through the hand-written
+Wayland client; `overlay.X11` presents an alpha XWayland window through pure-Go
+XGB and queries read-only Mutter monitor layout through pure-Go D-Bus.
+Neither adds a production GTK/libX11 dependency or Shell extension.
 
-One goroutine owns the Wayland connection for its whole life, and every public
-method is a message to that goroutine, because the connection cannot be driven
-from two places at once and the daemon calls `SetLevel` from its audio path.
+Each backend has one resource-owning loop. Audio setters enqueue bounded samples;
+visual/text updates keep the latest desired state. Preview clears when leaving
+Recording. Complete frames erase older text. Layer-shell requests no exclusive
+zone or keyboard interactivity. XWayland sets non-focusable hints and an empty
+SHAPE input region before mapping, never activates or grabs input. The margin is
+a gap below the existing usable-area reservation, not a fixed panel height.
 
-The surface sits on the `top` layer, **requests no exclusive zone**, and asks
-for no keyboard interactivity. Those two choices are the reason the overlay
-floats over content instead of resizing windows, and the reason it cannot take
-focus away from whatever is being dictated into. A margin configured as
-`top_margin` is therefore a gap below whatever bar already reserved space, not
-an offset from the screen edge.
+GNOME uses the primary usable monitor rectangle, not focus/pointer following.
+Ambiguous scale/layout hides the HUD with diagnostics rather than guessing.
+Monitor/work-area changes are polled and rebuilt, so brief disappearance is
+expected. Fractional output is resampled. Shell overview and secure UI remain
+in charge. On transport loss, desired state survives bounded same-session retries;
+Close cancels retries and unblocks transport. New-login credentials are not discovered.
+
+The optional `overlay.FrameObserver` returns a
+[frame receipt](../design/gnome-hud.md#frame-acknowledgment-contract): successful
+production submission, **not presentation**. Wayland Screen stays empty; GNOME
+Screen is X protocol space. Real capture drivers independently measure screenshot
+placement. The shared `test/desktop` image validator compares receipt-driven
+painter pixels in memory with real compositor screenshots and rejects wrong
+states, waveform/preview omissions and duplicates. Comparison images are never
+exported as screenshots. [HUD QA](../qa/gnome-hud-qa.md) records measured support
+and unverified physical/lifecycle cases.
 
 ## What is not here
 
@@ -530,9 +548,9 @@ The empty space, verified by search rather than assumed:
 - **No multi-seat or multi-instance story.** One socket path per user runtime
   directory.
 - **No keybinding of its own.** Binding is entirely the compositor's job.
-- **No X11 injection or GNOME HUD.** GNOME Wayland has explicit
-  [copy-only output](../user-guide.md#gnome-wayland-manual-paste), without visible
-  preview. Clipboard startup is bounded to three seconds; ownership is not. Explicit
+- **No X11 or GNOME injection.** GNOME Wayland has explicit
+  [copy-only output](../user-guide.md#gnome-wayland-manual-paste), independently
+  of its passive HUD and display-only preview. Clipboard startup is bounded to three seconds; ownership is not. Explicit
   `clipboard_backend = "x11"` uses a supervised xclip owner through XWayland;
   replacement/daemon shutdown reap it. See
   [the ownership design](../design/gnome-clipboard-design-plan.md#x11-ownership-lifecycle).

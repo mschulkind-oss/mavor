@@ -1,9 +1,9 @@
 // Package overlay shows a small status pill at the top of the screen on a
-// wlr-layer-shell surface, drawn pixel by pixel in Go.
+// passive layer-shell or GNOME XWayland surface, drawn pixel by pixel in Go.
 //
 // The Overlay interface is the seam: the daemon can be driven by Noop or Mock
 // in unit tests, the painter in paint.go turns state into an image with no
-// compositor involved, and overlay_wl.go is the only part that speaks Wayland.
+// compositor involved; the presentation backends transport the same pixels.
 //
 // Architecture and invariants: docs/reference/how-mavor-works.md
 package overlay

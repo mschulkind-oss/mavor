@@ -264,12 +264,25 @@ _ensure-model name:
             "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$file"; \
     fi
 
-# Real isolated Shell screenshots, production clipboard copy, test-driven Paste.
+# Real isolated Shell screenshots of the production XWayland HUD.
 storybook-gnome:
-    go test -tags=gnome ./test/gnome/... -run '^(TestGNOMEStorybook|TestStorybookRegressions|TestStorybookMissingPrerequisite)$' -v -count=1 -timeout=130s
+    go test -tags=gnome ./test/gnome/... -run '^(TestGNOMEStorybook|TestStorybookRegressions|TestStorybookMissingPrerequisite)$' -v -count=1 -timeout=240s
 
 storybook-nix:
-    env -u LD_LIBRARY_PATH NIX_BUILD_SHELL="$(readlink -f "$(command -v bash)")" nix-shell test/gnome/environment.nix --run 'just storybook'
+    env -u LD_LIBRARY_PATH NIX_BUILD_SHELL="$(readlink -f "$(command -v bash)")" nix-shell test/gnome/environment.nix --run 'TMPDIR=${MAVOR_STORYBOOK_TMPDIR:-/tmp} just storybook'
 
 storybook-gnome-nix:
-    env -u LD_LIBRARY_PATH NIX_BUILD_SHELL="$(readlink -f "$(command -v bash)")" nix-shell test/gnome/environment.nix --run 'just storybook-gnome'
+    env -u LD_LIBRARY_PATH NIX_BUILD_SHELL="$(readlink -f "$(command -v bash)")" nix-shell test/gnome/environment.nix --run 'TMPDIR=${MAVOR_STORYBOOK_TMPDIR:-/tmp} just storybook-gnome'
+
+# Production HUD acceptance, separate from clipboard output acceptance.
+test-gnome-overlay:
+    go test -tags=gnome ./test/gnome -run '^(TestGNOMEOverlay|TestGNOMEOverlayGeometry|TestGNOMEOverlayMissingPrerequisite|TestHarnessCleanup|TestPreviewProofRejectsMissingText|TestBackendOracleRejectsSwapsAndDuplicates|TestGNOMEHUDClipboardCoexistence)$' -count=1 -v -timeout=10m
+
+test-gnome-overlay-nix:
+    env -u LD_LIBRARY_PATH NIX_BUILD_SHELL="$(readlink -f "$(command -v bash)")" nix-shell test/gnome/environment.nix --run 'TMPDIR=${MAVOR_STORYBOOK_TMPDIR:-/tmp} just test-gnome-overlay'
+
+storybook-gnome-clipboard:
+    go test -tags=gnome ./test/gnome -run '^(TestGNOMEClipboardQAReport|TestStorybookRegressions)$' -count=1 -v -timeout=180s
+
+storybook-gnome-clipboard-nix:
+    env -u LD_LIBRARY_PATH NIX_BUILD_SHELL="$(readlink -f "$(command -v bash)")" nix-shell test/gnome/environment.nix --run 'TMPDIR=${MAVOR_STORYBOOK_TMPDIR:-/tmp} just storybook-gnome-clipboard'

@@ -33,11 +33,12 @@ CLI subcommands:
 > `wlr-layer-shell` (the overlay) and `virtual-keyboard-v1` (typing, via
 > `wtype`) — sway, Hyprland, river, Wayfire, niri, labwc. GNOME Wayland can
 > use explicit [copy-only output](docs/user-guide.md#gnome-wayland-manual-paste),
-> without a HUD or automatic injection; live GNOME verification is still needed.
+> with the same passive HUD through XWayland, but no automatic injection.
+> Isolated Shell/Mutter 50.4 is measured; full desktop lifecycle is not certified.
 >
 > This is the first backend, not the design. Capture, transcription, overlay
 > and text output are four independent interfaces (§[Project layout](#project-layout)),
-> and only the overlay and the output emitter are Wayland-specific. Other
+> and only presentation and text output are desktop-specific. Other
 > compositors and platforms are a matter of writing those two, not of
 > rearchitecting.
 
@@ -59,10 +60,15 @@ installed path followed by `toggle`, for example `/home/you/.local/bin/mavor tog
 Press once to record, again to transcribe; then paste normally (Ctrl+V in editors,
 usually Ctrl+Shift+V in terminals).
 
-There is no GNOME waveform or visible preview. Use `mavor status` and `mavor logs`;
+GNOME automatically selects the passive XWayland HUD: the same pill, waveform
+and preview painter as Sway, without a Shell extension. XWayland, the current
+session DISPLAY/XAUTHORITY, D-Bus and `XDG_CURRENT_DESKTOP=GNOME` must reach the
+daemon. `mavor doctor` separately probes the HUD; constructor failure logs a
+no-overlay fallback without disabling transcription/copy. Use `mavor status` and `mavor logs`;
 Idle means the cycle ended, **not** that copying succeeded. Notifications are
 not implemented. See the [manual-paste guide](docs/user-guide.md#gnome-wayland-manual-paste)
-for clipboard limitations and verification. Isolated GNOME Shell/Mutter 50.4
+for clipboard limitations and verification, and [HUD QA](docs/qa/gnome-hud-qa.md)
+for presentation and geometry limits. Isolated GNOME Shell/Mutter 50.4
 passes native GTK transfer/Paste and continuous-focus checks with xclip 0.13;
 complete desktop lifecycle is not certified. Wayland clipboard output remains
 the default backend and its wl-copy fallback is not focus-safe on measured GNOME.
@@ -192,7 +198,7 @@ exec mavor daemon
 bindsym $mod+grave exec mavor toggle
 ```
 
-The overlay is a `wlr-layer-shell` surface on the `top` layer and does **not** request
+On layer-shell desktops, the overlay is a surface on the `top` layer and does **not** request
 an exclusive zone, which means two things: it floats over your content without
 resizing windows, and the compositor places it *inside* the space other bars
 have reserved. `overlay.top_margin` is therefore a gap below Waybar, not an
@@ -434,16 +440,25 @@ PNG directories are ignored local artifacts, not committed files. GNOME also
 writes capture metadata beside its HTML. `MAVOR_GNOME_ARTIFACTS` chooses retained
 private-session diagnostics; keep that path short enough for Unix bus sockets.
 
-Both use an original local wallpaper and native session-notes editor. Sway's
-nine states are controlled fixture inputs to the real Go overlay, not actual
-recording or inference. GNOME has no mavor HUD or notifications: it demonstrates
-production X11 clipboard copy without moving focus, then a **test-driven manual
-Paste** using the editor's native action, not physical Ctrl+V or automatic
-production typing. The test clears the editor before each Paste to show replacement
-text; production copy does not edit it. Fixtures are local text, not model recognition. Shell's own
-private-session startup warning banners are dismissed before capture. Screenshots
-come from Grim on Sway and Shell's screenshot service on GNOME, never composites.
-GNOME clock/cursor animation means byte-identical captures are not promised.
+Both HUD reports use one twelve-state catalog, the same production Go painter,
+and one Sway-derived HTML template: Hidden, six recording levels, Transcribing,
+Error, and short/long/cleared preview. Both stage the unchanged soft wallpaper and
+native session-notes editor at 1920×1080. These are controlled fixture inputs to
+actual production backends, not microphone capture or inference. Preview never
+reaches output. Frame receipts acknowledge submission only; the shared image
+validator independently measures screenshot bounds and checks labels, waveform,
+preview, clearing and duplicate HUDs. Wayland receipts have no global position;
+GNOME receipts use X protocol coordinates, not screenshot coordinates.
+
+Captures come from Grim on Sway and Shell Screenshot on GNOME, never composites.
+Full frames, top crops, theme/filter/view controls and lightbox are shared. Native
+chrome and clock/pulse timing may differ. Shell fixture staging uses unsafe mode;
+production never uses Shell Eval. Missing prerequisites fail, not skip.
+
+The separate `just storybook-gnome-clipboard-nix` recipe writes the seven-state
+`gnome-clipboard-qa.html` report: production copy and an explicit test-driven GTK
+Paste action, not automatic typing. `just test-gnome-overlay-nix` includes real
+HUD/clipboard coexistence and geometry checks. See [HUD QA](docs/qa/gnome-hud-qa.md).
 
 ## Development
 

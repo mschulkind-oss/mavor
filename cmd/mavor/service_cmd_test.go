@@ -74,3 +74,11 @@ func TestServiceInstallStaysInsideConfigHome(t *testing.T) {
 		t.Errorf("service install wrote outside the configured config home, into HOME=%s: %v", home, names)
 	}
 }
+
+func TestServiceGNOMEEnvironment(t *testing.T) {
+	for _, name := range []string{"DISPLAY", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS"} {
+		if !strings.Contains(systemdUnitTemplate, name) {
+			t.Errorf("session prerequisite %s missing", name)
+		}
+	}
+}

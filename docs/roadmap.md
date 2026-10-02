@@ -675,19 +675,11 @@ sherpa transducers turn out to close the gap on their own, this stays frozen.
 
 ### 🧊 GNOME, and the compositors without the wlroots protocols
 
-[`porting-to-gnome.md`](design/porting-to-gnome.md) prices the port and comes
-back with a split verdict: build a second `output.Dispatcher`, do not build a
-GNOME HUD. The reframing is that **typing is broken on everything that is not
-wlroots, not just on GNOME** — KWin implements `wlr-layer-shell` but not
-`virtual-keyboard-v1`, so KDE gets the pill and never types a character. One
-dispatcher buys both desktops; a HUD buys only GNOME and can only be a GNOME
-Shell extension, which is a second painter in JavaScript on a six-month
-breakage cadence. Both shipped GNOME dictation extensions gave up on injection
-and paste from the clipboard instead.
-
-The document also names a bug on the platform mavor already supports: `doctor`
-checks `$WAYLAND_DISPLAY` and `$PATH`, never what the compositor implements, so
-on GNOME every check is green and every dictation silently fails to type.
+[GNOME injection research](design/porting-to-gnome.md) remains separate from the
+passive HUD and explicit manual-paste workflow. Presentation no longer needs a
+Shell extension; the remaining priority is whether unattended synthetic typing
+can avoid recurring permission prompts. Keep injection behind that experiment,
+not behind another painter or an extension-only HUD assumption.
 
 **Next step:** answer [`OQ-GN2`](design/porting-to-gnome.md#OQ-GN2) with a
 one-day spike — a keyboard-only RemoteDesktop portal session with

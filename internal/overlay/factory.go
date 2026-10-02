@@ -1,18 +1,26 @@
 package overlay
 
-import "log/slog"
+import (
+	"log/slog"
+	"os"
+	"strings"
+)
 
-// NewDefault returns the overlay the daemon should use. Today that is the one
-// backend there is: a wlr-layer-shell surface, needing a compositor that
-// implements the protocol — sway, hyprland, river and the rest of wlroots.
-// There is no C library and no cgo behind it.
-//
-// Overlay is the seam a second backend would arrive through, so this is the
-// only place that has to learn how to choose between them.
-//
-// A compositor without layer-shell, or no compositor at all, is not fatal:
-// dictation works fine without a visual indicator, so the caller may fall back
-// to Noop rather than refusing to start.
+// SelectedBackend identifies the presentation backend without connecting.
+func SelectedBackend(desktop string) string {
+	for _, token := range strings.Split(desktop, ":") {
+		if strings.EqualFold(token, "GNOME") {
+			return "x11"
+		}
+	}
+	return "wayland"
+}
+
+// NewDefault selects passive XWayland on GNOME, layer-shell otherwise.
+// Connection failure is returned; only the daemon may choose a Noop fallback.
 func NewDefault(topMargin int, previewFraction float64, log *slog.Logger) (Overlay, error) {
+	if SelectedBackend(os.Getenv("XDG_CURRENT_DESKTOP")) == "x11" {
+		return NewX11(topMargin, previewFraction, log)
+	}
 	return NewWL(topMargin, previewFraction, log)
 }

@@ -5,6 +5,7 @@ import (
 
 	"bufio"
 	"fmt"
+	"github.com/mschulkind-oss/mavor/internal/overlay"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,6 +78,7 @@ func runDoctor() error {
 		{"Output dispatch", checkOutput},
 		{"Virtual typing (wtype)", checkWtype},
 		{"Clipboard backend", checkClipboard},
+		{"HUD presentation", checkHUD},
 		{"Runtime and placement", checkRuntime},
 		{"Inference threads", checkThreads},
 		{"GPU acceleration", checkGPU},
@@ -578,7 +580,7 @@ func outputVerdict(cfg config.Config, wtypeFound, copyFound, pasteFound bool, pa
 		if !copyFound {
 			return false, "clipboard driver requires wl-copy (install wl-clipboard)"
 		}
-		return true, "Copy-only output; paste manually. Virtual keyboard and wtype are not required. GNOME has no mavor HUD; the daemon logs overlay fallback. Helper availability does not verify a successful clipboard transfer."
+		return true, "Copy-only output; paste manually. Virtual keyboard and wtype are not required. Helper availability does not verify a successful clipboard transfer."
 	}
 	if cfg.Output.Driver == "paste" {
 		if !copyFound || !pasteFound {
@@ -925,5 +927,17 @@ func checkX11Clipboard() (bool, string) {
 	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
 		return false, "x11 clipboard authorization file is empty or not regular"
 	}
-	return true, "Copy-only x11 output (xclip/XWayland); paste manually. DISPLAY and authorization file present; this does not verify server authorization or clipboard transfer. No virtual keyboard or GNOME HUD."
+	return true, "Copy-only x11 output (xclip/XWayland); paste manually. DISPLAY and authorization file present; this does not verify server authorization or clipboard transfer. No virtual keyboard required."
+}
+
+// Capability probing is independent of clipboard delivery or displayed pixels.
+func checkHUD() (bool, string) {
+	backend := overlay.SelectedBackend(os.Getenv("XDG_CURRENT_DESKTOP"))
+	if backend != "x11" {
+		return true, "Selected layer-shell HUD; compositor capability is checked at daemon startup"
+	}
+	if err := overlay.ProbeX11(); err != nil {
+		return false, fmt.Sprintf("Selected GNOME XWayland HUD unavailable: %v", err)
+	}
+	return true, "Selected GNOME XWayland HUD: authorization, alpha, empty input region and matched monitor geometry verified; not proof of displayed pixels"
 }

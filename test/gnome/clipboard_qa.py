@@ -79,9 +79,9 @@ def report(path, scenes):
                    'alt="{caption}"></a></section>'.format(**{k: escape(v) for k, v in s.items()})
                    for s in scenes)
     pathlib.Path(path).write_text('''<!doctype html><html lang="en"><meta charset="utf-8">
-<title>mavor GNOME storybook</title><style>body{background:#101c30;color:#edf4ff;font:18px sans-serif;
+<title>mavor GNOME clipboard QA</title><style>body{background:#101c30;color:#edf4ff;font:18px sans-serif;
 max-width:1280px;margin:32px auto;padding:20px}img{width:100%;height:auto}section{margin:48px 0}
-a{color:#82dacc}code{white-space:pre-wrap}</style><h1>GNOME desktop storybook</h1>
+a{color:#82dacc}code{white-space:pre-wrap}</style><h1>GNOME clipboard QA</h1>
 <p>Actual private GNOME Shell / Mutter screenshots. Local fixture transcripts, not recognition.
 Production X11 clipboard copy preserves focus. Manual Paste is a test-driven GTK clipboard.paste action,
 not physical Ctrl+V or automatic typing. The test clears the editor before each Paste

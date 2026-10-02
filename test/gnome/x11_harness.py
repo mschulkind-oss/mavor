@@ -30,7 +30,7 @@ signal.signal(signal.SIGTERM, interrupted)
 signal.signal(signal.SIGALRM, interrupted)
 signal.alarm(100)
 
-storybook_mode = sys.argv[2] == "storybook"
+storybook_mode = sys.argv[2] == "clipboard-qa"
 
 TITLE = "Mavor native clipboard consumer"
 default_root = (
@@ -320,7 +320,7 @@ try:
     # focus-window change; an event counter avoids final-state-only assertions.
     evaluate('globalThis.xclipFocusEvents = []; global.display.connect("notify::focus-window", () => xclipFocusEvents.push(global.display.focus_window?.title ?? "NONE")); true')
     if storybook_mode:
-        from storybook import capture, report
+        from clipboard_qa import capture, report
         reports = (pathlib.Path(__file__).parent / "../reports").resolve()
         scenes = []
         # Dismiss Shell's own private-session privileged-user warning through
@@ -333,7 +333,7 @@ try:
             time.sleep(.5)
             geometry = eval_value('global.get_window_actors().filter(a=>a.meta_window.title === "' + TITLE + '").map(a=>{let r=a.meta_window.get_frame_rect(); return [r.x,r.y,r.width,r.height]})')
             assert len(geometry) == 1 and geometry[0][2] > 500 and geometry[0][3] > 250, geometry
-            image = "gnome-screenshots/" + scene_id + ".png"
+            image = "gnome-clipboard-screenshots/" + scene_id + ".png"
             evidence = capture(call, reports / image)
             scenes.append(dict(id=scene_id, caption=caption, text=text, image=image,
                                geometry=geometry[0], **evidence))
@@ -373,7 +373,7 @@ try:
         until(lambda: eval_value('global.display.focus_window?.title === "' + TITLE + '" && !Main.overview.animationInProgress'), "editor returned")
         consumer_command("action-paste", "ACTION\t" + overview_text)
         scene("07-return-paste", "Return to editor — explicit manual Paste of overview fixture", overview_text)
-        report(reports / "gnome-storybook.html", scenes)
+        report(reports / "gnome-clipboard-qa.html", scenes)
         print("GNOME STORYBOOK PASS", flush=True)
         sys.exit(0)
 
