@@ -101,15 +101,16 @@ func (b *recoveryLogs) String() string {
 	return b.buf.String()
 }
 
-func recoverySupervisor(t *testing.T, gpuMode, cpuMode string, noGPU bool) (*Supervisor, *[]recoveryLaunch, *recoveryLogs) {
+func recoverySupervisor(t *testing.T, gpuMode, cpuMode string, noGPU, allowCPUFallback bool) (*Supervisor, *[]recoveryLaunch, *recoveryLogs) {
 	t.Helper()
 	var launches []recoveryLaunch
 	var logs recoveryLogs
 	sup := NewSupervisor(SupervisorConfig{
-		NoGPU:        noGPU,
-		ReadyTimeout: 500 * time.Millisecond,
-		PollInterval: 5 * time.Millisecond,
-		Logger:       slog.New(slog.NewTextHandler(&logs, nil)),
+		NoGPU:            noGPU,
+		AllowCPUFallback: allowCPUFallback,
+		ReadyTimeout:     500 * time.Millisecond,
+		PollInterval:     5 * time.Millisecond,
+		Logger:           slog.New(slog.NewTextHandler(&logs, nil)),
 		CommandFunc: func(ctx context.Context, cfg SupervisorConfig) *exec.Cmd {
 			launches = append(launches, recoveryLaunch{cpu: cfg.NoGPU, endpoint: cfg.ServerSocket})
 			mode := gpuMode
@@ -138,7 +139,7 @@ func recoveryWAV(t *testing.T) string {
 func TestGPUStartupFailureRetriesCPUWithOriginalRecording(t *testing.T) {
 	for _, mode := range []string{"startup-exit", "startup-timeout"} {
 		t.Run(mode, func(t *testing.T) {
-			sup, launches, logs := recoverySupervisor(t, mode, "success", false)
+			sup, launches, logs := recoverySupervisor(t, mode, "success", false, true)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			st := NewServerTranscriber("")
@@ -183,7 +184,7 @@ func TestGPUStartupFailureRetriesCPUWithOriginalRecording(t *testing.T) {
 func TestGPUInferenceFailureRetriesCPUWithOriginalRecording(t *testing.T) {
 	for _, mode := range []string{"inference-failure", "disconnect"} {
 		t.Run(mode, func(t *testing.T) {
-			sup, launches, _ := recoverySupervisor(t, mode, "success", false)
+			sup, launches, _ := recoverySupervisor(t, mode, "success", false, true)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			st := NewServerTranscriber("")
@@ -209,7 +210,7 @@ func TestCPURecoveryIsBoundedWhenBothDevicesFail(t *testing.T) {
 			if mode == "inference" {
 				gpuMode, cpuMode = "inference-failure", "cpu-inference-failure"
 			}
-			sup, launches, _ := recoverySupervisor(t, gpuMode, cpuMode, false)
+			sup, launches, _ := recoverySupervisor(t, gpuMode, cpuMode, false, true)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			st := NewServerTranscriber("")
@@ -241,7 +242,7 @@ func TestCPURecoveryDoesNotRetryExplicitCPUOrInvalidInput(t *testing.T) {
 			if mode == "canceled" {
 				gpuMode = "startup-timeout"
 			}
-			sup, launches, _ := recoverySupervisor(t, gpuMode, "cpu-inference-failure", mode == "cpu-only")
+			sup, launches, _ := recoverySupervisor(t, gpuMode, "cpu-inference-failure", mode == "cpu-only", true)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			if mode == "canceled" {
 				cancel()
@@ -321,7 +322,7 @@ func TestChunkingPreservesEngineStartupAndShutdown(t *testing.T) {
 }
 
 func TestGPURecoveryAllowsSlowerCPULoad(t *testing.T) {
-	sup, launches, _ := recoverySupervisor(t, "startup-exit", "success", false)
+	sup, launches, _ := recoverySupervisor(t, "startup-exit", "success", false, true)
 	sup.cfg.ReadyTimeout = 100 * time.Millisecond
 	sup.cfg.CPUReadyTimeout = time.Second
 	command := sup.cfg.CommandFunc
@@ -343,7 +344,7 @@ func TestGPURecoveryAllowsSlowerCPULoad(t *testing.T) {
 }
 
 func TestCPURecoveryStartupTimeoutIsBounded(t *testing.T) {
-	sup, launches, _ := recoverySupervisor(t, "startup-exit", "startup-timeout", false)
+	sup, launches, _ := recoverySupervisor(t, "startup-exit", "startup-timeout", false, true)
 	sup.cfg.CPUReadyTimeout = 100 * time.Millisecond
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -362,7 +363,7 @@ func TestCPURecoveryStartupTimeoutIsBounded(t *testing.T) {
 
 func TestCPURecoveryDoesNotRetryMissingServerBinary(t *testing.T) {
 	launches := 0
-	sup := NewSupervisor(SupervisorConfig{CommandFunc: func(ctx context.Context, cfg SupervisorConfig) *exec.Cmd {
+	sup := NewSupervisor(SupervisorConfig{AllowCPUFallback: true, CommandFunc: func(ctx context.Context, cfg SupervisorConfig) *exec.Cmd {
 		launches++
 		return exec.CommandContext(ctx, filepath.Join(t.TempDir(), "missing-whisper-server"))
 	}})
@@ -401,5 +402,103 @@ func TestChunkingLifecycleIsSafeForEnginesWithoutLifecycle(t *testing.T) {
 		if err := tr.(io.Closer).Close(); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestDefaultDisabledCPURecoveryPreservesStartupFailure(t *testing.T) {
+	for _, mode := range []string{"startup-exit", "startup-timeout"} {
+		t.Run(mode, func(t *testing.T) {
+			sup, launches, logs := recoverySupervisor(t, mode, "success", false, false)
+			sup.cfg.ReadyTimeout = 100 * time.Millisecond
+			st := NewServerTranscriber("")
+			st.Supervisor = sup
+			text, err := st.Transcribe(context.Background(), recoveryWAV(t))
+			var readinessErr *serverReadinessError
+			if text != "" || !errors.As(err, &readinessErr) {
+				t.Fatalf("original readiness failure lost: text=%q err=%v", text, err)
+			}
+			if !strings.Contains(err.Error(), "simulated") || strings.Contains(err.Error(), "CPU recovery") {
+				t.Fatalf("original diagnostics changed: %v", err)
+			}
+			if len(*launches) != 1 || (*launches)[0].cpu || !sup.GPUEnabled() || sup.IsRunning() {
+				t.Fatalf("disabled policy changed device or leaked child: %+v", *launches)
+			}
+			if strings.Contains(logs.String(), "retrying on CPU") {
+				t.Fatal("disabled policy announced recovery")
+			}
+		})
+	}
+}
+
+type recoveryRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f recoveryRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestDefaultDisabledCPURecoveryPreservesInferenceFailure(t *testing.T) {
+	for _, mode := range []string{"transport", "server"} {
+		t.Run(mode, func(t *testing.T) {
+			sup, launches, _ := recoverySupervisor(t, "success", "success", false, false)
+			st := NewServerTranscriber("")
+			st.Supervisor = sup
+			cause := errors.New("original GPU transport failure")
+			calls := 0
+			st.Client = &http.Client{Transport: recoveryRoundTripper(func(*http.Request) (*http.Response, error) {
+				calls++
+				if mode == "transport" {
+					return nil, cause
+				}
+				return &http.Response{StatusCode: 500, Body: io.NopCloser(strings.NewReader("original GPU server failure")), Header: make(http.Header)}, nil
+			})}
+			text, err := st.Transcribe(context.Background(), recoveryWAV(t))
+			var serverErr *inferenceServerError
+			if text != "" || !errors.As(err, &serverErr) {
+				t.Fatalf("original inference failure lost: text=%q err=%v", text, err)
+			}
+			if mode == "transport" && !errors.Is(err, cause) {
+				t.Fatalf("original transport cause lost: %v", err)
+			}
+			if mode == "server" && !strings.Contains(err.Error(), "original GPU server failure") {
+				t.Fatalf("original server diagnostic lost: %v", err)
+			}
+			if calls != 1 || len(*launches) != 1 || (*launches)[0].cpu || !sup.GPUEnabled() {
+				t.Fatalf("disabled policy replayed request or changed device: calls=%d launches=%+v", calls, *launches)
+			}
+		})
+	}
+}
+
+func TestDefaultDisabledCPURecoveryCannotBeBypassed(t *testing.T) {
+	sup, launches, _ := recoverySupervisor(t, "success", "success", false, false)
+	if err := sup.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	pid := sup.PID()
+	cause := errors.New("original GPU failure")
+	if err := sup.FallbackToCPU(context.Background(), cause); err != cause {
+		t.Fatalf("disabled direct recovery must return original error: %v", err)
+	}
+	if len(*launches) != 1 || sup.PID() != pid || !sup.GPUEnabled() {
+		t.Fatalf("direct call bypassed disabled policy: %+v", *launches)
+	}
+}
+
+func TestDisabledCPURecoveryPreservesExplicitCPUOperation(t *testing.T) {
+	for _, mode := range []string{"success", "cpu-inference-failure", "cpu-startup-exit"} {
+		t.Run(mode, func(t *testing.T) {
+			sup, launches, _ := recoverySupervisor(t, "startup-exit", mode, true, false)
+			st := NewServerTranscriber("")
+			st.Supervisor = sup
+			text, err := st.Transcribe(context.Background(), recoveryWAV(t))
+			if mode == "success" {
+				if err != nil || text != "the exact original recording" {
+					t.Fatalf("explicit CPU operation broken: text=%q err=%v", text, err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), mode) {
+				t.Fatalf("explicit CPU failure lost: %v", err)
+			}
+			if len(*launches) != 1 || !(*launches)[0].cpu || sup.GPUEnabled() {
+				t.Fatalf("explicit CPU execution retried or changed device: %+v", *launches)
+			}
+		})
 	}
 }

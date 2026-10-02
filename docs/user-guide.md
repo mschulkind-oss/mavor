@@ -431,6 +431,8 @@ top_margin = 8   # px below the top of the usable area, under your bar
 # threads = 6            # default: this machine's physical core count
 # gpu = "auto"           # "auto" or "off". whisper only — sherpa models
 #                        # run on the CPU whatever this says.
+# cpu_fallback = false # set true to allow one CPU retry after a local GPU
+#                        # server failure; CPU transcription may be very slow.
 
 [paths]
 # models = "/home/you/.cache/mavor/models"
@@ -600,6 +602,7 @@ A key belongs here only if mavor cannot compute the right value.
 | `server` | An `http://` URL of a whisper server you run | unset. Setting it makes `placement` irrelevant |
 | `threads` | A thread count | This machine's **physical** core count |
 | `gpu` | `"auto"` or `"off"` | `"auto"` |
+| `cpu_fallback` | `true` or `false`; allow one CPU recovery attempt after a local GPU server failure | `false` |
 | `silence_filter` | `true` or `false`; reject low-energy recordings without recognized preview words | `false` |
 
 **Silence filtering** is off by default so captured audio reaches the final
@@ -635,17 +638,31 @@ says, because the ONNX Runtime vendored by the Go binding is a CPU-only build.
 `mavor doctor` reports which backend actually loaded, which is the only
 reliable answer.
 
-With the default `local-server` placement and `gpu = "auto"`, a failed
-GPU-enabled server startup, broken server connection, or server-side decoding
-error triggers one retry with GPU disabled. Mavor logs a warning and retries
-the **same recording**, never preview text. The child stays on CPU until the
-daemon restarts; transcription may be substantially slower. GPU startup has
-a 10-second readiness deadline; CPU startup gets 60 seconds. This recovery
-also applies when the GPU-enabled server times out, without claiming the
-cause was insufficient GPU memory. Cancellation, unreadable recordings, request
-rejections (HTTP 4xx responses), remote servers, `subprocess` placement, and
-explicit `gpu = "off"` do not trigger this recovery.
-If the CPU attempt also fails, mavor reports an error rather than retrying forever.
+**CPU recovery is disabled by default** (`cpu_fallback = false`). A failed
+GPU-enabled local server startup, broken server connection, timeout, or
+server-side decoding error is reported without starting a CPU child or
+replaying the recording. Explicit `gpu = "off"` still runs on CPU normally.
+To opt into automatic recovery:
+
+```toml
+[advanced]
+cpu_fallback = true
+```
+
+With this opt-in, `local-server` placement and `gpu = "auto"` allow one retry
+with GPU disabled. Mavor logs a warning and retries the **same recording**,
+never preview text. The child stays on CPU until the daemon restarts;
+transcription may be substantially slower, making large models unusable.
+Cancellation, unreadable recordings, request rejections (HTTP 4xx responses),
+remote servers, `subprocess` placement, and explicit `gpu = "off"` do not trigger
+this recovery. If the CPU attempt also fails, mavor reports an error rather
+than retrying forever.
+
+GPU startup retains its 10-second readiness deadline; CPU startup gets 60
+seconds. This setting does not fix GPU initialization or change those limits.
+A readiness timeout alone does not prove shader warm-up or insufficient GPU
+memory as its cause. Restart the daemon after changing the setting; changing
+source or configuration does not move an already recovered CPU child back to GPU.
 
 > [!WARNING]
 > **`gpu_layers` is gone, and it was never a knob — it was a bug.** Any

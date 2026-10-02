@@ -332,6 +332,11 @@ type Advanced struct {
 	// answer.
 	GPU string `toml:"gpu"`
 
+	// CPUFallback opts into one CPU recovery attempt after a GPU-enabled local
+	// server startup or inference/transport failure. Off by default: slow CPU
+	// inference can be unusable. It does not disable explicit GPU="off" operation.
+	CPUFallback bool `toml:"cpu_fallback"`
+
 	// Chunking controls audio segmentation for models with a hard processing
 	// window (such as whisper's 30-second context window). Audio longer than
 	// 28s is segmented to avoid truncation and dropped speech at boundaries.
@@ -402,6 +407,7 @@ func Default() Config {
 			Placement:     "auto",
 			Threads:       PhysicalCores(),
 			GPU:           "auto",
+			CPUFallback:   false,
 			Chunking:      DefaultChunking,
 		},
 		Paths: Paths{

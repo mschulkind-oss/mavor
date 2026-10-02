@@ -152,6 +152,8 @@ preview_width = %v
 # threads = %-12d # default: this machine's physical core count
 # gpu = %q           # "auto" or "off". whisper only — sherpa models
 #                        # run on the CPU whatever this says.
+# cpu_fallback = %t # disabled by default; set true to allow one CPU retry
+#                        # after a local GPU server failure (may be very slow).
 # chunking = %q      # "auto", "vad", "overlap", or "off". whisper only —
 #                        # segments audio >28s to avoid 30s window truncation.
 
@@ -185,6 +187,7 @@ preview_width = %v
 		d.Advanced.Placement,
 		d.Advanced.Threads,
 		d.Advanced.GPU,
+		d.Advanced.CPUFallback,
 		d.Advanced.Chunking,
 		d.Paths.Models,
 		d.Paths.Log,

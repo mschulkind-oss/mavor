@@ -84,7 +84,7 @@ func (s *ServerTranscriber) Transcribe(ctx context.Context, wavPath string) (str
 	text, err := s.transcribeOnce(ctx, wavPath)
 	var serverErr *inferenceServerError
 	if err == nil || s.Supervisor == nil || ctx.Err() != nil ||
-		!errors.As(err, &serverErr) || !s.Supervisor.GPUEnabled() {
+		!errors.As(err, &serverErr) || !s.Supervisor.CPUFallbackAllowed() || !s.Supervisor.GPUEnabled() {
 		return text, err
 	}
 	if cpuErr := s.Supervisor.FallbackToCPU(ctx, err); cpuErr != nil {

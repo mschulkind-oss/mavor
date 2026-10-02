@@ -80,6 +80,7 @@ func TestTemplateExamplesStateTheDefaults(t *testing.T) {
 		"min_phrase_ms = 600",
 		"boost = 1.5",
 		"silence_filter = false",
+		"cpu_fallback = false",
 		`placement = "auto"`,
 		`gpu = "auto"`,
 		`chunking = "auto"`,
@@ -140,5 +141,33 @@ func TestConfigShowClipboard(t *testing.T) {
 	shown, err := config.Load(path)
 	if err != nil || shown.Output.Driver != "clipboard" || shown.Output.ClipboardBackend != "x11" {
 		t.Fatalf("shown config: %+v %v", shown.Output, err)
+	}
+}
+
+func TestConfigInitCPUFallbackOptIn(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := runConfigInit(false); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(config.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "# cpu_fallback = false") {
+		t.Fatal("config init must document disabled CPU recovery by default")
+	}
+	optedIn := strings.Replace(string(body), "# cpu_fallback = false", "cpu_fallback = true", 1)
+	if err := os.WriteFile(config.Path(), []byte(optedIn), 0600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := config.LoadFile(config.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(file.UnknownKeys) != 0 {
+		t.Fatalf("unknown keys: %v", file.UnknownKeys)
+	}
+	if !file.Config.Advanced.CPUFallback {
+		t.Fatal("CPU recovery opt-in did not change the loaded configuration")
 	}
 }

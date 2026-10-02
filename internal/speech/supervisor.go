@@ -42,6 +42,10 @@ type SupervisorConfig struct {
 	// flag; it uses whatever GPU backend its build loaded unless told not to.
 	NoGPU bool
 
+	// AllowCPUFallback opts into one CPU retry after a GPU readiness or inference
+	// failure. Disabled by default; NoGPU still selects CPU explicitly.
+	AllowCPUFallback bool
+
 	// Prompt is the initial prompt (--prompt) the child applies to every
 	// request it serves: the vocabulary, rendered as text. Empty passes no
 	// flag. See speech.WhisperPrompt.
@@ -187,15 +191,15 @@ func freeLoopbackPort() (int, error) {
 }
 
 // Start launches the child server and waits for readiness. A failed GPU-enabled
-// startup is retried once with GPU disabled; cancellation and launch errors are
-// not reasons to change devices.
+// startup is retried once with GPU disabled only when AllowCPUFallback is set;
+// cancellation and launch errors are not reasons to change devices.
 func (s *Supervisor) Start(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	err := s.startLocked(ctx)
 	var readinessErr *serverReadinessError
-	if err == nil || s.cfg.NoGPU || ctx.Err() != nil || !errors.As(err, &readinessErr) {
+	if err == nil || !s.cfg.AllowCPUFallback || s.cfg.NoGPU || ctx.Err() != nil || !errors.As(err, &readinessErr) {
 		return err
 	}
 	if cpuErr := s.fallbackLocked(ctx, err); cpuErr != nil {
@@ -212,11 +216,23 @@ func (s *Supervisor) GPUEnabled() bool {
 	return !s.cfg.NoGPU
 }
 
+// CPUFallbackAllowed reports the explicit recovery policy, independently of
+// whether the child may use a GPU.
+func (s *Supervisor) CPUFallbackAllowed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cfg.AllowCPUFallback
+}
+
 // FallbackToCPU stops the GPU-enabled child before starting its CPU replacement.
 // Callers can then retry the failed request using the original recording.
+// With recovery disabled, it returns cause unchanged without touching the child.
 func (s *Supervisor) FallbackToCPU(ctx context.Context, cause error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !s.cfg.AllowCPUFallback {
+		return cause
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}

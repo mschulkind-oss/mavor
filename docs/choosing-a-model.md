@@ -249,6 +249,14 @@ whisper.cpp uses whatever GPU backend its build loaded, for the whole model or
 not at all; `"off"` is the escape hatch for a broken driver. There is no layer
 count to set.
 
+Automatic CPU recovery after a local GPU server failure is disabled by default
+(`advanced.cpu_fallback = false`); large models can be unusably slow on CPU.
+To allow one CPU recovery attempt, explicitly set `advanced.cpu_fallback = true`
+and restart the daemon. This does not change GPU initialization deadlines.
+Explicit `advanced.gpu = "off"` still runs on CPU without recovery opt-in.
+See the [recovery policy](user-guide.md#76-advanced--automatic-settings-and-user-choices)
+for retry limits and exclusions.
+
 > [!NOTE]
 > Sherpa models get no GPU column at all, and no setting either. The ONNX
 > Runtime vendored by the Go binding is a CPU-only build carrying no execution

@@ -199,9 +199,10 @@ func FactoryFor(cfg config.Config, res Resolution, logger *slog.Logger) (Transcr
 		st.Prompt = prompt
 		st.Logger = logger
 		st.Supervisor = NewSupervisor(SupervisorConfig{
-			ModelPath: res.ModelPath,
-			Threads:   cfg.Advanced.Threads,
-			NoGPU:     cfg.GPUOff(),
+			ModelPath:        res.ModelPath,
+			Threads:          cfg.Advanced.Threads,
+			NoGPU:            cfg.GPUOff(),
+			AllowCPUFallback: cfg.Advanced.CPUFallback,
 			// The child gets the prompt as a flag as well as in each
 			// request, so a whisper.cpp build that ignores the form field
 			// still applies it.

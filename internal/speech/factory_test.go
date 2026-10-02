@@ -413,3 +413,41 @@ func TestWhisperChunkingConfiguredByFactory(t *testing.T) {
 		t.Errorf("expected *WhisperCli when chunking is off, got %T", txOff)
 	}
 }
+
+func TestFactoryWiresCPUFallbackOnlyToLocalSupervisor(t *testing.T) {
+	pathWith(t, "whisper-server")
+	for _, allow := range []bool{false, true} {
+		for _, gpu := range []string{"auto", "off"} {
+			cfg := whisperConfig(t, "whisper-base.en")
+			cfg.Advanced.CPUFallback = allow
+			cfg.Advanced.GPU = gpu
+			tr, err := Factory(cfg, slog.Default())
+			if err != nil {
+				t.Fatal(err)
+			}
+			sup := Unwrap(tr).(*ServerTranscriber).Supervisor
+			if sup.CPUFallbackAllowed() != allow || sup.GPUEnabled() != (gpu != "off") {
+				t.Fatalf("recovery=%v gpu=%q: incorrect supervisor policy", allow, gpu)
+			}
+
+			cfg.Advanced.Placement = "subprocess"
+			tr, err = Factory(cfg, slog.Default())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if Unwrap(tr).(*WhisperCli).NoGPU != (gpu == "off") {
+				t.Fatal("recovery policy changed explicit subprocess device")
+			}
+
+			cfg.Advanced.Placement = "auto"
+			cfg.Advanced.Server = "http://127.0.0.1:8080"
+			tr, err = Factory(cfg, slog.Default())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if Unwrap(tr).(*ServerTranscriber).Supervisor != nil {
+				t.Fatal("recovery policy supervised a remote server")
+			}
+		}
+	}
+}
