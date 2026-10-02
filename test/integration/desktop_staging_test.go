@@ -92,7 +92,7 @@ func stageDesktop(t *testing.T, h *Harness) {
 	}
 }
 
-// Frame evidence must show BOTH colored wallpaper bands and a light editor.
+// Frame evidence must show teal/blue wallpaper and a light editor.
 func stagedFrame(img image.Image) error {
 	teal, blue, bright := 0, 0, 0
 	b := img.Bounds()
