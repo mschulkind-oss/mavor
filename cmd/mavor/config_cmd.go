@@ -143,6 +143,8 @@ preview_width = %v
 
 # Advanced choices. Override automatic settings only if `+"`mavor doctor`"+` gives you a reason to.
 [advanced]
+# final_mode = %q # "after-stop" (default), "streaming", or "segments";
+#                        # incremental prototypes require a supported main model.
 # silence_filter = %t # opt into final-recording rejection by energy/preview
 #                        # evidence; does not change preview pauses or chunking.
 # placement = %q     # "auto", or "subprocess" for whisper models
@@ -178,6 +180,7 @@ preview_width = %v
 		d.Output.Clipboard,
 		d.Overlay.TopMargin,
 		d.Overlay.PreviewWidth,
+		d.Advanced.FinalMode,
 		d.Advanced.SilenceFilter,
 		d.Advanced.Placement,
 		d.Advanced.Threads,

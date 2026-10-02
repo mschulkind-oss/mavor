@@ -20,6 +20,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mschulkind-oss/mavor/internal/models"
+
 	toml "github.com/pelletier/go-toml/v2"
 )
 
@@ -297,6 +299,8 @@ type Overlay struct {
 // Advanced holds the settings mavor picks for you. A key belongs here only if
 // mavor cannot compute the right value — see the design's principle P1.
 type Advanced struct {
+	// FinalMode selects an opt-in authoritative incremental prototype.
+	FinalMode string `toml:"final_mode"`
 	// SilenceFilter opts into rejecting final recordings that fail the energy
 	// check and have no recognized preview words. It does not affect preview
 	// phrase pauses, long-audio chunking, or transcript annotation stripping.
@@ -393,6 +397,7 @@ func Default() Config {
 			PreviewWidth: DefaultPreviewWidth,
 		},
 		Advanced: Advanced{
+			FinalMode:     string(models.FinalAfterStop),
 			SilenceFilter: false,
 			Placement:     "auto",
 			Threads:       PhysicalCores(),
@@ -476,6 +481,9 @@ func (c *Config) Resolve() {
 		c.Output.CopyCommand = nil
 	}
 
+	if c.Advanced.FinalMode == "" {
+		c.Advanced.FinalMode = string(models.FinalAfterStop)
+	}
 	if c.Advanced.Placement == "" {
 		c.Advanced.Placement = "auto"
 	}
@@ -608,6 +616,9 @@ func LoadFile(path string) (File, error) {
 	out.Config.Paths.Socket = ExpandPath(out.Config.Paths.Socket)
 	out.Config.Vocabulary.File = ExpandPath(out.Config.Vocabulary.File)
 	out.Config.Resolve()
+	if _, err := models.ParseFinalMode(out.Config.Advanced.FinalMode); err != nil {
+		return out, fmt.Errorf("config: advanced.final_mode: %w", err)
+	}
 	if err := out.Config.Output.ValidateDriver(); err != nil {
 		return out, err
 	}

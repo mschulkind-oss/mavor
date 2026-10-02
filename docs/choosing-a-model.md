@@ -4,7 +4,7 @@ author: "Matthew Schulkind"
 date: 2026-09-13
 status: accepted
 tags: [models, whisper, sherpa, gpu, accuracy, latency, guide]
-summary: "Which of mavor's 31 models to actually use, decided from measurements rather than reputation — including why the largest Whisper models are the wrong choice for dictation, and which streaming model is finally accurate as well as live."
+summary: "Model capabilities, opt-in final recognition prototypes, and historical measurements with their limits."
 vantage:
   status-chip: true
 ---
@@ -35,7 +35,107 @@ where that runtime runs. `mavor doctor` prints what it chose.
 > **formatting** results are solid; most of the word-error differences are
 > one word on one clip.
 
-## The short answer
+## Capabilities are not the selected execution mode
+
+[Native streaming and segment processing](./design/incremental-final-transcription.md#mode-definitions-and-compatibility)
+are different capabilities. Native streaming is intrinsic to the recognizer;
+segment processing is mavor's use of an offline recognizer on completed portions
+of audio. Offline `parakeet-tdt-0.6b-v2` does **not** become a native streaming
+model when mavor processes segments during recording.
+
+The listing makes this distinction explicit:
+
+| View | Meaning |
+| :--- | :--- |
+| Plain `NATIVE-STREAM` | Intrinsic native streaming; not proof the daemon is using it for final text. |
+| Plain `FINAL-MODES` | Supported final execution modes, always including `after-stop`. |
+| Plain `SELECTED` | Configured mode for the active catalog model only; other rows show a dash. |
+| Verbose | The same capabilities and selection, with prototype and speed/quality caveats. |
+| JSON | Existing `streaming` keeps its intrinsic meaning. `native_streaming`, `streaming_final`, `incremental_segments` and `final_modes` distinguish eligibility. Root `configured_final_mode` describes configuration; `selected_final_mode` appears only on the active catalog row. |
+
+Custom paths never activate a guessed catalog row. They retain `after-stop`
+support, but are not eligible for the live-final prototypes. A configured mode
+is not proof a recording used it: failures can require complete replay after
+stop using the **same** model. No automatic model or quality fallback is implied.
+
+### Opt-in final recognition prototypes
+
+> [!NOTE]
+> These are explicit opt-in prototypes, not a change to the defaults.
+> [Paced production-session observations](./reports/incremental-final-prototype.md)
+> show lower release waits on two fixtures under shared CPU load. Eligibility
+> alone is not a speed or accuracy guarantee; offline segments changed quality.
+
+`advanced.final_mode` has three exact values:
+
+- **`after-stop`** (default, also when unset/empty): transcribe the complete
+  recording after release, even if the main model is intrinsically streaming.
+- **`streaming`**: feed the main native stream during recording, then drain and
+  finalize it after release. Only that finalized result is emitted, once.
+  Catalog Sherpa models with native streaming are eligible; the requested
+  candidate is `nemotron-streaming-en-560ms`.
+- **`segments`**: process completed, nonoverlapping, pause-bounded portions
+  during recording using offline `parakeet-tdt-0.6b-v2`, then decode the tail
+  and assemble the ordered result after release. Only v2 is eligible in this
+  prototype. Segment boundaries may change recognition context and formatting;
+  preserving each audio sample does not guarantee equal accuracy to full audio.
+
+For native main recognition:
+
+```toml
+model = "nemotron-streaming-en-560ms"
+
+[advanced]
+final_mode = "streaming"
+```
+
+For completed offline portions during recording:
+
+```toml
+model = "parakeet-tdt-0.6b-v2"
+
+[advanced]
+final_mode = "segments"
+```
+
+These examples do not change preview or silence-filter defaults. Preview text
+**never emits**: a companion remains overlay-only, and main partials are also
+provisional. Successful live-final work avoids complete after-stop replay;
+failed or overloaded live work retains the original recording for safe replay.
+Unsupported model/mode selections are errors rather than silent substitutions.
+
+### What moving work before release can and cannot buy
+
+Processing audio while you speak can move compute out of the wait after release.
+It cannot make a slower-than-real-time recognizer keep up. **Real-time factor**
+is compute duration divided by audio duration (the historical report's
+[method](./reports/model-benchmarks.md#accuracy) explains its comparisons).
+At a factor of roughly 2, a CPU recognizer needs about twice the audio duration
+in compute; merely starting early still leaves growing unfinished work at release.
+A native chunk size also is not a release-to-final latency guarantee.
+
+The historical short-clip tables below show real quality differences, but do
+not establish accuracy on technical, long, quiet or accented dictation. For
+example, Nemotron 560ms and offline Parakeet v2 each scored 1.8% word error rate
+on the 20-second fixture, whereas the streaming Zipformer scored 7.3%. That is
+not a prediction that final segment processing will match full-recording v2.
+Pauses, reduced context, resource contention and final tail processing all need
+measurement with the actual production lifecycle.
+
+The [historical 68-second technical-prompt report](./reports/model-benchmarks-llm-prompt-68s.md)
+is marked **BUSY** and includes model load. It is not release-to-final evidence.
+Neither its totals nor time-to-first-token measurements prove the wait after
+release. The [new paced observations](./reports/incremental-final-prototype.md)
+measure release-to-authoritative-final, excluding dispatch: Nemotron streaming
+took 145 ms and 206 ms versus warm same-model after-stop waits of 7.192 s and
+16.522 s on the 20 s and 67.865 s fixtures. Its transcript matched each baseline.
+Parakeet segments took 195 ms and 187 ms versus 1.449 s and 7.149 s after-stop,
+but normalized word error rose from 1.82% to 3.64% and 11.28% to 18.80%, including
+a missing technical phrase and an invented fragment. These are single paired
+observations on a contended i7-8700K, not quiet-host medians or latency promises.
+Keep full after-stop v2 recognition when that context/quality trade is unwanted.
+
+## Historical short-clip recommendations
 
 | If you want… | Use | Why |
 |---|---|---|
@@ -44,7 +144,7 @@ where that runtime runs. `mavor doctor` prints what it chose.
 | **Languages other than English** | `parakeet-tdt-0.6b` | 25 languages, clean formatting. Costs 1.54 GB of RAM. |
 | **A non-English model that stays small** | `canary-180m` | English, Spanish, German, French in 460 MB, formatting as good as `whisper-base.en`. |
 | **Words appearing while you speak** | `whisper-base.en`, unchanged | The preview companion — `zipformer-streaming` by default — paints the overlay live; your typed text still comes from `model`. Costs 161 MB resident on top of it. [Below](#you-do-not-have-to-choose-the-preview-companion). |
-| **A streaming model as your main model** | `nemotron-streaming-en-560ms` | 1.8% word error rate while decoding live, punctuated and capitalised, first words 433 ms in. Costs 964 MB. [Below](#streaming-text-while-you-speak). |
+| **A natively streaming main model** | `nemotron-streaming-en-560ms` | Historical incremental benchmark: 1.8% word error rate, first token 433 ms, 964 MB. Default final execution remains `after-stop`; [opt-in modes](#opt-in-final-recognition-prototypes) are separate. |
 | **Maximum accuracy** | `whisper-base.en`, still | See below — the large models do not deliver this. |
 
 The six models that joined the catalog on 2026-09-13 were unmeasured when this
@@ -157,7 +257,9 @@ count to set.
 
 ## Streaming: text while you speak
 
-Seven catalog models decode incrementally rather than waiting for you to stop.
+Seven catalog models intrinsically support incremental decoding. This is not
+a claim that default final execution runs during capture: `after-stop` still
+transcribes the full recording after release.
 Three are long-standing — `zipformer-streaming`, `zipformer-streaming-20m` and
 `fastconformer-streaming` — and four arrived on 2026-09-13. All seven are
 measured now, and the result changed what this section used to say: **a
@@ -245,11 +347,17 @@ you keep. You rarely need to, because mavor can run a second streaming model
 second model is the **preview companion**: it is fed the same audio, emits
 partial text continuously, and **never contributes a word to the final
 transcript** — the text that gets typed is always `model`'s, produced once,
-when you release the key.
+after you release the key. In the default `after-stop` mode that work begins
+after release; in a live-final prototype it finishes work begun during capture.
 
-`preview.source = "auto"` loads `zipformer-streaming` — 296.0 MB to download,
-320.2 MB unpacked on disk — and `mavor setup` pulls it alongside your main
-model.
+For an ordinary offline main model, `preview.source = "auto"` loads
+`zipformer-streaming` — 296.0 MB to download, 320.2 MB unpacked on disk — and
+`mavor setup` pulls it alongside your main model. A native streaming main shares
+its own partials. Opt-in offline `segments` with auto preview shares the main
+segment aggregates instead of launching a second decoder. An explicitly named
+companion remains separate and never contributes final text. In live-final modes,
+explicit `preview.source = "phrases"` shares main partials or segment aggregates;
+it does not launch competing phrase decoding.
 
 **A companion is chosen on cadence, not on accuracy.** Because it never emits,
 every word it gets right is thrown away when you release the key. What you
@@ -542,10 +650,11 @@ meaningfully worse than 0.0% is reading one word as a trend. The large
 differences (`fastconformer-streaming` at 12.7%, `paraformer` at 16.4%) are
 real; the small ones are not.
 
-Nothing here measures accented speech, background noise, technical
-vocabulary, long dictation, or any language other than English. If your
-dictation looks different from that clip — and it probably does — the ranking
-could differ.
+The historical table does not measure accented speech, background noise,
+technical vocabulary, long dictation, or any language other than English. The
+[new prototype observations](./reports/incremental-final-prototype.md) add one
+67.865-second English technical sample, not a general ranking. If your dictation
+looks different from these clips — and it probably does — the ranking could differ.
 
 **Your hardware is not this hardware.** Every figure came from one machine,
 named in the report's header. Rerun `just bench` on yours; it writes the same
@@ -561,6 +670,6 @@ $ just bench            # every model, on whisper.cpp and in-process sherpa-onnx
 
 It writes [`model-benchmarks.md`](./reports/model-benchmarks.md) and the raw
 results beside it. A model absent from your cache is reported as absent
-rather than silently skipped, and a backend that cannot run says why. Every
-number on this page comes from the run of 2026-09-13, which covers all 31
+rather than silently skipped, and a backend that cannot run says why. The historical
+tables on this page come from the run of 2026-09-13, which covers all 31
 catalog entries and prints them under their current names.

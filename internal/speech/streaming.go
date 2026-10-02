@@ -129,3 +129,15 @@ func (m *MockStreamTranscriber) SetErrors(startErr, feedErr, stopErr error) {
 	m.feedErr = feedErr
 	m.stopErr = stopErr
 }
+
+// StreamAborter discards an active stream without decoding a final result.
+// It must serialize with in-flight native decode before freeing its state.
+type StreamAborter interface{ AbortStream(context.Context) error }
+
+func (m *MockStreamTranscriber) AbortStream(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.started = false
+	m.stopped = true
+	return nil
+}

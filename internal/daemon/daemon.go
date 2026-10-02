@@ -26,6 +26,7 @@ import (
 	"github.com/mschulkind-oss/mavor/internal/audio"
 	"github.com/mschulkind-oss/mavor/internal/history"
 	"github.com/mschulkind-oss/mavor/internal/ipc"
+	"github.com/mschulkind-oss/mavor/internal/models"
 	"github.com/mschulkind-oss/mavor/internal/output"
 	"github.com/mschulkind-oss/mavor/internal/overlay"
 	"github.com/mschulkind-oss/mavor/internal/speech"
@@ -33,6 +34,9 @@ import (
 )
 
 type Daemon struct {
+	finalMode  models.FinalMode
+	finalCycle *incrementalCycle
+
 	socket            string
 	machine           *state.Machine
 	recorder          audio.Recorder
@@ -77,10 +81,14 @@ type Daemon struct {
 	// recording without recognition evidence waits for it before deciding to
 	// skip transcription.
 	// The next StartStream also waits before reusing the same recognizer.
-	streamDrain chan struct{}
+	streamDrain    chan struct{}
+	streamFeedDone chan struct{}
+	streamUsesMain bool
 }
 
 type Config struct {
+	FinalMode models.FinalMode
+
 	Socket        string
 	Recorder      audio.Recorder
 	Transcriber   speech.Transcriber
@@ -155,6 +163,7 @@ func New(c Config) *Daemon {
 	}
 	return &Daemon{
 		socket:            c.Socket,
+		finalMode:         c.FinalMode,
 		machine:           state.New(),
 		recorder:          c.Recorder,
 		transcriber:       c.Transcriber,
@@ -201,9 +210,25 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	// Wait for any in-flight transcription pipeline before returning so we
 	// don't leave a goroutine writing to wl-copy after the binary exits.
+	if d.incrementalFinal() {
+		d.cancelFinalCycle()
+		if d.machine.State() == state.Recording {
+			if wav, e := d.recorder.Stop(); e == nil {
+				_ = os.Remove(wav)
+				_ = os.Remove(wav + ".txt")
+			}
+		}
+	}
 	wg.Wait()
 	d.stopLevelMonitoring()
 	d.stopStreamingMonitoring()
+	d.awaitStreamDrain(context.Background())
+	if !d.incrementalFinal() && d.machine.State() == state.Recording {
+		if wav, e := d.recorder.Stop(); e == nil {
+			_ = os.Remove(wav)
+			_ = os.Remove(wav + ".txt")
+		}
+	}
 	// An error here now means the device would not confirm the restore —
 	// i.e. it may still be muted — which is worth a log line on the way out
 	// rather than silence.
@@ -291,10 +316,25 @@ func (d *Daemon) onTransition(ctx context.Context, s state.State, wg *sync.WaitG
 			return
 		}
 		d.startLevelMonitoring(ctx)
-		d.startStreamingMonitoring(ctx)
+		if d.incrementalFinal() {
+			if err := d.startFinalCycle(ctx); err != nil {
+				if wav, e := d.recorder.Stop(); e == nil {
+					_ = os.Remove(wav)
+					_ = os.Remove(wav + ".txt")
+				}
+				d.reportError("pipeline: final session start failed", err)
+				return
+			}
+		} else {
+			d.startStreamingMonitoring(ctx)
+		}
 	case state.Transcribing:
 		d.stopLevelMonitoring()
-		d.stopStreamingMonitoring()
+		if d.incrementalFinal() {
+			d.stopFinalPump()
+		} else {
+			d.stopStreamingMonitoring()
+		}
 		// Capture is finished by now — only the tail is being decoded — so
 		// bring background media back up rather than holding it down for the
 		// length of the transcription.
@@ -373,6 +413,8 @@ func (d *Daemon) startStreamingMonitoring(ctx context.Context) {
 	d.streamGen++
 	gen := d.streamGen
 	d.streamSource = src
+	d.streamFeedDone = make(chan struct{})
+	d.streamUsesMain = d.previewMode != speech.PreviewCompanion
 	d.streamMu.Unlock()
 
 	if src != nil {
@@ -423,6 +465,7 @@ const PreviewTick = 30 * time.Millisecond
 func (d *Daemon) runStreamPreview(ctx context.Context, gen uint64, src speech.StreamTranscriber) {
 	d.logger.Info("streaming: initializing transducer stream session")
 	if err := src.StartStream(ctx); err != nil {
+		close(d.streamFeedDone)
 		d.logger.Warn("streaming: start stream failed", "err", err)
 		return
 	}
@@ -434,10 +477,13 @@ func (d *Daemon) runStreamPreview(ctx context.Context, gen uint64, src speech.St
 		// discovered as a preview that never appears.
 		d.logger.Warn("streaming: recorder cannot supply live audio — no preview will appear",
 			"recorder", fmt.Sprintf("%T", d.recorder))
+		close(d.streamFeedDone)
 		return
 	}
 
+	done := d.streamFeedDone
 	go func() {
+		defer close(done)
 		ticker := time.NewTicker(PreviewTick)
 		defer ticker.Stop()
 
@@ -510,7 +556,10 @@ func (d *Daemon) runPhrasePreview(ctx context.Context, gen uint64) {
 		"silence_threshold", d.silenceThreshold,
 		"min_phrase", d.minPhraseDuration)
 
+	done := d.streamFeedDone
 	go func() {
+		var phrases sync.WaitGroup
+		defer func() { phrases.Wait(); close(done) }()
 		ticker := time.NewTicker(PreviewTick)
 		defer ticker.Stop()
 
@@ -548,7 +597,9 @@ func (d *Daemon) runPhrasePreview(ctx context.Context, gen uint64) {
 
 				speechFrames = 0
 				silenceFrames = 0
-				go d.transcribePhrase(ctx, gen, phrase.take())
+				pcm := phrase.take()
+				phrases.Add(1)
+				go func() { defer phrases.Done(); d.transcribePhrase(ctx, gen, pcm) }()
 			}
 		}
 	}()
@@ -640,6 +691,8 @@ func (d *Daemon) stopStreamingMonitoring() {
 		d.streamCancel = nil
 	}
 	src := d.streamSource
+	done := d.streamFeedDone
+	d.streamFeedDone = nil
 	d.streamSource = nil
 	// Moving the generation on under the same lock the writers take is what
 	// discards the work still in flight: a phrase transcription or a partial
@@ -651,12 +704,12 @@ func (d *Daemon) stopStreamingMonitoring() {
 		_ = d.overlay.SetText("")
 	}
 	drain := make(chan struct{})
-	if src != nil {
+	if src != nil || done != nil {
 		d.streamDrain = drain
 	}
 	d.streamMu.Unlock()
 
-	if src == nil {
+	if src == nil && done == nil {
 		return
 	}
 
@@ -670,6 +723,12 @@ func (d *Daemon) stopStreamingMonitoring() {
 	// call that produces the text the user is waiting for.
 	go func() {
 		defer close(drain)
+		if done != nil {
+			<-done
+		}
+		if src == nil {
+			return
+		}
 		started := time.Now()
 		finalText, err := src.StopStream(context.Background())
 		if err == nil && finalText != "" {
@@ -732,6 +791,9 @@ func (d *Daemon) runTranscription(ctx context.Context) {
 	d.logger.Info("pipeline: stopping recorder for transcription")
 	wav, err := d.recorder.Stop()
 	if err != nil {
+		if d.incrementalFinal() {
+			d.cancelFinalCycle()
+		}
 		d.reportError("pipeline: recorder.Stop failed — aborting", err)
 		return
 	}
@@ -746,7 +808,7 @@ func (d *Daemon) runTranscription(ctx context.Context) {
 	// The energy filter measures loudness, not intelligibility: quiet or short
 	// speech can fail it even after the preview recognized words. Recognition
 	// wins that disagreement; only the main model's final transcript is emitted.
-	if d.silenceFilter && wav != "" {
+	if d.silenceFilter && wav != "" && !d.incrementalFinal() {
 		if hasSpeech, vadErr := audio.DetectSpeech(wav, 150*time.Millisecond); vadErr == nil && !hasSpeech {
 			if !d.previewRecognizedSpeech(ctx) {
 				d.logger.Info("pipeline: silence detected by VAD pre-filter — skipping transcription")
@@ -758,8 +820,37 @@ func (d *Daemon) runTranscription(ctx context.Context) {
 	}
 
 	transcribeStart := time.Now()
-	text, err := d.transcriber.Transcribe(ctx, wav)
+	var text string
+	if d.incrementalFinal() {
+		cycle := d.finalCycle
+		if cycle == nil {
+			err = errors.New("missing final session")
+		} else {
+			var result speech.FinalResult
+			result, err = cycle.session.Finish(ctx, wav)
+			text = result.Text
+			d.logger.Info("pipeline: final session", "requested", result.RequestedMode, "actual", result.ActualMode, "replay_reason", result.ReplayReason, "stats", result.Stats)
+			// Enabled energy rejection still requires recognition evidence, including
+			// authoritative last-tail text; disabled never gates quiet audio.
+			if err == nil && d.silenceFilter && (result.ActualMode == models.FinalAfterStop || strings.TrimSpace(speech.StripNonSpeech(text)) == "") {
+				if hasSpeech, e := audio.DetectSpeech(wav, 150*time.Millisecond); e == nil && !hasSpeech && !d.previewRecognizedSpeech(ctx) {
+					text = ""
+				}
+			}
+		}
+	} else {
+		d.streamMu.Lock()
+		usesMain := d.streamUsesMain
+		d.streamMu.Unlock()
+		if usesMain {
+			d.awaitStreamDrain(ctx)
+		}
+		text, err = d.transcriber.Transcribe(ctx, wav)
+	}
 	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		d.reportError("pipeline: transcribe failed — aborting", err)
 		return
 	}
@@ -788,6 +879,10 @@ func (d *Daemon) runTranscription(ctx context.Context) {
 		d.machine.Apply(state.EventTranscribeDone)
 		return
 	}
+	if ctx.Err() != nil {
+		return
+	}
+
 	// Record before typing: a failed or mis-targeted emit is exactly when the
 	// user needs the transcript back, so it must already be on disk.
 	if d.history != nil {

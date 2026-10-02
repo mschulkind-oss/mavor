@@ -640,7 +640,17 @@ func detectKittyShiftInsert() string {
 // runtime will run. Both follow from the model name, so this is the line that
 // says what `model = "..."` actually got you.
 func checkRuntime() (bool, string) {
-	cfg, _ := config.Load("")
+	cfg, loadErr := config.Load("")
+	if loadErr != nil {
+		return false, loadErr.Error()
+	}
+	mode, err := models.ParseFinalMode(cfg.Advanced.FinalMode)
+	if err != nil {
+		return false, err.Error()
+	}
+	if err := models.ValidateFinalSelection(cfg.Model, mode); err != nil {
+		return false, err.Error()
+	}
 	sel, err := models.Select(cfg.Model, cfg.Advanced.Placement, cfg.Advanced.Server)
 	if err != nil {
 		return false, err.Error()
@@ -649,7 +659,7 @@ func checkRuntime() (bool, string) {
 	// placement that will actually be used rather than the derived one.
 	sel = speech.AdjustForEnvironment(sel)
 
-	msg := fmt.Sprintf("%s, %s — %s", sel.Runtime, sel.Placement, sel.Reason)
+	msg := fmt.Sprintf("%s, %s — %s; final mode: %s", sel.Runtime, sel.Placement, sel.Reason, mode)
 	for _, w := range sel.Warnings {
 		msg += "; " + w
 	}

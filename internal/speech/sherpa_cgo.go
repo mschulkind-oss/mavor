@@ -171,6 +171,9 @@ func (r *cgoOnlineRecognizer) DecodeAudio(ctx context.Context, sampleRate int, s
 }
 
 func (r *cgoOnlineRecognizer) StartStream(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -407,4 +410,14 @@ func newCGOOnlineRecognizer(_ config.Config, sc SherpaOnlineConfig, _ *slog.Logg
 	}
 
 	return &cgoOnlineRecognizer{impl: impl}, nil
+}
+
+func (r *cgoOnlineRecognizer) AbortStream(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.activeStream != nil {
+		sherpa_onnx.DeleteOnlineStream(r.activeStream)
+		r.activeStream = nil
+	}
+	return nil
 }

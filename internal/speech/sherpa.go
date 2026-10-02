@@ -1287,3 +1287,14 @@ func (m *MockSherpaRecognizer) Close() error {
 	m.Closed = true
 	return m.CloseErr
 }
+
+func (s *SherpaTranscriber) AbortStream(ctx context.Context) error {
+	s.mu.Lock()
+	rec := s.Recognizer
+	s.mu.Unlock()
+	if a, ok := rec.(StreamAborter); ok {
+		return a.AbortStream(ctx)
+	}
+	return fmt.Errorf("speech: recognizer does not support stream abort")
+}
+func (m *MockSherpaRecognizer) AbortStream(context.Context) error { return nil }

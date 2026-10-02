@@ -44,8 +44,10 @@ Two facts about that tree are easy to get wrong:
   `speech.Resolve` is what the daemon calls.
 - **The preview never emits.** A companion model — a small streaming
   recognizer loaded alongside the main one — paints the overlay while you
-  speak, and the text you actually get always comes from the single final
-  `Transcribe` by the main model. `speech.ResolvePreview` picks between reading
+  speak, and the text you actually get always comes from the main model's
+  authoritative finalized result. Default `after-stop` uses a single final
+  `Transcribe`; opt-in [live-final modes](docs/design/incremental-final-transcription.md)
+  finish main work begun during capture, with complete-WAV replay on failure. `speech.ResolvePreview` picks between reading
   the main model's own partials, running the companion, and phrase mode.
 
 ## Directory Layout

@@ -35,6 +35,13 @@ type Resolution struct {
 // setup` leaves the current config fully runnable, so reaching this error
 // means the config changed after setup — which is what the message says.
 func Resolve(cfg config.Config) (Resolution, error) {
+	mode, err := models.ParseFinalMode(cfg.Advanced.FinalMode)
+	if err != nil {
+		return Resolution{}, err
+	}
+	if err := models.ValidateFinalSelection(cfg.Model, mode); err != nil {
+		return Resolution{}, err
+	}
 	sel, err := models.Select(cfg.Model, cfg.Advanced.Placement, cfg.Advanced.Server)
 	if err != nil {
 		return Resolution{}, fmt.Errorf("speech: %w", err)
@@ -60,6 +67,15 @@ func Resolve(cfg config.Config) (Resolution, error) {
 			return Resolution{}, missingSherpaModel(cfg, err)
 		}
 		res.ModelDir = dir
+		if mode != models.FinalAfterStop {
+			info, e := DetectSherpaModel(dir, cfg.Model)
+			if e != nil {
+				return Resolution{}, e
+			}
+			if (mode == models.FinalStreaming) != info.Streaming {
+				return Resolution{}, fmt.Errorf("speech: final mode %s conflicts with loaded model layout", mode)
+			}
+		}
 	}
 	return res, nil
 }

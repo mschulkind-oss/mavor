@@ -88,7 +88,8 @@ const (
 	// main one and paints its partials.
 	PreviewCompanion PreviewMode = "companion"
 
-	// PreviewPhrases re-transcribes with the main model at every pause.
+	// PreviewPhrases re-transcribes at pauses in after-stop mode; live segment
+	// final mode shares provisional aggregates without a separate decode.
 	PreviewPhrases PreviewMode = "phrases"
 )
 
@@ -137,8 +138,17 @@ func ResolvePreview(cfg config.Config) (PreviewPlan, error) {
 	src := strings.TrimSpace(cfg.Preview.Source)
 	switch src {
 	case "", "auto":
+		if cfg.Advanced.FinalMode == string(models.FinalSegments) {
+			return PreviewPlan{Mode: PreviewPhrases, Reason: "preview reads provisional completed main segments; no separate phrase decoding"}, nil
+		}
 		return resolveAutoPreview(cfg), nil
 	case "phrases":
+		if cfg.Advanced.FinalMode == string(models.FinalStreaming) {
+			return PreviewPlan{Mode: PreviewMainModel, Reason: "preview reads provisional main stream partials; no separate phrase decoding"}, nil
+		}
+		if cfg.Advanced.FinalMode == string(models.FinalSegments) {
+			return PreviewPlan{Mode: PreviewPhrases, Reason: "preview reads provisional completed main segments; no separate phrase decoding"}, nil
+		}
 		return PreviewPlan{
 			Mode:   PreviewPhrases,
 			Reason: `preview.source = "phrases" asked for the main model at every pause`,
@@ -222,7 +232,7 @@ func PreviewModels(cfg config.Config) []string {
 	case "phrases":
 		return nil
 	case "", "auto":
-		if streamingModel(cfg.Model) {
+		if streamingModel(cfg.Model) || cfg.Advanced.FinalMode == string(models.FinalSegments) {
 			return nil
 		}
 		return []string{DefaultCompanionModel}
@@ -253,6 +263,8 @@ func companionInstalled(cfg config.Config, name string) error {
 func companionConfig(cfg config.Config, name string) config.Config {
 	c := cfg
 	c.Model = name
+	// Final mode belongs to main result ownership, never to the companion.
+	c.Advanced.FinalMode = string(models.FinalAfterStop)
 	c.Advanced.Placement = "auto"
 	c.Advanced.Server = ""
 	return c

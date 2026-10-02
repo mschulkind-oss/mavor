@@ -336,3 +336,10 @@ func (c *ChunkingTranscriber) Unwrap() Transcriber {
 func (c *chunkingStreamTranscriber) Unwrap() Transcriber {
 	return c.wrapped
 }
+
+func (c *chunkingStreamTranscriber) AbortStream(ctx context.Context) error {
+	if a, ok := c.stream.(StreamAborter); ok {
+		return a.AbortStream(ctx)
+	}
+	return fmt.Errorf("speech: wrapped stream does not support abort")
+}

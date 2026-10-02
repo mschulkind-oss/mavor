@@ -257,6 +257,34 @@ func runModelsList(installedOnly, verbose, asJSON bool) error {
 	return listCatalog(os.Stdout, cfg, installedOnly)
 }
 
+// Config loading validates the enum before any renderer is called.
+func configuredFinalMode(cfg config.Config) models.FinalMode {
+	mode, _ := models.ParseFinalMode(cfg.Advanced.FinalMode)
+	return mode
+}
+
+func listingFinalMode(cfg config.Config, override []models.FinalMode) models.FinalMode {
+	if len(override) > 0 {
+		return override[0]
+	}
+	return configuredFinalMode(cfg)
+}
+
+func finalModesText(c models.FinalCapabilities) string {
+	var names []string
+	for _, mode := range c.Modes() {
+		names = append(names, string(mode))
+	}
+	return strings.Join(names, ",")
+}
+
+func selectedFinalMode(name, active string, mode models.FinalMode) models.FinalMode {
+	if active != "" && name == active {
+		return mode
+	}
+	return ""
+}
+
 // installedModel is what the cache holds for one name.
 type installedModel struct {
 	size int64
@@ -299,12 +327,13 @@ func installedEntry(installed map[string]installedModel, m models.KnownModel) *i
 
 // listCatalog prints every model mavor can download, with what is on disk
 // marked. With installedOnly, it prints just the downloaded ones.
-func listCatalog(w io.Writer, cfg config.Config, installedOnly bool) error {
+func listCatalog(w io.Writer, cfg config.Config, installedOnly bool, modeOverride ...models.FinalMode) error {
+	mode := listingFinalMode(cfg, modeOverride)
 	installed := scanInstalled(cfg)
 	active := activeModelName(cfg)
 
 	type row struct {
-		name, engine, size, langs, stream, gpu, status string
+		name, engine, size, langs, stream, modes, selected, gpu, status string
 	}
 	var rows []row
 
@@ -325,18 +354,21 @@ func listCatalog(w io.Writer, cfg config.Config, installedOnly bool) error {
 			status += "  " + markerActive
 		}
 
+		caps := m.FinalCapabilities()
 		stream := "no"
-		if m.Streaming {
+		if caps.NativeStreaming {
 			stream = "yes"
 		}
 		rows = append(rows, row{
-			name:   m.Name,
-			engine: m.Engine,
-			size:   formatFileSize(m.DownloadSize),
-			langs:  m.Languages,
-			stream: stream,
-			gpu:    gpu.forEngine(m.Engine),
-			status: status,
+			name:     m.Name,
+			engine:   m.Engine,
+			size:     formatFileSize(m.DownloadSize),
+			langs:    m.Languages,
+			stream:   stream,
+			modes:    finalModesText(caps),
+			selected: string(selectedFinalMode(m.Name, active, mode)),
+			gpu:      gpu.forEngine(m.Engine),
+			status:   status,
 		})
 	}
 
@@ -352,8 +384,11 @@ func listCatalog(w io.Writer, cfg config.Config, installedOnly bool) error {
 
 	// Column widths sized to content so the table stays readable as the
 	// catalog grows.
-	wName, wEngine, wSize, wLangs, wStream, wGPU, wStatus := len("NAME"), len("ENGINE"), len("SIZE"), len("LANGUAGES"), len("STREAM"), len("GPU"), len("STATUS")
+	wName, wEngine, wSize, wLangs, wStream, wGPU, wStatus := len("NAME"), len("ENGINE"), len("SIZE"), len("LANGUAGES"), len("NATIVE-STREAM"), len("GPU"), len("STATUS")
+	wModes, wSelected := len("FINAL-MODES"), len("SELECTED")
 	for _, r := range rows {
+		wModes = max(wModes, len(r.modes))
+		wSelected = max(wSelected, len(r.selected))
 		wName = max(wName, len(r.name))
 		wEngine = max(wEngine, len(r.engine))
 		wSize = max(wSize, len(r.size))
@@ -363,20 +398,24 @@ func listCatalog(w io.Writer, cfg config.Config, installedOnly bool) error {
 		wStatus = max(wStatus, runeLen(r.status))
 	}
 
-	line := func(name, engine, size, langs, stream, gpu, status string) {
+	line := func(name, engine, size, langs, stream, modes, selected, gpu, status string) {
+		if selected == "" {
+			selected = markerAbsent
+		}
 		fmt.Fprintln(w, strings.TrimRight(strings.Join([]string{
 			padRight(name, wName), padRight(engine, wEngine), padLeft(size, wSize),
-			padRight(langs, wLangs), padRight(stream, wStream), padRight(gpu, wGPU), status,
+			padRight(langs, wLangs), padRight(stream, wStream), padRight(modes, wModes), padRight(selected, wSelected), padRight(gpu, wGPU), status,
 		}, "  "), " "))
 	}
 
-	line("NAME", "ENGINE", "SIZE", "LANGUAGES", "STREAM", "GPU", "STATUS")
+	line("NAME", "ENGINE", "SIZE", "LANGUAGES", "NATIVE-STREAM", "FINAL-MODES", "SELECTED", "GPU", "STATUS")
 	for _, r := range rows {
-		line(r.name, r.engine, r.size, r.langs, r.stream, r.gpu, r.status)
+		line(r.name, r.engine, r.size, r.langs, r.stream, r.modes, r.selected, r.gpu, r.status)
 	}
 
 	fmt.Fprintf(w, "\n%s active   %s downloaded   %s not downloaded\n", markerActive, markerDownloaded, markerAbsent)
 	fmt.Fprintln(w, gpu.footnote())
+	fmt.Fprintln(w, "FINAL-MODES reports eligibility; SELECTED is configured, not proof of live execution.")
 	if !installedOnly {
 		fmt.Fprintln(w, "SIZE is the download; sherpa archives expand to roughly twice that on disk.")
 		fmt.Fprintln(w, "Download one with `mavor models pull <name>`.")
@@ -399,7 +438,8 @@ func listCatalog(w io.Writer, cfg config.Config, installedOnly bool) error {
 // catalog carries. The table view has room for what you scan; this has room
 // for the caveats — which biasing a model can take, what GPU support depends
 // on, and whether a speed figure was measured or estimated.
-func listCatalogVerbose(w io.Writer, cfg config.Config, installedOnly bool) error {
+func listCatalogVerbose(w io.Writer, cfg config.Config, installedOnly bool, modeOverride ...models.FinalMode) error {
+	mode := listingFinalMode(cfg, modeOverride)
 	installed := scanInstalled(cfg)
 	active := activeModelName(cfg)
 
@@ -427,7 +467,14 @@ func listCatalogVerbose(w io.Writer, cfg config.Config, installedOnly bool) erro
 		field(w, "engine", engineDetail(m.Engine))
 		field(w, "download", formatFileSize(m.DownloadSize))
 		field(w, "languages", m.Languages)
-		field(w, "streaming", streamingDetail(m.Streaming))
+		caps := m.FinalCapabilities()
+		field(w, "native-stream", streamingDetail(caps.NativeStreaming))
+		field(w, "final-modes", finalModesText(caps))
+		selected := string(selectedFinalMode(m.Name, active, mode))
+		if selected == "" {
+			selected = "– (not active)"
+		}
+		field(w, "selected", selected+" — configured, not proof of live execution")
 		field(w, "speed", speedDetail(m))
 		field(w, "vocabulary", m.Vocabulary)
 		field(w, "gpu", gpuDetail(gpu, m.Engine))
@@ -450,23 +497,29 @@ func listCatalogVerbose(w io.Writer, cfg config.Config, installedOnly bool) erro
 // the whole catalog at once, and because ModelDir belongs to the listing as a
 // whole and not to any row in it.
 type catalogJSON struct {
-	ModelDir string             `json:"model_dir"`
-	Models   []catalogModelJSON `json:"models"`
+	ModelDir            string             `json:"model_dir"`
+	ConfiguredFinalMode models.FinalMode   `json:"configured_final_mode"`
+	Models              []catalogModelJSON `json:"models"`
 }
 
 // catalogModelJSON is one model. Every field the catalog carries is here,
 // including the ones only --verbose renders, so a consumer never has to parse
 // the human tables to recover a property.
 type catalogModelJSON struct {
-	Name        string `json:"name"`
-	Engine      string `json:"engine"`
-	Family      string `json:"family"`
-	Description string `json:"description"`
-	URL         string `json:"url"`
-	Filename    string `json:"filename,omitempty"`
-	DownloadS   int64  `json:"download_size"`
-	Languages   string `json:"languages"`
-	Streaming   bool   `json:"streaming"`
+	Name                string             `json:"name"`
+	Engine              string             `json:"engine"`
+	Family              string             `json:"family"`
+	Description         string             `json:"description"`
+	URL                 string             `json:"url"`
+	Filename            string             `json:"filename,omitempty"`
+	DownloadS           int64              `json:"download_size"`
+	Languages           string             `json:"languages"`
+	Streaming           bool               `json:"streaming"`
+	NativeStreaming     bool               `json:"native_streaming"`
+	StreamingFinal      bool               `json:"streaming_final"`
+	IncrementalSegments bool               `json:"incremental_segments"`
+	FinalModes          []models.FinalMode `json:"final_modes"`
+	SelectedFinalMode   models.FinalMode   `json:"selected_final_mode,omitempty"`
 	// GPU is how this model runs on THIS machine — the backend's name, or
 	// "no". Machine-dependent like `installed`, not a property of the model.
 	GPU        string `json:"gpu"`
@@ -493,36 +546,43 @@ type catalogModelJSON struct {
 // listCatalogJSON writes the catalog as JSON. It shares scanInstalled and
 // activeModelName with the table renderers so the three views cannot disagree
 // about what is on disk.
-func listCatalogJSON(w io.Writer, cfg config.Config, installedOnly bool) error {
+func listCatalogJSON(w io.Writer, cfg config.Config, installedOnly bool, modeOverride ...models.FinalMode) error {
+	mode := listingFinalMode(cfg, modeOverride)
 	installed := scanInstalled(cfg)
 	active := activeModelName(cfg)
 
 	gpu := detectGPUAvailability()
-	out := catalogJSON{ModelDir: cfg.Paths.Models, Models: []catalogModelJSON{}}
+	out := catalogJSON{ModelDir: cfg.Paths.Models, ConfiguredFinalMode: mode, Models: []catalogModelJSON{}}
 	for _, m := range models.Catalog {
 		got := installedEntry(installed, m)
 		if installedOnly && got == nil {
 			continue
 		}
 
+		caps := m.FinalCapabilities()
 		row := catalogModelJSON{
-			Name:        m.Name,
-			Engine:      m.Engine,
-			Family:      m.Family,
-			Description: m.Description,
-			URL:         m.URL,
-			Filename:    m.Filename,
-			DownloadS:   m.DownloadSize,
-			Languages:   m.Languages,
-			Streaming:   m.Streaming,
-			GPU:         gpu.forEngine(m.Engine),
-			Transducer:  m.Transducer,
-			Vocabulary:  m.Vocabulary,
-			Speed:       m.Speed,
-			MeasuredRTF: m.MeasuredRTF,
-			SpeedIsEst:  m.MeasuredRTF == 0,
-			Installed:   got != nil,
-			Active:      active != "" && m.Name == active,
+			NativeStreaming:     caps.NativeStreaming,
+			StreamingFinal:      caps.StreamingFinal,
+			IncrementalSegments: caps.IncrementalSegments,
+			FinalModes:          caps.Modes(),
+			SelectedFinalMode:   selectedFinalMode(m.Name, active, mode),
+			Name:                m.Name,
+			Engine:              m.Engine,
+			Family:              m.Family,
+			Description:         m.Description,
+			URL:                 m.URL,
+			Filename:            m.Filename,
+			DownloadS:           m.DownloadSize,
+			Languages:           m.Languages,
+			Streaming:           m.Streaming,
+			GPU:                 gpu.forEngine(m.Engine),
+			Transducer:          m.Transducer,
+			Vocabulary:          m.Vocabulary,
+			Speed:               m.Speed,
+			MeasuredRTF:         m.MeasuredRTF,
+			SpeedIsEst:          m.MeasuredRTF == 0,
+			Installed:           got != nil,
+			Active:              active != "" && m.Name == active,
 		}
 		if got != nil {
 			row.InstalledSize = got.size
@@ -537,7 +597,14 @@ func listCatalogJSON(w io.Writer, cfg config.Config, installedOnly bool) error {
 
 // verboseFootnotes carries the caveats the per-model fields cannot: what the
 // speed tier is and is not, and that GPU support is a property of the build.
-const verboseFootnotes = `speed is a relative tier across this catalog, estimated from architecture and
+const verboseFootnotes = `streaming (native-stream) is intrinsic model capability, not the selected execution mode.
+final-modes: after-stop decodes the full recording after release (default);
+streaming finalizes the main native stream; segments processes completed audio
+portions with an offline model. Both live modes are opt-in prototype modes,
+not a quality or speed guarantee. Selected reports configuration, not actual
+cycle execution: failed live work can replay the complete recording after stop.
+
+speed is a relative tier across this catalog, estimated from architecture and
 parameter count — not a measurement. The few figures marked "measured" come
 from docs/reports/: whisper-cli at 4 threads on a 12-core x86_64 CPU over 20s
 of speech. Your numbers will differ; an RTF below 1.0 is faster than real time.
@@ -559,9 +626,9 @@ func engineDetail(engine string) string {
 
 func streamingDetail(streaming bool) string {
 	if streaming {
-		return "yes — decodes incrementally while you speak"
+		return "yes — intrinsically decodes incremental audio; live final requires opt-in"
 	}
-	return "no — transcribes once you stop speaking"
+	return "no — offline model; segment eligibility is reported separately"
 }
 
 // speedDetail prefers a measured figure and says so, rather than letting an

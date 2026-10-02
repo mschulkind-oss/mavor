@@ -179,6 +179,13 @@ text you keep always comes from the main model. Set `preview.source` to
 `preview.enabled = false` for no companion at all. `mavor config init` scaffolds the file on its own if you would
 rather start there.
 
+For experimental recognition during capture, see the
+[opt-in final modes](docs/choosing-a-model.md#opt-in-final-recognition-prototypes).
+Native streaming and offline segment processing are different capabilities;
+`after-stop` remains the default, and only finalized main text emits after release.
+The [paced observations](docs/reports/incremental-final-prototype.md) include the
+quality drift observed with offline segments.
+
 ## Compositor integration
 
 ### Push-to-Talk Mode (Recommended)

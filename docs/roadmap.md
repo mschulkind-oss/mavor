@@ -13,6 +13,14 @@ summary: "Living roadmap for the mavor dictation daemon: open decisions, the rea
 
 ---
 
+## Prototype documentation follow-through
+
+[Incremental authoritative final recognition](design/incremental-final-transcription.md)
+— graduate the verified opt-in lifecycle before widening eligibility; preserving
+complete audio does not establish offline segment quality parity.
+[The measured prototype report](reports/incremental-final-prototype.md)
+constrains speed and quality claims; GPU readiness changes are separate work.
+
 ## 1. Attention Required (💬)
 
 ### 💬 Is GPU acceleration worth pursuing? Now with numbers

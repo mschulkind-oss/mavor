@@ -21,6 +21,7 @@ import (
 	"github.com/mschulkind-oss/mavor/internal/daemon"
 	"github.com/mschulkind-oss/mavor/internal/history"
 	"github.com/mschulkind-oss/mavor/internal/ipc"
+	"github.com/mschulkind-oss/mavor/internal/models"
 	"github.com/mschulkind-oss/mavor/internal/output"
 	"github.com/mschulkind-oss/mavor/internal/overlay"
 	"github.com/mschulkind-oss/mavor/internal/speech"
@@ -242,7 +243,9 @@ func runDaemon(verbose bool, logFile string) error {
 		upgradeWatch = getBinaryPath()
 	}
 
+	finalMode, _ := models.ParseFinalMode(cfg.Advanced.FinalMode)
 	d := daemon.New(daemon.Config{
+		FinalMode:         finalMode,
 		Socket:            cfg.Paths.Socket,
 		Recorder:          recorder,
 		Transcriber:       transcriber,

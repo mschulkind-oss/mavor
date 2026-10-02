@@ -392,7 +392,8 @@ was not CPU but how their text arrives, which
 [OQ-2](#decision-ledger) has now been answered four times — on download size,
 then twice on the question *does the preview get the opening words right?*,
 then on this. The opening words do not matter. A preview never emits — the typed text is always
-the main model's single final `Transcribe` — so every word the companion gets
+the main model's authoritative finalized result — in default `after-stop` mode,
+a single final `Transcribe` — so every word the companion gets
 right is discarded on release. What the user is left with is the *feel* of the
 line, which is set by **update cadence**: how often the painted text changes,
 and how long the longest gap between two changes lasts. (The term is this

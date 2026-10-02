@@ -43,7 +43,8 @@ type KnownModel struct {
 	Languages string
 
 	// Streaming reports whether the model decodes incrementally as audio
-	// arrives. Non-streaming models transcribe once the recording stops.
+	// arrives, not whether mavor currently uses live final recognition. Offline
+	// models may support mavor segment processing; see FinalCapabilities.
 	Streaming bool
 
 	// Transducer reports an RNN-T / TDT architecture. It decides whether the
