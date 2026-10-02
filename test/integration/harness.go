@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
 	"image/png"
 	"io"
 	"os"
@@ -92,15 +93,7 @@ func Start(t *testing.T, opts Options) *Harness {
 	if err := os.Chmod(xdg, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	h := start(t, opts, xdg)
-	// Registered BEFORE Stop so it runs AFTER it: cleanups are LIFO. Sway and
-	// waybar write on the way down and those writes should reach the test
-	// log, but the goroutines copying their output are not waited on, so a
-	// straggler arriving after the test has finished would panic it. detach
-	// sends anything later to stderr instead.
-	t.Cleanup(h.detach)
-	t.Cleanup(h.Stop)
-	return h
+	return start(t, opts, xdg)
 }
 
 // StartWithBar brings up a compositor with waybar on it, which is what the
@@ -133,6 +126,10 @@ func start(t *testing.T, opts Options, xdg string) *Harness {
 	}
 
 	h := &Harness{t: t, XDGRuntime: xdg}
+	// Register before fallible startup. LIFO teardown keeps logs attached until
+	// children are reaped, then detaches late logger writes before TempDir removal.
+	t.Cleanup(h.detach)
+	t.Cleanup(h.Stop)
 
 	h.startDBus()
 	h.startSway(opts)
@@ -165,6 +162,7 @@ func (h *Harness) startDBus() {
 	if err := cmd.Start(); err != nil {
 		h.t.Fatalf("dbus-daemon: %v", err)
 	}
+	h.dbus = cmd
 	addrCh := make(chan string, 1)
 	go func() {
 		buf := make([]byte, 4096)
@@ -181,7 +179,6 @@ func (h *Harness) startDBus() {
 		_ = cmd.Process.Kill()
 		h.t.Fatal("dbus-daemon did not print address within 2s")
 	}
-	h.dbus = cmd
 }
 
 func (h *Harness) startSway(opts Options) {
@@ -317,20 +314,57 @@ func (h *Harness) configureOutput(w, hpx int) {
 // overlay, and the test names still claim to be about the overlay. Better to
 // refuse to run than to report a green suite that checked nothing.
 func (h *Harness) requireDarkBackdrop() {
-	img, err := png.Decode(bytes.NewReader(h.Grim()))
-	if err != nil {
-		h.t.Fatalf("integration: screenshot the backdrop: %v", err)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := waitDarkBackdrop(ctx, 50*time.Millisecond, func() ([]byte, error) {
+		return h.desktopCommand(ctx, "grim", "-o", "HEADLESS-1", "-")
+	}); err != nil {
+		h.t.Fatalf("integration: backdrop readiness: %v", err)
 	}
+}
+
+func darkBackdrop(img image.Image) error {
+	// Bottom-left is clear: the HUD and optional bar are top-anchored.
 	b := img.Bounds()
-	// Bottom-left, which no test draws in: the overlay is top-anchored and
-	// the bar spans the top.
 	r, g, bl, _ := img.At(b.Min.X+2, b.Max.Y-2).RGBA()
 	if r>>8 > 40 || g>>8 > 40 || bl>>8 > 40 {
-		h.t.Fatalf("integration: the desktop backdrop is (%d,%d,%d), not dark — "+
-			"every screenshot assertion in this package counts lit pixels against it "+
-			"and would be measuring the wallpaper. Is swaybg installed?",
-			r>>8, g>>8, bl>>8)
+		return fmt.Errorf("desktop backdrop is (%d,%d,%d), not dark; every screenshot assertion counts lit pixels against it. Is swaybg installed?", r>>8, g>>8, bl>>8)
 	}
+	return nil
+}
+
+func waitDarkBackdrop(ctx context.Context, interval time.Duration, capture func() ([]byte, error)) error {
+	var last error
+	for {
+		raw, err := capture()
+		if err == nil {
+			var img image.Image
+			img, err = png.Decode(bytes.NewReader(raw))
+			if err == nil {
+				err = darkBackdrop(img)
+			}
+		}
+		if err == nil {
+			return nil
+		}
+		last = err
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("%w (last frame: %v)", ctx.Err(), last)
+		case <-timer.C:
+		}
+	}
+}
+
+// Context bounds desktop IPC/capture, including inherited output pipes.
+func (h *Harness) desktopCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = 100 * time.Millisecond
+	cmd.Env = append(os.Environ(), h.Env()...)
+	cmd.Env = append(cmd.Env, "SWAYSOCK="+h.SwaySock)
+	return cmd.Output()
 }
 
 func (h *Harness) startWaybar() {
@@ -485,13 +519,9 @@ func (h *Harness) Env() []string {
 
 // swaymsg sends a single IPC command and returns the response body.
 func (h *Harness) swaymsg(args ...string) string {
-	cmd := exec.Command("swaymsg", args...)
-	cmd.Env = append(os.Environ(),
-		"XDG_RUNTIME_DIR="+h.XDGRuntime,
-		"WAYLAND_DISPLAY="+h.WaylandDisp,
-		"SWAYSOCK="+h.SwaySock,
-	)
-	out, err := cmd.CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := h.desktopCommand(ctx, "swaymsg", args...)
 	if err != nil {
 		h.t.Fatalf("swaymsg %v: %v (%s)", args, err, out)
 	}

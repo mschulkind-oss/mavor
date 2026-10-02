@@ -206,3 +206,35 @@ stage/dependency consistency was reviewed manually, not claimed as an automated
 index pass. `git diff --check` passed. No generated reports or build artifacts
 were staged, and no host/main-checkout operations, branch changes or publishing
 were performed.
+
+## CI desktop staging repair (2026-10-02)
+
+The CI storybook failure reproduced on Sway 1.9: the configured black
+background covered a separately launched wallpaper client even after ten
+seconds of real screenshot polling. Sway 1.12 passed the unchanged setup.
+Staging now replaces Sway's own background through IPC rather than competing
+with it. Ordinary tests still start black; the original subdued wallpaper,
+teal/blue/editor thresholds, and shared HUD assertions remain unchanged.
+
+Permanent tests failed before each repair: wallpaper ownership, delayed black
+presentation, startup child cleanup, and bounded diagnostics. Both background
+readiness checks now poll real frames with ten-second deadlines. Editor
+children are supervised and reaped; startup cleanup registers before fallible
+operations. Failure diagnostics share a separate one-second command budget,
+record command errors without replacing the original cause, and are retained
+separately from accepted report evidence by CI.
+
+Fresh complete integration suites passed on Sway 1.9 (99.408s) and 1.12
+(100.516s), each with the existing unavailable-audio-server skip. The unchanged
+strict GNOME storybook passed on Shell/Mutter 50.4 (55.178s). Process, deadline,
+and cleanup regressions passed ten race-detector repetitions. Actual full and
+180px cropped captures were inspected on all three compositors: subdued
+wallpaper, native light editor, panel clearance, recording bars, and preview
+text remained visible. Quality, tagged-suite, report artifact/template, and
+workflow syntax checks passed. Durable evidence uses the `landing-` prefix in
+the CI desktop readiness scratch directory; generated reports stay ignored.
+
+This is local evidence using older and current Nix compositors, not the exact
+Ubuntu runner package/runtime combination. No GitHub rerun or green remote
+result is claimed. Production model, preview, HUD, and output code were not
+changed.

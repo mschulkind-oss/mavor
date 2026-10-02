@@ -61,4 +61,21 @@ jobs:
         run: |
           mkdir -p "$XDG_RUNTIME_DIR"
           chmod 700 "$XDG_RUNTIME_DIR"
-          just test-int
+          mkdir -p test/reports
+          set -o pipefail
+          {
+            sway --version
+            swaybg --version
+            pkg-config --modversion gtk4
+            just test-int
+          } 2>&1 | tee test/reports/integration.log
+
+      - name: Retain failed desktop evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-desktop-failure
+          path: |
+            test/reports/integration.log
+            test/reports/staging-failure/
+          if-no-files-found: ignore
