@@ -120,6 +120,45 @@ applications read `CLIPBOARD` and succeed.
 6. If `restore_selection` is true, settles for `RestoreDelay` (50ms) and restores
    original contents to both buffers.
 
+### Bounded restoration and failure reporting
+
+After reaping the known foreground holders, each selection write gets its own
+three-second startup deadline, independent of dispatch cancellation and of the
+other selection's elapsed time. Cleanup attempts both selections even when the
+first fails; the two launch budgets total six seconds, plus the configured
+settle delay. This is not a hard wall-clock bound on scheduling or holder reaping.
+Successful background ownership survives launch-context cancellation, as in the
+copy-only driver. Nonempty restored text and persisted
+final text explicitly declare `text/plain;charset=utf-8`, avoiding MIME type
+inference (guessing the data format). Prior text bytes are not normalized.
+
+A successful zero-byte snapshot clears that selection. An unreadable snapshot
+instead skips restoration and logs the selection and snapshot error: it must not
+clear a selection whose prior contents are unknown. Cleanup launch errors are
+logged with the selection and elapsed time and joined into the returned dispatch
+error, preserving cancellation or any earlier failure. There is no retry loop.
+The existing policy still restores captured values after the lease, without
+checking whether an unrelated application has since changed ownership; it does
+not claim to preserve concurrent selection changes.
+
+#### Focused restoration repair evidence
+
+On 2026-10-02, the permanent deadline regression failed against `d760273`:
+CLIPBOARD consumed all but 150 ms of the actual shared 500 ms deadline;
+PRIMARY's 250 ms transfer then failed. Both fit independent budgets. A real
+headless Sway diagnostic run using the pinned GNOME test environment reproduced
+valid snapshots followed by a CLIPBOARD launch killed at its deadline and a
+PRIMARY launch rejected immediately with the same expired deadline. This proves
+budget exhaustion in that run; it does not reconstruct every earlier intermittent
+failure from timing alone.
+
+With independent budgets, explicit text format, and reported errors, 15 repeated
+real Sway paste tests passed with unchanged selection-content assertions and
+unchanged waits. Permanent tests also cover slow and failed restoration,
+restoring the remaining selection, intentional empties, failed snapshots, exact
+prior whitespace, cancellation cleanup, and retaining cancellation alongside a
+cleanup error. No preview or model behavior changes are part of this repair.
+
 ### Diagnostic Verification in `mavor doctor`
 
 `mavor doctor` verifies the output dispatch environment:

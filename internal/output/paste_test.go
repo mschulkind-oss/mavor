@@ -1,9 +1,13 @@
 package output
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -82,6 +86,7 @@ type mockCmd struct {
 	waitCh chan error
 	killCh chan struct{}
 	killed bool
+	reaped bool
 	mu     sync.Mutex
 }
 
@@ -93,12 +98,16 @@ func newMockCmd() *mockCmd {
 }
 
 func (m *mockCmd) Wait() error {
+	var err error
 	select {
-	case err := <-m.waitCh:
-		return err
+	case err = <-m.waitCh:
 	case <-m.killCh:
-		return errors.New("killed")
+		err = errors.New("killed")
 	}
+	m.mu.Lock()
+	m.reaped = true
+	m.mu.Unlock()
+	return err
 }
 
 func (m *mockCmd) Kill() error {
@@ -109,6 +118,12 @@ func (m *mockCmd) Kill() error {
 		close(m.killCh)
 	}
 	return nil
+}
+
+func (m *mockCmd) isReaped() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.reaped
 }
 
 func (m *mockCmd) isKilled() bool {
@@ -387,5 +402,203 @@ func TestRealLauncherRunEcho(t *testing.T) {
 	}
 	if string(out) != "hello launcher\n" {
 		t.Errorf("got %q, want %q", string(out), "hello launcher\n")
+	}
+}
+
+// deadlineLauncher uses real context deadlines, not simulated error responses.
+type deadlineLauncher struct {
+	*mockLauncher
+	delays        [2]time.Duration
+	restored      [2]bool
+	exhaustFirst  bool
+	restoreErrors [2]error
+}
+
+func (l *deadlineLauncher) Run(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+	if name == "wl-copy" {
+		i := 0
+		if len(args) > 0 && args[0] == "--primary" {
+			i = 1
+		}
+		if _, ok := ctx.Deadline(); !ok {
+			return nil, errors.New("cleanup missing deadline")
+		}
+		delay := l.delays[i]
+		if i == 0 && l.exhaustFirst {
+			deadline, _ := ctx.Deadline()
+			delay = time.Until(deadline) - 150*time.Millisecond
+		}
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timer.C:
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if l.restoreErrors[i] != nil {
+				return nil, l.restoreErrors[i]
+			}
+			l.restored[i] = true
+		}
+	}
+	return l.mockLauncher.Run(ctx, stdin, name, args...)
+}
+
+func TestPasteRestoreIndependentBudgets(t *testing.T) {
+	l := &deadlineLauncher{mockLauncher: newMockLauncher(), delays: [2]time.Duration{0, 250 * time.Millisecond}, exhaustFirst: true}
+	l.runOutputs["wl-paste -n"] = []byte("prior clipboard")
+	l.runOutputs["wl-paste -p"] = []byte("prior primary")
+	p := NewPaste(nil)
+	p.Launcher, p.LeaseDuration, p.RestoreDelay = l, time.Millisecond, time.Millisecond
+	if err := p.Emit(context.Background(), "final text"); err != nil {
+		t.Fatal(err)
+	}
+	if l.restored != [2]bool{true, true} {
+		t.Fatalf("restored = %v; each restore fits its launch deadline, but shared budget starves PRIMARY", l.restored)
+	}
+}
+
+func TestPasteRestoreSlowOrErrorStillRestoresPrimary(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		delay time.Duration
+		err   error
+	}{
+		{"deadline", ClipboardLaunchTimeout + time.Second, context.DeadlineExceeded},
+		{"error", 0, errors.New("copy failed")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l := &deadlineLauncher{mockLauncher: newMockLauncher(), delays: [2]time.Duration{tc.delay, 0}}
+			if tc.name == "error" {
+				l.restoreErrors[0] = tc.err
+			}
+			l.runOutputs["wl-paste -n"] = []byte("prior clipboard")
+			l.runOutputs["wl-paste -p"] = []byte("prior primary")
+			var logs bytes.Buffer
+			p := NewPaste(slog.New(slog.NewTextHandler(&logs, nil)))
+			p.Launcher, p.LeaseDuration, p.RestoreDelay = l, time.Millisecond, time.Millisecond
+			start := time.Now()
+			err := p.Emit(context.Background(), "final text")
+			if !errors.Is(err, tc.err) {
+				t.Fatalf("Emit error = %v, want %v", err, tc.err)
+			}
+			if time.Since(start) > ClipboardLaunchTimeout+2*time.Second {
+				t.Fatal("cleanup exceeded bounded launch budget plus scheduling allowance")
+			}
+			if l.restored != [2]bool{false, true} {
+				t.Fatalf("restored = %v; failed CLIPBOARD must not prevent PRIMARY restoration", l.restored)
+			}
+			if !strings.Contains(logs.String(), "selection cleanup failed") || !strings.Contains(logs.String(), "selection=CLIPBOARD") {
+				t.Fatalf("missing cleanup error: %s", &logs)
+			}
+			if !l.clipCmd.isKilled() || !l.primCmd.isKilled() {
+				t.Fatal("holders not killed")
+			}
+		})
+	}
+}
+
+func TestPasteRestoreEmptyAndFailedSnapshots(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		t.Run(fmt.Sprint("failed=", failed), func(t *testing.T) {
+			l := newMockLauncher()
+			if failed {
+				l.runErrors["wl-paste -n"] = errors.New("unreadable clipboard")
+			}
+			l.runOutputs["wl-paste -p"] = []byte(" primary with trailing whitespace \n")
+			var logs bytes.Buffer
+			p := NewPaste(slog.New(slog.NewTextHandler(&logs, nil)))
+			p.Launcher, p.LeaseDuration, p.RestoreDelay = l, time.Millisecond, time.Millisecond
+			if err := p.Emit(context.Background(), "final text"); err != nil {
+				t.Fatal(err)
+			}
+			var writes [][]string
+			for _, r := range l.runs {
+				if r[0] == "wl-copy" {
+					writes = append(writes, r)
+				}
+			}
+			want := [][]string{{"wl-copy", "--clear"}, {"wl-copy", "--primary", "--type", "text/plain;charset=utf-8", "(stdin: primary with trailing whitespace \n)"}}
+			if failed {
+				want = want[1:]
+			}
+			if !reflect.DeepEqual(writes, want) {
+				t.Fatalf("writes=%q want=%q", writes, want)
+			}
+			if failed && !strings.Contains(logs.String(), "selection restoration skipped") {
+				t.Fatalf("missing snapshot failure: %s", &logs)
+			}
+		})
+	}
+}
+
+func TestPasteCancellationRestoresWithIndependentContext(t *testing.T) {
+	l := &deadlineLauncher{mockLauncher: newMockLauncher()}
+	l.runOutputs["wl-paste -n"] = []byte("prior clipboard")
+	l.runOutputs["wl-paste -p"] = []byte("prior primary")
+	p := NewPaste(nil)
+	p.Launcher, p.LeaseDuration, p.RestoreDelay = l, time.Second, time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel at chord injection, after snapshots and both holder launches.
+	p.Launcher = &cancelChordLauncher{deadlineLauncher: l, cancel: cancel}
+	if err := p.Emit(ctx, "final text"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Emit = %v", err)
+	}
+	if l.restored != [2]bool{true, true} {
+		t.Fatalf("cancelled cleanup: %v", l.restored)
+	}
+	if !l.clipCmd.isKilled() || !l.primCmd.isKilled() || !l.clipCmd.isReaped() || !l.primCmd.isReaped() {
+		t.Fatal("holders not killed and reaped")
+	}
+}
+
+type cancelChordLauncher struct {
+	*deadlineLauncher
+	cancel context.CancelFunc
+}
+
+func (l *cancelChordLauncher) Run(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+	if name == "wtype" {
+		l.cancel()
+	}
+	return l.deadlineLauncher.Run(ctx, stdin, name, args...)
+}
+
+func TestPasteCancelledCleanupErrorPreservesCancellation(t *testing.T) {
+	failure := errors.New("primary restore failed")
+	l := &deadlineLauncher{mockLauncher: newMockLauncher(), restoreErrors: [2]error{nil, failure}}
+	l.runOutputs["wl-paste -n"] = []byte("prior clipboard")
+	// Successful zero-byte PRIMARY snapshot must clear, not skip restoration.
+	ctx, cancel := context.WithCancel(context.Background())
+	p := NewPaste(nil)
+	p.Launcher = &cancelChordLauncher{deadlineLauncher: l, cancel: cancel}
+	p.LeaseDuration, p.RestoreDelay = time.Second, time.Millisecond
+	err := p.Emit(ctx, "final text")
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, failure) {
+		t.Fatalf("Emit must preserve cancellation and cleanup failure: %v", err)
+	}
+	if l.restored != [2]bool{true, false} {
+		t.Fatalf("restored = %v", l.restored)
+	}
+}
+
+func TestPasteRestorePrimaryEmpty(t *testing.T) {
+	l := newMockLauncher()
+	l.runErrors["wl-paste -n"] = errors.New("unreadable clipboard")
+	p := NewPaste(nil)
+	p.Launcher, p.LeaseDuration, p.RestoreDelay = l, time.Millisecond, time.Millisecond
+	if err := p.Emit(context.Background(), "final text"); err != nil {
+		t.Fatal(err)
+	}
+	var writes [][]string
+	for _, r := range l.runs {
+		if r[0] == "wl-copy" {
+			writes = append(writes, r)
+		}
+	}
+	if !reflect.DeepEqual(writes, [][]string{{"wl-copy", "--primary", "--clear"}}) {
+		t.Fatalf("only known-empty PRIMARY should be cleared: %v", writes)
 	}
 }

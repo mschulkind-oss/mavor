@@ -3,6 +3,7 @@ package output
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
@@ -204,7 +205,7 @@ func NewPaste(logger *slog.Logger) *Paste {
 }
 
 // Emit sends text to the focused window using paste dispatch.
-func (p *Paste) Emit(ctx context.Context, text string) error {
+func (p *Paste) Emit(ctx context.Context, text string) (emitErr error) {
 	log := p.Logger
 	if log == nil {
 		log = slog.Default()
@@ -240,26 +241,39 @@ func (p *Paste) Emit(ctx context.Context, text string) error {
 			time.Sleep(restoreDelay)
 		}
 
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-		defer cancel()
-
-		if p.Clipboard {
-			// User requested transcript stay on clipboard
-			_, _ = p.Launcher.Run(cleanupCtx, []byte(text), "wl-copy")
-		} else if p.RestoreSelection && clipErr == nil {
-			if len(oldClip) > 0 {
-				_, _ = p.Launcher.Run(cleanupCtx, oldClip, "wl-copy")
-			} else {
-				_, _ = p.Launcher.Run(cleanupCtx, nil, "wl-copy", "--clear")
+		// Each selection gets a complete launch budget even if the other fails.
+		// This is startup only: a successfully forked owner survives the deadline.
+		write := func(selection string, data []byte, args ...string) {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), ClipboardLaunchTimeout)
+			defer cancel()
+			start := time.Now()
+			_, err := p.Launcher.Run(cleanupCtx, data, "wl-copy", args...)
+			if err = errors.Join(err, cleanupCtx.Err()); err != nil {
+				log.Error("output: selection cleanup failed", "selection", selection,
+					"elapsed_ms", time.Since(start).Milliseconds(), "err", err)
+				emitErr = errors.Join(emitErr, fmt.Errorf("output: restore %s: %w", selection, err))
 			}
 		}
-
-		if p.RestoreSelection && primErr == nil {
-			if len(oldPrim) > 0 {
-				_, _ = p.Launcher.Run(cleanupCtx, oldPrim, "wl-copy", "--primary")
-			} else {
-				_, _ = p.Launcher.Run(cleanupCtx, nil, "wl-copy", "--primary", "--clear")
+		restore := func(selection string, data []byte, snapshotErr error, args ...string) {
+			if snapshotErr != nil {
+				// An unreadable snapshot is not an intentionally empty selection.
+				log.Warn("output: selection restoration skipped", "selection", selection, "snapshot_err", snapshotErr)
+				return
 			}
+			if len(data) == 0 {
+				args = append(args, "--clear")
+			} else {
+				args = append(args, "--type", "text/plain;charset=utf-8")
+			}
+			write(selection, data, args...)
+		}
+		if p.Clipboard {
+			write("CLIPBOARD", []byte(text), "--type", "text/plain;charset=utf-8")
+		} else if p.RestoreSelection {
+			restore("CLIPBOARD", oldClip, clipErr)
+		}
+		if p.RestoreSelection {
+			restore("PRIMARY", oldPrim, primErr, "--primary")
 		}
 	}()
 
