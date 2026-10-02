@@ -39,7 +39,7 @@ func TestGNOMEDaemonInitializationLifecycle(t *testing.T) {
 	if e = json.Unmarshal(raw, &evidence); e != nil {
 		t.Fatal(e)
 	}
-	if len(evidence) != 6 {
+	if len(evidence) != 8 {
 		t.Fatal("missing lifecycle captures")
 	}
 	for _, capture := range evidence[1:] {

@@ -77,7 +77,16 @@ func TestDaemonInitializationLifecycleDesktop(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		capture("initializing", overlay.Initializing, false)
+		suffix := "ready"
+		if fail {
+			suffix = "error"
+		}
+		capture("quiet-"+suffix, overlay.Hidden, false)
+		if e = l.RequestNotice(); e != nil {
+			_ = l.Close()
+			t.Fatal(e)
+		}
+		capture("initializing-"+suffix, overlay.Initializing, true)
 		l.Release()
 		r, e := l.Await()
 		if e != nil {

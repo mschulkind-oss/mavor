@@ -4,7 +4,7 @@ stage: BUILT
 next: "Host installation and physical GPU acceptance require separate authorization"
 ---
 
-# Initialization must be visible; backup must be final
+# Requested initialization must be visible; backup must be final
 
 **Status:** 2026-10-02. Source inspected at `dbb44ff`; implementation and isolated desktop measurements are recorded in [QA](../qa/visible-model-initialization-qa.md).
 
@@ -20,10 +20,14 @@ next: "Host installation and physical GPU acceptance require separate authorizat
 
 - One daemon owns its listener, state subscription, initialization worker,
   loaded models, overlay, and shutdown. No temporary listener or substitute model.
-- Show **initializing** before resolving/building models, including synchronous
-  factories and companion loading; bind IPC before executing expensive work.
-  Status and all three hotkey actions immediately return `initializing` without
-  recording, ducking, output, history writes, or queued actions.
+- Load models quietly; bind IPC before executing expensive work. Only start or
+  toggle while loading shows **initializing**, then sets an explanation that
+  recording is unavailable and the user must press again after ready. Status,
+  stop, and unknown actions never reveal it; repeated requests and stop retain
+  an already requested notice. Controls immediately return `initializing`
+  without recording, ducking, output, history writes, or queued actions.
+  Request presentation and ready/failure transitions share the control lock so
+  a stale request cannot overwrite completion.
 - Initialization completes only after configured main and loaded companion have
   passed actual inference. Main failure is fatal; preserve existing optional
   companion degradation to phrase mode, log why backup is unavailable, and close
@@ -96,7 +100,7 @@ next: "Host installation and physical GPU acceptance require separate authorizat
 
 ## Desktop evidence and non-goals
 
-Both Sway and GNOME must capture production initializing → ready and initializing
+Both Sway and GNOME must capture quiet startup → requested initializing → ready and requested initializing
 → error, plus degraded backup. Shared catalog counts derive from the catalog.
 Add genuine timed quiet → varying speech → pause → recovery compositor frames:
 verify older bars shift left and pause decays to baseline. Preserve quiet static

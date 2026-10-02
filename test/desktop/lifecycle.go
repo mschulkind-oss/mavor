@@ -81,7 +81,7 @@ func StartLifecycle(o overlay.Overlay, fail bool) (*Lifecycle, error) {
 		return daemon.Initialized{Transcriber: tr, MainModel: cfg.Model}, nil
 	}})
 	go func() { l.done <- d.Run(ctx) }()
-	for _, action := range []string{"status", "start", "stop", "toggle"} {
+	for _, action := range []string{"status", "stop"} {
 		deadline := time.Now().Add(5 * time.Second)
 		for {
 			r, e := ipc.Send(l.socket, ipc.Request{Action: action}, time.Second)
@@ -100,6 +100,20 @@ func StartLifecycle(o overlay.Overlay, fail bool) (*Lifecycle, error) {
 		}
 	}
 	return l, nil
+}
+
+// RequestNotice drives the real blocked recording controls after quiet capture.
+func (l *Lifecycle) RequestNotice() error {
+	for _, action := range []string{"start", "toggle", "stop", "status"} {
+		r, err := ipc.Send(l.socket, ipc.Request{Action: action}, time.Second)
+		if err != nil {
+			return err
+		}
+		if r.State != "initializing" {
+			return fmt.Errorf("blocked %s: %+v", action, r)
+		}
+	}
+	return nil
 }
 func (l *Lifecycle) Release() { close(l.release) }
 func (l *Lifecycle) Await() (ipc.Response, error) {

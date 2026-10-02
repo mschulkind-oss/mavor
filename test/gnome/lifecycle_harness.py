@@ -22,7 +22,13 @@ def main():
         capture('baseline')
         for outcome in ('ready', 'error'):
             session.request('daemon_start', visual=outcome)
+            capture('quiet-' + outcome)
+            assert evidence[-1]['receipt']['scene']['Visual'] == 0
+            session.request('daemon_request')
             capture('initializing-' + outcome)
+            scene = evidence[-1]['receipt']['scene']
+            assert scene['Visual'] == 4 and 'cannot record' in scene['Preview'], scene
+            assert 'Press again' in scene['Preview'], scene
             result = session.request('daemon_release')
             assert result['state'] == ('idle' if outcome == 'ready' else 'failed'), result
             capture(outcome)

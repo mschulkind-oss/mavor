@@ -30,7 +30,7 @@ executables. Staging-owned harness/workflow files were not edited.
 
 | Area | Evidence / result |
 | :--- | :--- |
-| Early startup | Real daemon callback lifecycle on both compositors; status/start/stop/toggle return initializing before Factory, no queued recording/output |
+| Early startup | Real daemon callback lifecycle on both compositors; quiet startup/status/stop, then start/toggle reveal explanatory initializing before Factory, no queued recording/output |
 | Ready | Mounted CPU streaming zipformer Factory and actual readiness inference, stream reset, initializing → hidden idle |
 | CLI readiness | Mounted CPU Whisper base.en and zipformer, real inference and repeated decode after ownership transfer; no health-only substitution |
 | Startup error | Controlled missing-model resolution error, exact diagnostic in IPC/HUD, original error returned, socket removed and owned loads joined |
@@ -89,6 +89,36 @@ Durable scratch and the landing handoff are retained at:
   landing-sway-lifecycle-race.log, landing-gnome-lifecycle-race.log
   landing-check.log, landing-done.log, landing-media.log, landing-fixture-hash.log
   browser-sway.png, browser-gnome.png
+```
+
+## Demand-only follow-up
+
+Initialization presentation now follows actual recording requests, not daemon
+launch. Controller regressions observed automatic startup display failing before
+repair; start/toggle, repeated requests, stop retention, readiness, genuine quiet
+failure, cancellation cleanup, and request/completion ordering pass afterward.
+The request shows the visual before setting its explanatory subtitle; the same
+control lock serializes readiness and failure. No extra listener, queued intent,
+model policy, or painter change was introduced.
+
+Real Sway and Shell/Mutter 50.4 lifecycle captures now include quiet startup,
+requested INITIALIZING with the recording-unavailable explanation, then hidden
+ready or genuine ERROR. Mounted CPU model readiness and same-cycle finalized
+backup still run. Full Sway integration and GNOME lifecycle, geometry, focus,
+clipboard coexistence/restoration and normal 23-scene storybook gates passed.
+The storybooks remain explicit requested-state fixtures, not automatic launch
+behavior. Strict screenshot comparison and motion/scaling/wallpaper are unchanged.
+A cancellation test initially checked a subtitle after shutdown cleared it; that
+assertion now runs before cancellation, while close/join checks run afterward.
+
+Follow-up logs and real captures are retained separately:
+
+```text
+/workspace/.yolo/durable/demand-initializing-hud/
+  contract.md, repair-handoff.md
+  unit-red.log, unit-green.log, race-final.log
+  sway-lifecycle.log, sway-full.log, lifecycle-sway-*/
+  gnome-lifecycle.log, gnome-full.log, gnome/hud-*/
 ```
 
 ## Limits

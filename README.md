@@ -188,8 +188,11 @@ quality drift observed with offline segments.
 
 ## Model initialization and request failures
 
-The daemon shows **INITIALIZING** and serves status/hotkeys before loading models.
-Hotkeys during initialization return `initializing`; they do not queue recording.
+The daemon loads models quietly while serving status/hotkeys as `initializing`.
+Only **start** or **toggle** during loading reveals **INITIALIZING**, explaining
+that recording is unavailable until models are ready. The notice stays until
+readiness hides it or a genuine failure shows **ERROR**. Status and stop do not
+reveal the notice. Nothing queues recording: press start/toggle again after ready.
 Readiness includes actual inference on a short generated, non-private voiced
 fixture, with the result discarded and streams reset. Default budgets are
 120 seconds for GPU server startup, 180 seconds overall and 30 seconds per probe.

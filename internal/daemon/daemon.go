@@ -268,7 +268,6 @@ func (d *Daemon) Run(ctx context.Context) error {
 				d.controlMu.Unlock()
 				return
 			}
-			d.controlMu.Unlock()
 			closeInitialized(loaded)
 			initErr = e
 			d.provenanceMu.Lock()
@@ -277,6 +276,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			if ctx.Err() == nil {
 				d.machine.Apply(state.EventInitializeFailed)
 				_ = d.overlay.SetText(e.Error())
+				d.controlMu.Unlock()
 				d.syncHUD(ctx)
 				timer := time.NewTimer(d.errorDuration)
 				select {
@@ -284,6 +284,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 				case <-ctx.Done():
 				}
 				timer.Stop()
+			} else {
+				d.controlMu.Unlock()
 			}
 			stop()
 		}()
@@ -356,6 +358,13 @@ func (d *Daemon) handleRequest(req ipc.Request) (resp ipc.Response) {
 		d.controlMu.Lock()
 		defer d.controlMu.Unlock()
 	}
+	// The blocked request owns presentation, not recording intent. Readiness and
+	// failure use the same control lock, so this cannot repaint a finished load.
+	if (req.Action == "start" || req.Action == "toggle") && d.machine.State() == state.Initializing {
+		_ = d.overlay.Show(overlay.Initializing)
+		_ = d.overlay.SetText("Models still initializing; cannot record yet. Press again after ready.")
+		return ipc.Response{State: state.Initializing.String()}
+	}
 	d.logger.Info("ipc: request", "action", req.Action, "state_before", d.machine.State())
 	switch req.Action {
 	case "toggle":
@@ -402,6 +411,10 @@ func (d *Daemon) reportError(ctx context.Context, reason string, err error) {
 // it's free to call back into Apply (e.g. EventTranscribeDone).
 func (d *Daemon) onTransition(ctx context.Context, s state.State, wg *sync.WaitGroup) {
 	d.logger.Info("state: transitioned", "to", s)
+	if s == state.Initializing {
+		// Startup is quiet; only a recording request reveals initialization.
+		return
+	}
 	d.provenanceMu.Lock()
 	keepWarning := s == state.Idle && time.Now().Before(d.warningUntil)
 	if s == state.Recording {

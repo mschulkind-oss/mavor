@@ -128,6 +128,11 @@ func serveOverlay() error {
 				return err
 			}
 			err = encoder.Encode(map[string]any{"sequence": last, "status": "initializing"})
+		case "daemon_request":
+			if e := lifecycle.RequestNotice(); e != nil {
+				return e
+			}
+			err = encoder.Encode(map[string]any{"sequence": last, "status": "initializing"})
 		case "daemon_release":
 			lifecycle.Release()
 			response, e := lifecycle.Await()
