@@ -42,13 +42,14 @@ jobs:
       # of the overlay tests exists to prove the overlay does not sit under
       # the bar. xwayland is here only to quiet sway's startup error — the
       # tests are all native Wayland — and is cheap enough not to argue with.
+      # The storybook stages a native GTK4 editor, compiled through pkg-config.
       - name: Install the compositor and its tools
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             sway swaybg waybar xwayland \
             grim slurp wtype wl-clipboard \
-            libwayland-client0 xkb-data \
+            libwayland-client0 xkb-data libgtk-4-dev pkg-config \
             pipewire pipewire-pulse wireplumber pulseaudio-utils \
             dbus dbus-x11
 
