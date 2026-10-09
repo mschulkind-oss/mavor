@@ -60,6 +60,13 @@ func TestGNOMEStorybook(t *testing.T) {
 	if err = desktop.ValidateArtifact(evidence[0].File, extra); err != nil {
 		t.Fatal(err)
 	}
+	// This driver hands the catalogue to a Python harness and reads the captures
+	// back from a manifest, so a scene it never renders simply does not appear —
+	// no error, no missing file, nothing to notice. Fail here instead, before a
+	// report is written that would quietly disagree with the Sway storybook.
+	if err = desktop.AssertSceneCoverage(evidence); err != nil {
+		t.Fatal(err)
+	}
 	if err = desktop.BuildReport("../reports", "gnome-storybook", "GNOME Shell / Mutter", "Shell Screenshot · real production XWayland HUD", "Native GNOME panel + production margin 8px", evidence); err != nil {
 		t.Fatal(err)
 	}

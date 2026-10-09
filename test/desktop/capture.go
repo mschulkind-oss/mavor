@@ -11,6 +11,8 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -66,6 +68,43 @@ func sameStack(got, want []overlay.Visual) bool {
 		}
 	}
 	return true
+}
+
+// AssertSceneCoverage reports scenes the shared catalogue defines that a driver
+// did not capture.
+//
+// Every storybook renders from Scenes(): the Sway driver iterates it in Go, so
+// it is covered by construction, but the GNOME driver marshals it into a
+// catalogue for its Python harness and reads the captures back from a manifest.
+// That one can drop a scene with nothing noticing, which is how a UI change
+// reaches one storybook and not the other.
+//
+// A scene that exists in Scenes() and in no report is a missing artefact that
+// someone has to spot by eye. Call this so it is a test failure instead.
+//
+// Extra captures are allowed: a driver may legitimately record something the
+// catalogue does not define, such as the hidden-after-preview baseline.
+func AssertSceneCoverage(evidence []Evidence) error {
+	want := make(map[string]int)
+	for _, s := range Scenes() {
+		want[s.ID]++
+	}
+	got := make(map[string]int)
+	for _, e := range evidence {
+		got[e.ID]++
+	}
+	var missing []string
+	for id, n := range want {
+		if got[id] < n {
+			missing = append(missing, fmt.Sprintf("%s (%d of %d)", id, got[id], n))
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	sort.Strings(missing)
+	return fmt.Errorf("storybook is missing %d of %d scenes from the shared catalogue: %s",
+		len(missing), len(want), strings.Join(missing, ", "))
 }
 
 func BuildReport(dir, prefix, compositor, method, layout string, evidence []Evidence) error {

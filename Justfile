@@ -163,6 +163,27 @@ storybook:
     @echo ""
     @echo "UI Storybook Report: test/reports/ui-storybook.html"
 
+# Regenerate EVERY storybook in one command.
+#
+# All of them render from the same catalogue (desktop.Scenes()), so a new scene
+# reaches them in code at once — but each has its own recipe, and a driver
+# nobody ran is a driver nobody sees. That is how the stacked-dictation scenes
+# reached the Sway report and not the GNOME one: the code was shared, the
+# regeneration was not. Reviewing a UI change means regenerating all of them, so
+# there is one entry point for that.
+#
+# The GNOME pair needs the isolated Shell/Mutter from test/gnome/environment.nix,
+# which is why they are the -nix recipes. Each driver also asserts it captured
+# every scene in the shared catalogue (desktop.AssertSceneCoverage), so a driver
+# that silently drops one fails rather than producing a thinner report.
+storybooks: storybook storybook-gnome-nix storybook-gnome-clipboard-nix
+    @echo ""
+    @echo "Storybooks regenerated:"
+    @echo "  test/reports/ui-storybook.html          (Sway, production layer-shell)"
+    @echo "  test/reports/gnome-storybook.html       (GNOME Shell, XWayland HUD)"
+    @echo "  test/reports/gnome-clipboard-qa.html    (GNOME clipboard acceptance)"
+    @echo "Each report also carries a -motion.gif beside it."
+
 # Benchmark every installed model: speed, peak memory, accuracy, on every
 # backend this machine can run — whisper.cpp and the in-process sherpa-onnx
 # engines, which are always linked in — plus the two setting sweeps: thread

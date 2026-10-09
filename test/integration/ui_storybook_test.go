@@ -82,6 +82,12 @@ func TestUIStorybookReport(t *testing.T) {
 	if err = desktop.ValidateArtifact(evidence[0].File, desktop.Evidence{ID: "hidden-after-preview", File: path, Receipt: r}); err != nil {
 		t.Fatal(err)
 	}
+	// Fail before writing a report that would silently omit a scene. The Sway
+	// driver iterates the catalogue, so this is cheap insurance against a future
+	// driver that does not; the GNOME driver is the one it really guards.
+	if err = desktop.AssertSceneCoverage(evidence); err != nil {
+		t.Fatal(err)
+	}
 	if os.Getenv("MAVOR_VISUAL_SCRATCH") != "" {
 		data, e := json.Marshal(evidence)
 		if e != nil {
