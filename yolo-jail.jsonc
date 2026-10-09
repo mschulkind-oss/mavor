@@ -22,13 +22,21 @@
     "slurp", // region selection (debugging)
     "wtype", // synthetic typing into focused window
     "wl-clipboard", // wl-copy / wl-paste
-    // No GUI toolkit. The overlay speaks wlr-layer-shell directly and is
-    // painted in Go, so there is no GTK4, cairo, pango or gobject-introspection
-    // here and no .dev outputs to supply headers. mavor itself is a cgo
-    // program — it links sherpa-onnx, whose Go binding vendors its own
-    // prebuilt shared objects — so a C toolchain and pkg-config both have to
-    // be here for `just build` to work at all.
+    // mavor itself needs no GUI toolkit: the overlay speaks wlr-layer-shell
+    // directly and is painted in Go, and mavor is a cgo program that links
+    // sherpa-onnx, whose Go binding vendors its own prebuilt shared objects.
+    // A C toolchain and pkg-config have to be here for `just build`.
     "pkg-config",
+    // GTK4 is here for the TESTS, not for mavor. The storybook harness compiles
+    // test/gnome/client/consumer.c with `cc` and `pkg-config --cflags --libs
+    // gtk4`, then runs that binary as the staged background application. Without
+    // it, `just storybook` and the two desktop-staging integration tests die at
+    // their "storybook GTK prerequisite" check. Both outputs are needed: .dev
+    // supplies gtk4.pc and the headers to compile against, and the default
+    // output supplies the shared libraries the compiled client loads at run
+    // time (the harness sets GSK_RENDERER=cairo, so no GPU path is pulled in).
+    "gtk4",
+    "gtk4.dev",
     // Audio stack (headless-capable via null-sink + virtual sources)
     "pipewire",
     "wireplumber",
