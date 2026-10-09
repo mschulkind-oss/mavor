@@ -1,27 +1,42 @@
 ---
-status: proposed
+status: in-review
 stage: DESIGN
-next: "Human rulings on the open questions, then the task breakdown below in order"
+next: "Ruling on OQ-1 through OQ-9, then the plan sketch becomes buildable"
 depends-on: [visible-model-initialization.md, incremental-final-transcription.md]
 ---
 
-# Stacked dictations: record the next one while the last is still transcribing
+# Stacked dictations: let the next recording start while the last one types
 
-**Status:** 2026-10-09. Source inspected at `ec855d9` (`fix(daemon): show
-initialization notice only on recording requests`). Nothing built.
+**Status:** 2026-10-09. Nothing built. Source inspected at `ec855d9`.
 
-> **In short.** Today `mavor toggle` while a transcription is in flight is a
-> deliberate no-op: the user waits for the previous dictation to finish typing.
-> This design makes a new recording startable during that window, and makes the
-> overlay show **one row for the recording** and **one row for each still-
-> transcribing dictation**, stacked in the HUD. At most one recording exists at
-> a time; finished transcripts are typed in spoken order, not completion order.
+> **In short.** `mavor toggle` while a transcription is in flight is a deliberate
+> no-op today, so a follow-up thought waits for the previous dictation to finish
+> typing. Stacking reverses that: capture restarts immediately, at most one
+> recording exists at a time, and finished transcripts are typed in spoken order.
 
-**Needs your ruling:** the [Open questions for the human](#open-questions-for-the-human).
-**Reads with:** [how mavor works](../reference/how-mavor-works.md) (the FSM and
-its invariants), [the overlay resize design](./overlay-geometry.md) (the fixed
-surface this leans on), [the config surface](./configuration-surface.md) (the
-one-writer overlay and `preview.source` rules).
+**Why it matters.** The user's own words: "sometimes I have another thought that
+I want to add on to the end." Today the key silently does nothing for three to
+seven seconds, and the thought is lost.
+
+**The shape.** A per-cycle FSM snapshot replaces the single-state enum, a FIFO of
+pending decodes feeds one ordered output dispatcher, and the overlay paints one
+pill per live cycle, stacked, inside the canvas it already allocates.
+
+**Cost.** The one-state FSM, every `onTransition` side effect, and every test
+asserting the no-op all change. Ducking restore moves from `Idle` to
+capture-stop. Live-final modes do not stack.
+
+**Start at [§4](#4-proposed-fsm-shape-and-invariants)** — every other section
+falls out of the FSM shape.
+
+**Needs your ruling:** [OQ-1](#OQ-1) through [OQ-9](#OQ-9) — all nine block the
+build.
+
+**Reads with:** [`stacked-dictations-plan.md`](./stacked-dictations-plan.md) (the
+implementation sketch — incomplete while the questions are open), [how mavor
+works](../reference/how-mavor-works.md) (the FSM and its invariants), [the
+overlay resize design](./overlay-geometry.md) (the fixed surface this leans on),
+[the config surface](./configuration-surface.md) (the one-writer overlay rule).
 
 ---
 
@@ -60,7 +75,7 @@ design reverses.
 only reason `Idle` can follow a `Transcribing` is that exactly one transcription
 can exist, so the single `EventTranscribeDone` unambiguously means "the
 transcription". Stacking breaks that assumption, so completion must carry an id
-(§4).
+([§4](#4-proposed-fsm-shape-and-invariants)).
 
 ### 1.2 Every consumer of the machine
 
@@ -93,10 +108,11 @@ There is no consumer outside `internal/daemon` except tests. The IPC layer
 (`internal/ipc/ipc.go`) and the CLI (`cmd/mavor/main.go:282-311`) see only the
 **string** in `ipc.Response.State` (`internal/ipc/ipc.go:27-32`), which is the
 seam that keeps this change off the wire protocol if we keep the coarse state
-name (§6).
+name ([§6](#6-cli--ipc-surface)).
 
-Tests that exercise the machine directly or assert its sequence are enumerated
-in §8.
+Tests that exercise the machine directly or assert its sequence are enumerated in
+[`stacked-dictations-plan.md`](./stacked-dictations-plan.md), which carries the
+build order and the test-inversion list.
 
 ### 1.3 What is actually load-bearing
 
@@ -115,9 +131,10 @@ in §8.
   sequence diagram at `:184-224`. These need edits in the same commit as the
   behavior.
 
-The reference doc's table of open questions already records the history of this
-edge as a real bug (`docs/reference/how-mavor-works.md:637`, OQ-4), so reversing
-it is a deliberate product change, not a regression of that fix.
+The reference doc [already records this edge as a real
+bug](../reference/how-mavor-works.md#why-its-this-way) — a failed capture start
+used to leave the overlay claiming RECORDING — so reversing it is a deliberate
+product change, not a regression of that fix.
 
 ---
 
@@ -163,10 +180,10 @@ forks). Per state:
 
 | Side effect | Class | Why / what must change |
 | :--- | :--- | :--- |
-| `recorder.Start` / `recorder.Stop`, `Level()` | **(a) single-instance** | `ParecRecorder` refuses a second `Start` ("audio: capture already in progress", `internal/audio/audio.go:128-130`), and `Stop()` returns the one file. There is one capture, one WAV path, one level meter. Cannot be duplicated; must be hand-off-serialized (§5.4). |
+| `recorder.Start` / `recorder.Stop`, `Level()` | **(a) single-instance** | `ParecRecorder` refuses a second `Start` ("audio: capture already in progress", `internal/audio/audio.go:128-130`), and `Stop()` returns the one file. There is one capture, one WAV path, one level meter. Cannot be duplicated; must be hand-off-serialized ([§5.4](#54-the-recorder-single-instance-hand-off)). |
 | `ducker.Duck` / `ducker.Restore` | **(a) single-instance** | `CommandDucker` remembers one pre-duck volume (`internal/audio/ducking.go:296-297`). Two overlapping Duck/Restore pairs would clobber the saved level. |
 | `startLevelMonitoring` / `levelCancel` | **(a) one writer, per recording** | Already cancels any previous ticker (`:502-506`), so it is effectively one-at-a-time; correct while at most one recording exists. `Level()` is recorder-wide, not per-cycle. |
-| `overlay.Show` / `SetLevel` / `SetText` | **(b) shared, must become multi-row** | One overlay, one scene. §7 turns it into an ordered stack. There must still be exactly one writer (the daemon loop), but the *content* is now N rows. |
+| `overlay.Show` / `SetLevel` / `SetText` | **(b) shared, must become multi-row** | One overlay, one scene. [§7](#7-overlay-n-stacked-pill-rows) turns it into an ordered stack. There must still be exactly one writer (the daemon loop), but the *content* is now N rows. |
 | `cycleID` (`:38`, `:425`) | **(b) must become per-cycle id** | It is a monotone counter used as provenance/backup identity (`usableBackup`, `backup_adapter.go:107-108`). It stays monotone but must be captured per cycle, not read as `d.cycleID` at completion time (`daemon.go:1069` reads the *current* value — with stacking that is the wrong cycle). |
 | `warning`/`source`/`warningUntil`/`warningGen` (`:41-44`) | **(b) shared provenance** | One slot today; with stacking it must describe the *most recent completed* cycle, and each cycle carries its own candidate. `warningGen` guards the deferred overlay hide (`backup_adapter.go:80-104`). |
 | `streamGen`, `streamHistory`, `streamHadSpeech`, `streamSource`, `streamUsesMain`, `streamDrain`, `streamFeedDone` (`:85-97`) | **(b) must become per-cycle** | These describe *the* recording. `streamGen` is the one-writer guard (`previewLive`, `:837-839`). With stacking, a second recording will move `streamGen` while the first cycle's preview/drain is still finishing; per-cycle ids replace the single generation. |
@@ -175,7 +192,7 @@ forks). Per state:
 | `controlMu` (`:73`) | **(c) already fine, keep** | Serializes concurrent IPC control requests so a transition finishes starting/stopping capture before the next. It must also now cover the recorder hand-off. |
 | `wg *sync.WaitGroup` (passed into `onTransition`) | **(b) stays, but must count N** | Today it counts the one transcription goroutine. Shutdown `wg.Wait()` (`:326`) is what stops a goroutine writing to `wl-copy` after exit. It must count every in-flight transcription/dispatch. |
 | `provenanceMu` (`:39`) | **(c) keep** | Independent of per-cycle data; still guards the "last completed" provenance exported to status. |
-| `previewMode`, `transcriber`, `companion` (`:53-77`) | **(c) already per-daemon config** | Decided once at start (`speech.ResolvePreview`). Not per-cycle; see §5.5 for the companion contention. |
+| `previewMode`, `transcriber`, `companion` (`:53-77`) | **(c) already per-daemon config** | Decided once at start (`speech.ResolvePreview`). Not per-cycle; see [§5.5](#55-the-preview-companion) for the companion contention. |
 | phrase buffers (`runPhrasePreview`, `phraseBuffer.take`, `daemon.go:708-763`, `phrasebuffer.go`) | **(b) per-recording** | Each preview driver makes its own local `phraseBuffer` inside `runPhrasePreview` (`:722`), so it is already per-call — but the driver is a single daemon-owned goroutine with daemon-owned `streamFeedDone`/`streamCancel`. With two recordings the buffers must be owned by the recording's cycle state. |
 
 ### 2.2 `final_cycle.go`, `backup_cycle.go`, `backup_adapter.go`
@@ -237,7 +254,7 @@ type dictationCycle struct {
 | `streamDrain, streamFeedDone` | `daemon.go:95-96` | `cycle.drain`, `cycle.feedDone`. `awaitStreamDrain` becomes per-cycle, or a daemon `awaitCycleDrain(cycle)`. |
 | `finalCycle *incrementalCycle` | `daemon.go:49` | `cycle.final`. |
 | `backup *BackupCycle` | `daemon.go:37` | `cycle.backup`. |
-| `previewMode`, `transcriber`, `companion`, `mainModel`, `companionModel` | `daemon.go:59-77` | **Stay daemon-global.** They are resolved once (`speech.ResolvePreview`) and are not per-cycle. This is also why two concurrent companion streams are impossible (§5.5). |
+| `previewMode`, `transcriber`, `companion`, `mainModel`, `companionModel` | `daemon.go:59-77` | **Stay daemon-global.** They are resolved once (`speech.ResolvePreview`) and are not per-cycle. This is also why two concurrent companion streams are impossible ([§5.5](#55-the-preview-companion)). |
 | phrase buffers | `daemon.go:722`, `phrasebuffer.go` | Move into `dictationCycle` (or a per-cycle `previewDriver`). |
 | `controlMu`, `provenanceMu`, `wg`, `warningWG` | `daemon.go:39, 73, 225, 326` | **Stay daemon-global.** Locks and the shutdown wait group are shared by construction. |
 
@@ -400,7 +417,7 @@ wrong in principle and racy with a *new* recording's `Duck` if the timing slips
   keys it on "ducked right now", not `cycleID != 0`.
 - `TestDuckingOnRecordingAndRestoreOnIdle` (`daemon_test.go:295`) asserts the
   current double-restore count and must be rewritten to "ducked while recording,
-  restored as capture stops" (§8). `TestDuckingRestoresOnEnteringTranscribing`
+  restored as capture stops" ([§5.2](#52-background-audio-ducking)). `TestDuckingRestoresOnEnteringTranscribing`
   (`:716`) survives.
 
 ### 5.3 Output must not be blocked by a slow dispatch
@@ -482,12 +499,12 @@ Bound it explicitly:
   behind a single decode worker rather than running N decodes. "N in-flight
   transcriptions" is satisfied by the pending list; only one is *decoding* at a
   time. This also makes completion order equal spoken order trivially, so the
-  dispatcher in §5.1 mostly faces the live-final/failure reordering cases.
+  dispatcher in [§5.1](#51-ordering-rule-decide-and-justify) mostly faces the live-final/failure reordering cases.
 - **Pending cap: a small constant (proposed 8).** Each pending cycle holds one
   WAV on disk in `$TMPDIR/mavor-recordings` (`docs/reference/how-mavor-works.md`
   recording directory). Beyond the cap, `RecordStart` is refused (no-op,
   logged, and surfaced) rather than silently growing disk usage. The overlay can
-  only show a bounded number of rows anyway (§7). The human may prefer a
+  only show a bounded number of rows anyway ([§7](#7-overlay-n-stacked-pill-rows)). The human may prefer a
   different number; see open questions.
 
 ---
@@ -526,7 +543,7 @@ init gating at `daemon.go:362-366` (only `start`/`toggle` in `Initializing`
 shows the notice) is unchanged; `Initializing`/`Failed` still refuse recording.
 
 The `controlMu` around toggle/start/stop (`daemon.go:356-360`) stays; it now also
-serializes the recorder hand-off of §5.4.
+serializes the recorder hand-off of [§5.4](#54-the-recorder-single-instance-hand-off).
 
 ---
 
@@ -633,142 +650,17 @@ existing `Show` call sites and tests (`overlay_test.go`, `paint_test.go`) valid.
 
 ---
 
-## 8. Tests that assert today's no-op or strict sequence
-
-These encode the behavior being changed and must be rewritten **in the same
-commit** (the project rule: new/changed behavior ships with a test).
-
-**`internal/state/state_test.go`**
-
-- `TestApplyTransitions` — the table cases `"toggle in transcribing is a no-op"`,
-  `"start in transcribing is a no-op"`, `"stop in transcribing is a no-op"`
-  (`state_test.go:22-25`) directly assert the reversal and must become `→ Recording`.
-- `TestSubscribeReceivesTransitions` (`:59-81`) asserts the notification
-  sequence `Recording, Transcribing, Idle` after `Toggle, Toggle, Toggle,
-  TranscribeDone`; the third toggle now starts a recording, so the sequence
-  changes.
-- `TestNewIsIdle`, `TestUnsubscribeStopsNotifications`,
-  `TestConcurrentApplyIsRaceFree` (`:9-13`, `:83-96`, `:98-107`) should survive,
-  but `TestConcurrentApplyIsRaceFree` should gain concurrent
-  `RecordStart`/`RecordStop`/`Finish(id)` to cover the new state.
-
-**`internal/daemon/daemon_test.go`**
-
-- `TestToggleDrivesFullPipeline` (`:86`) and `TestStartIdempotency` (`:431`,
-  esp. `:471-477` "start while transcribing is a no-op") and
-  `TestStopIdempotency` (`:492`, esp. `:535-541`) — all assert the no-op.
-- `TestStartAndStopTransitions` (`:393`), `TestOverlayTracksStateChanges`
-  (`:215`, asserts `[Recording, Transcribing, Hidden]`), `TestStatusActionExposesState`
-  (`:201`), `TestConcurrentTogglesWaitForRecorderStart` (`:129`).
-- `TestDuckingOnRecordingAndRestoreOnIdle` (`:295`) — restore-count assertion
-  changes per §5.2. `TestDuckingRestoresOnTranscribeFailure` (`:335`) and
-  `TestDuckingRestoresOnEnteringTranscribing` (`:716`) survive.
-- `TestLevelMonitoringDuringRecording` (`:357`), `TestTranscriptIsRecordedToHistory`
-  (`:740`), `TestTranscriptRecordedEvenWhenOutputFails` (`:766`),
-  `TestHistoryRecordsTheTextThatWasTyped` (`:864`), the non-speech tests
-  (`:795`, `:830`), `TestEmptyTranscriptionSkipsOutput` (`:250`) — survive, but
-  gain a stacked sibling.
-- `TestTranscribeFailureReturnsToIdle` (`:237`),
-  `TestTranscribeFailureShowsErrorOverlay` (`:268`) — must verify a failure in
-  cycle 1 still lets cycle 2 finish and returns to `Idle` only at the end.
-
-**`internal/daemon/initialization_test.go`** — `TestInitializingServesControlsWithoutQueuing`
-(`:21`), `TestInitializationNoticeIsDemandOnly` (`:148`),
-`TestInitializationRequestCannotOverwriteCompletion` (`:230`) rely on
-`Initializing` being the only non-ready phase; they should survive unchanged,
-which is a good regression signal that stacking did not leak into init.
-
-**`internal/daemon/upgrade_test.go`** — `TestUpgradeWatchWaitsForIdle` (`:82`)
-now waits for *all* transcriptions, not one. Worth a stacked variant.
-
-**Preview / final / silence tests**
-
-- `preview_latency_test.go:162` `TestTheNextRecordingWaitsForTheDrain` — the
-  drain now gates preview, not capture; update or split.
-- `final_session_test.go:258` `TestFinalNewRecordingHasIndependentMainState`,
-  and `final_cycle.go`'s reuse guard.
-- `silence_preview_test.go:134` `TestPreviewSpeechEvidenceDoesNotLeakToNextRecording`
-  and `:178` `TestQuietPreviewDoesNotWaitForTailWhenWordsAlreadyRecognized` —
-  the `hadSpeech`/drain fields they exercise become per-cycle; assert no leakage
-  across *concurrent* cycles specifically.
-- `preview_test.go:188` `TestPhraseResultArrivingAfterStopIsDropped` and `:227`
-  `TestStreamPartialArrivingAfterStopIsDropped` — must now drop by cycle id, not
-  a global generation, and must prove cycle 2's partials still paint while
-  cycle 1's late partials are dropped.
-
-**Media/compositor tests**
-
-- `internal/overlay/scenebounds_test.go`, `paint_test.go`,
-  `resize_lag_test.go`, `preview_fit_test.go`, `overlay_test.go`,
-  `internal/overlay/mock.go` callers — geometry and mock expectations for the
-  new stack.
-- `test/integration/preview_overlay_test.go` `overlayBand` band arithmetic.
-
-A grep for "no-op"/"transcribing" in tests is the checklist:
-`rg -n "no-op|transcribing" internal/state internal/daemon --glob '*_test.go'`.
-
----
-
-## 9. Task breakdown (ordered, bounded, one worker each)
-
-Each item is independently verifiable and should be its own commit.
-
-1. **Machine: cycle identity + snapshot, no behavior change.** Add
-   `Snapshot`, `RecordStart`/`RecordStop`/`Finish`, derived `State`, and keep
-   `Apply` delegating. Update `TestApplyTransitions` to the new table but keep
-   toggle-while-transcribing a no-op **for this step only**, so the machine
-   change is proven inert. Verify: `go test ./internal/state/...`.
-2. **Machine: allow start while transcribing.** Flip the toggle/start edge and
-   rewrite the three no-op table cases and `TestSubscribeReceivesTransitions`.
-   Verify: `go test ./internal/state/...` (daemon tests will now fail — expected,
-   fixed in the next steps; do not land this without at least a coincident
-   daemon fix, or land 1–4 as one commit).
-3. **Daemon: `dictationCycle` extraction.** Move `streamGen`/`streamHistory`/
-   `streamHadSpeech`/`streamSource`/`streamUsesMain`/`streamDrain`/
-   `streamFeedDone`/`finalCycle`/`backup`/provenance into the cycle, and
-   `cycleID` becomes the cycle's id. Behavior unchanged; all existing daemon
-   tests green. Verify: `go test ./internal/daemon/...`.
-4. **Daemon: recorder hand-off.** Stop capture on the recording→transcribing
-   edge and store `cycle.wav` before spawning decode; drop the `Idle` restore.
-   Update ducking tests. Verify: `go test ./internal/daemon/...`.
-5. **Daemon: pending list + single decode worker.** `recording`/`pending` on the
-   daemon; `RecordStart` while transcribing appends nothing but starts a cycle;
-   `RecordStop` appends; a FIFO decode worker drains `pending`. `Idle` only when
-   both empty. Add the "third dictation" test and the pending-cap refusal test.
-   Verify: `go test ./internal/daemon/...`.
-6. **Daemon: ordered dispatcher.** `internal/daemon/dispatch.go`; move `Emit` +
-   `history.Append` there; advance `next` on empty/failed cycles. Add a test
-   where cycle 2 finishes before cycle 1 and asserts emit order `1,2`. Verify:
-   `go test ./internal/daemon/...`.
-7. **Overlay `Scene.Stack` + `ShowStack` + fixed-surface height.** Painter
-   first (`paint.go`, constants), then `FixedSurfaceSize`, then Noop/Mock, then
-   wl and X11. Update geometry/bounds tests. Verify:
-   `go test ./internal/overlay/...`.
-8. **Daemon→overlay wiring.** Derive the stack from `Snapshot` and call
-   `ShowStack`. Add a daemon test asserting two pills during
-   record-over-transcribe. Verify: `go test ./internal/daemon/... ./internal/overlay/...`.
-9. **IPC + `mavor status`.** Extend `ipc.Response`, `writeStatus` diagnostics,
-   `--json`. Verify `cmd/mavor/status_policy_test.go` plus a new stacked case.
-10. **Reference doc + storybook.** Update
-    `docs/reference/how-mavor-works.md` (I4, the transition table, the "toggling
-    while transcribing" warning, OQ-4) and add stacked storybook scenes; rerun
-    `just storybook`. Verify: `just check` and the report render.
-11. **Integration.** Update `preview_overlay_test.go` band arithmetic and add a
-    real-compositor stacked check. Verify: `just test-int`.
-
----
-
-## 10. Biggest risks, and what a human must decide
+## 8. Risks
 
 **Risks**
 
 1. **Output out-of-order (recoverable only via history).** Mitigated by the
-   ordered dispatcher (§5.1), but only if *every* completion path goes through
+   ordered dispatcher ([§5.1](#51-ordering-rule-decide-and-justify)), but only if *every* completion path goes through
    it. A missed `EventTranscribeDone` site (`daemon.go:1009, 1114, 1146`) types
    out of order. Highest-severity risk.
 2. **Recorder start/stop interleave.** `ParecRecorder` errors on double start
    (`internal/audio/audio.go:128`) and could stop the *new* recording. The
-   hand-off in §5.4 is the only clean fix; a naive implementation will produce
+   hand-off in [§5.4](#54-the-recorder-single-instance-hand-off) is the only clean fix; a naive implementation will produce
    intermittent "capture already in progress" errors or truncated WAVs.
 3. **Recognizer reuse while a stream is still finishing.** The companion and the
    main streaming model are single-stream. `TestFinalNewRecordingHasIndependentMainState`
@@ -790,48 +682,110 @@ Each item is independently verifiable and should be its own commit.
    recognizer during capture; stacking interacts badly. Recommend shipping
    stacking for `after-stop` only at first (open question 3).
 
-**A human must decide (do not let a worker guess):** ordering rule; visible row
-count and pending cap; whether live-final modes participate; whether `status`
-output changes; and whether a cancel verb is added (the reference doc already
-flags its absence at `docs/reference/how-mavor-works.md:170-172`).
-
----
-
 ## Open questions for the human
 
-1. **Ordering rule.** Should transcripts always be typed in spoken order (my
-   recommendation), even if a later, faster dictation has to wait? The
-   alternative — type each as it finishes — jumbles sentences and is not
-   recoverable except from history. **Recommend: strict spoken order.**
-2. **How many rows, and how many pending?** The user asked for "another row up
-   there". I propose showing a recording row plus up to **two** transcribing
-   rows, and capping pending at **8** (the rest are still queued and their text
-   still lands in order; the overlay collapses to a count). **Recommend: 3
-   visible rows, cap 8.** Is that enough, and should the cap be a config key?
-3. **Do live-final modes (`advanced.final_mode = streaming`/`segments`) stack?**
-   They already serialize on the main recognizer during capture, so stacking
-   there means a second recording can capture but its live feeding waits.
-   **Recommend: ship stacking for `after-stop` only; keep live modes as today
-   until separately designed.**
-4. **`mavor status` output.** Keep stdout exactly `idle|recording|transcribing`
-   and put counts on stderr, plus a new `--json`? **Recommend: yes.** Confirm
-   no script depends on stderr being empty.
-5. **Ducking timing.** Restore when capture stops (my recommendation), rather
-   than when everything finishes. Confirm background media should come back the
-   moment the user releases the key even if typing is still queued.
-6. **Can the second recording have a live preview?** Only after the previous
-   companion/main stream drain joins; otherwise it records silently with no
-   preview. **Recommend: preview may start late or not at all; never block
-   capture.**
-7. **Failure semantics when stacked.** If cycle 1 fails and cycle 2 succeeds,
-   should cycle 1's error pill show while cycle 2 types (and for how long), and
-   does history record the failure? **Recommend: failure is per-cycle; the
-   error pill is shown alongside the recording/transcribing rows for the
-   standard `errorDuration`, then the stack re-renders.**
-8. **Cancel.** Stacking makes "I pressed again by mistake" more consequential.
-   Should this design add a cancel verb, or leave the documented gap
-   (`how-mavor-works.md:170-172`)? **Recommend: leave out of scope here; track
-   separately.**
-9. **Is the push-to-talk keybind semantics unchanged?** Key-down `start`,
-   key-up `stop`, with `stop` in `Transcribing` a no-op. Confirm this is the
-   intended interaction (it is what makes the feature feel natural for PTT).
+Every question carries a stable id. A ruling folds into the body it governs and
+then compacts into the [Decision Ledger](#decision-ledger); until it is ruled the
+question is open and the build waits. Every leaning below is a recommendation,
+not a decision.
+
+1. 💬 **OQ-1: Are transcripts typed in spoken order, or as each finishes?**
+
+   <!-- vantage: question id=OQ-1 leaning="Strict spoken order — type-as-finished jumbles sentences and is recoverable only from history." -->
+
+   _Leaning:_ Strict spoken order, even when a later, faster dictation has to wait
+   its turn.
+
+   **Answer:**
+   > _(empty — fill in when decided)_
+
+2. 💬 **OQ-2: How many rows are visible, and how many dictations may queue?**
+
+   <!-- vantage: question id=OQ-2 leaning="Three visible rows — one recording plus two transcribing — and a pending cap of 8." -->
+
+   _Leaning:_ Three visible rows (one recording, two transcribing), a pending cap
+   of 8, and a collapsed count beyond that — named constants, not config keys.
+
+   **Answer:**
+   > _(empty — fill in when decided)_
+
+3. 💬 **OQ-3: Do the live-final modes stack too?**
+
+   <!-- vantage: question id=OQ-3 leaning="No — ship stacking for after-stop only and leave the live modes as they are." -->
+
+   _Leaning:_ No. Ship stacking for `after-stop` only; `streaming` and `segments`
+   already serialize on the main recognizer during capture, so leave them as they
+   are until separately designed.
+
+   **Answer:**
+   > _(empty — fill in when decided)_
+
+4. 💬 **OQ-4: What does `mavor status` print while dictations are stacked?**
+
+   <!-- vantage: question id=OQ-4 leaning="Keep stdout exactly idle|recording|transcribing, put the counts on stderr, and add --json." -->
+
+   _Leaning:_ Keep stdout exactly `idle|recording|transcribing` so keybinds and
+   scripts keep working, put the counts on stderr, and add `--json`.
+
+   **Answer:**
+   > _(empty — fill in when decided)_
+
+5. 💬 **OQ-5: When does ducked background audio come back?**
+
+   <!-- vantage: question id=OQ-5 leaning="When capture stops — the moment the key is released, even if typing is still queued." -->
+
+   _Leaning:_ When capture stops, not when everything finishes: background media
+   returns the moment the key is released.
+
+   **Answer:**
+   > _(empty — fill in when decided)_
+
+6. 💬 **OQ-6: Can the second recording show a live preview?**
+
+   <!-- vantage: question id=OQ-6 leaning="Only if the previous stream has drained; never delay capture for a preview." -->
+
+   _Leaning:_ It may start late or not at all. Capture is never delayed for a
+   preview.
+
+   **Answer:**
+   > _(empty — fill in when decided)_
+
+7. 💬 **OQ-7: What happens when one stacked cycle fails and another succeeds?**
+
+   <!-- vantage: question id=OQ-7 leaning="Failure is per-cycle: its error pill shows alongside the other rows for errorDuration, then the stack re-renders." -->
+
+   _Leaning:_ Failure is per-cycle. The error pill shows alongside the recording
+   and transcribing rows for the standard `errorDuration`, then the stack
+   re-renders, and history records the failure as it does today.
+
+   **Answer:**
+   > _(empty — fill in when decided)_
+
+8. 💬 **OQ-8: Does this design add a cancel verb?**
+
+   <!-- vantage: question id=OQ-8 leaning="No — leave it out of scope and track it separately." -->
+
+   _Leaning:_ No. Leave it out of scope and track it separately, even though
+   stacking makes a mistaken second press more consequential.
+
+   **Answer:**
+   > _(empty — fill in when decided)_
+
+9. 💬 **OQ-9: Are the push-to-talk bindings unchanged?**
+
+   <!-- vantage: question id=OQ-9 leaning="Unchanged — key-down starts, key-up stops, and stop while transcribing stays a no-op." -->
+
+   _Leaning:_ Unchanged: key-down `start`, key-up `stop`, with `stop` in
+   `Transcribing` still a no-op. That is what makes stacking feel natural under
+   push-to-talk.
+
+   **Answer:**
+   > _(empty — fill in when decided)_
+
+### Decision Ledger
+
+No question has been ruled yet. Each answer becomes a row here and folds into the
+body section it governs.
+
+| ID | Ruling / Decision | Date | Settled in | Built |
+| :--- | :--- | :--- | :--- | :--- |
