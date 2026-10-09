@@ -131,12 +131,12 @@ type Daemon struct {
 	backupMu sync.Mutex
 	backup   *BackupCycle
 
-	// lastVisual dedups overlay Show calls. The derived state can move
+	// lastStack dedups overlay ShowStack calls. The derived stack can move
 	// Transcribing -> Recording -> Transcribing across stacked cycles, and a
-	// repaint of the same visual would restart the pill's strips for no reason.
+	// repaint of the same rows would restart the pill's strips for no reason.
 	// Guarded by visualMu: control requests and the decode worker both paint.
-	visualMu   sync.Mutex
-	lastVisual overlay.Visual
+	visualMu  sync.Mutex
+	lastStack []overlay.Visual
 }
 
 type Initialized struct {
@@ -456,52 +456,145 @@ func (d *Daemon) handleRequest(req ipc.Request) (resp ipc.Response) {
 
 // === overlay painting (one writer under visualMu) ===
 
-// showDerived paints the coarse visual the current snapshot implies, unless a
-// completed warning is still being held on screen. It skips a repaint of the
-// same visual and logs nothing for it.
+// showDerived paints the ordered pill stack the current snapshot implies,
+// unless a completed warning is still being held on screen. It skips a repaint
+// of the same stack and logs nothing for it.
 func (d *Daemon) showDerived() {
-	s := d.machine.State()
+	snap := d.machine.Snapshot()
 	d.provenanceMu.Lock()
-	keepWarning := s == state.Idle && time.Now().Before(d.warningUntil)
+	keepWarning := snap.State() == state.Idle && time.Now().Before(d.warningUntil)
 	d.provenanceMu.Unlock()
 	if keepWarning {
 		return
 	}
-	d.setVisual(visualFor(s))
+	d.showStack(overlayStack(snap))
 }
 
-// setVisual shows v unless it is already the visible one.
-func (d *Daemon) setVisual(v overlay.Visual) {
+// overlayStack derives the ordered pill rows a snapshot implies: the recording
+// row first when a capture is live, then one transcribing row per stopped cycle
+// awaiting output, oldest first. The overlay reserves height for three rows and
+// collapses a longer stack into a "+N" count, so the daemon passes every row.
+func overlayStack(snap state.Snapshot) []overlay.Visual {
+	switch snap.Phase {
+	case state.PhaseInitializing:
+		return []overlay.Visual{overlay.Initializing}
+	case state.PhaseFailed:
+		return []overlay.Visual{overlay.Error}
+	}
+	pills := make([]overlay.Visual, 0, 1+len(snap.Pending))
+	if snap.RecordingID != 0 {
+		pills = append(pills, overlay.Recording)
+	}
+	for range snap.Pending {
+		pills = append(pills, overlay.Transcribing)
+	}
+	if len(pills) == 0 {
+		pills = append(pills, overlay.Hidden)
+	}
+	return pills
+}
+
+// showStack paints an ordered pill stack unless it is already the visible one.
+// It is the one funnel for derived repaints, so it also clears a diagnostic
+// subtitle when the last error or backup row leaves the stack.
+func (d *Daemon) showStack(pills []overlay.Visual) {
 	if d.overlay == nil {
 		return
 	}
 	d.visualMu.Lock()
-	if d.lastVisual == v {
+	if sameStack(d.lastStack, pills) {
 		d.visualMu.Unlock()
 		return
 	}
-	d.lastVisual = v
+	diagnosticCleared := hasDiagnosticRow(d.lastStack) && !hasDiagnosticRow(pills)
+	d.lastStack = append([]overlay.Visual(nil), pills...)
 	d.visualMu.Unlock()
-	if err := d.overlay.Show(v); err != nil {
-		d.logger.Warn("overlay show failed", "visual", v, "err", err)
+	if err := d.overlay.ShowStack(pills); err != nil {
+		d.logger.Warn("overlay show failed", "pills", pills, "err", err)
 		return
 	}
-	d.logger.Info("overlay: shown", "visual", v)
+	if diagnosticCleared {
+		_ = d.overlay.SetText("")
+	}
+	d.logger.Info("overlay: shown", "pills", pills)
 	d.kickResidency()
 }
 
-// showAndSetText repaints v with a subtitle regardless of the dedup, for the
-// error and demand-for-initialization states where the text is the message.
-func (d *Daemon) showAndSetText(v overlay.Visual, text string) {
+// showStackAndSetText repaints a stack with a subtitle regardless of the
+// dedup, for the states where the text is the message.
+func (d *Daemon) showStackAndSetText(pills []overlay.Visual, text string) {
 	if d.overlay == nil {
 		return
 	}
 	d.visualMu.Lock()
-	d.lastVisual = v
+	d.lastStack = append([]overlay.Visual(nil), pills...)
 	d.visualMu.Unlock()
-	_ = d.overlay.Show(v)
+	_ = d.overlay.ShowStack(pills)
 	_ = d.overlay.SetText(text)
 	d.kickResidency()
+}
+
+// showAndSetText repaints a single pill with a subtitle, for the demand-for-
+// initialization notice and initialization failure where the text is the
+// message.
+func (d *Daemon) showAndSetText(v overlay.Visual, text string) {
+	d.showStackAndSetText([]overlay.Visual{v}, text)
+}
+
+// showCycleDiagnostic paints a cycle's failure or backup warning alongside the
+// other live rows rather than instead of them (§7.6): the recording row stays
+// first when a capture is live, the diagnostic takes the failed cycle's row,
+// and any other transcribing rows keep their place.
+func (d *Daemon) showCycleDiagnostic(v overlay.Visual, cycleID uint64, text string) {
+	d.showStackAndSetText(d.diagnosticStack(v, cycleID), text)
+}
+
+// diagnosticStack is overlayStack with one stopped cycle's row replaced by a
+// diagnostic pill. A cycle already retired from the machine (an aborted capture
+// never entered Pending) contributes its diagnostic as a fresh top row.
+func (d *Daemon) diagnosticStack(v overlay.Visual, cycleID uint64) []overlay.Visual {
+	snap := d.machine.Snapshot()
+	pills := make([]overlay.Visual, 0, 1+len(snap.Pending))
+	if snap.RecordingID != 0 {
+		pills = append(pills, overlay.Recording)
+	}
+	placed := false
+	for _, id := range snap.Pending {
+		if id == cycleID && !placed {
+			pills = append(pills, v)
+			placed = true
+			continue
+		}
+		pills = append(pills, overlay.Transcribing)
+	}
+	if !placed {
+		pills = append([]overlay.Visual{v}, pills...)
+	}
+	return pills
+}
+
+// sameStack reports whether two pill stacks are identical.
+func sameStack(a, b []overlay.Visual) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// hasDiagnosticRow reports whether a stack carries an error or backup-warning
+// pill, the rows whose subtitle is a message rather than a live preview.
+func hasDiagnosticRow(pills []overlay.Visual) bool {
+	for _, v := range pills {
+		if v == overlay.Error || v == overlay.Degraded {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *Daemon) showError(text string) {
@@ -536,7 +629,9 @@ func (d *Daemon) startRecording() state.State {
 	d.streamMu.Lock()
 	d.streamHistory = ""
 	d.streamMu.Unlock()
-	d.setVisual(overlay.Recording)
+	// The snapshot now names this recording, so the derived stack paints the
+	// recording row ahead of any earlier cycle still awaiting output.
+	d.showDerived()
 	if err := d.ducker.Duck(); err != nil {
 		d.logger.Warn("ducking: duck failed", "err", err)
 	} else {
@@ -637,7 +732,7 @@ func (d *Daemon) reportCycleError(_ context.Context, cycle *dictationCycle, reas
 	d.warning = err.Error()
 	d.provenanceMu.Unlock()
 	d.logger.Error(reason, "err", err, "cycle", cycle.id)
-	d.showError(err.Error())
+	d.showCycleDiagnostic(overlay.Error, cycle.id, err.Error())
 }
 
 // decodeWorker is the single decode path: cycles are recognized one at a time,
@@ -1388,7 +1483,7 @@ func (d *Daemon) decodeCycle(ctx context.Context, c *dictationCycle) {
 		}
 		mainErr := err
 		if speech.IsGPURequestFailure(err) {
-			d.showError(mainErr.Error())
+			d.showCycleDiagnostic(overlay.Error, c.id, mainErr.Error())
 			d.syncHUD(ctx)
 			timer := time.NewTimer(d.errorDuration)
 			select {
@@ -1415,7 +1510,7 @@ func (d *Daemon) decodeCycle(ctx context.Context, c *dictationCycle) {
 					out.model = r.Model
 					out.warning = fmt.Sprintf("GPU-enabled server request failed: %v; finalized companion backup: %s", mainErr, r.Model)
 					d.logger.Warn("pipeline: using finalized companion backup", "warning", out.warning, "cycle", r.CycleID)
-					d.showAndSetText(overlay.Degraded, out.warning)
+					d.showCycleDiagnostic(overlay.Degraded, c.id, out.warning)
 					d.provenanceMu.Lock()
 					d.warning = out.warning
 					d.warningUntil = time.Now().Add(3 * time.Second)
@@ -1511,20 +1606,6 @@ func removeCapture(wav string) {
 	}
 	_ = os.Remove(wav)
 	_ = os.Remove(wav + ".txt")
-}
-
-func visualFor(s state.State) overlay.Visual {
-	switch s {
-	case state.Initializing:
-		return overlay.Initializing
-	case state.Failed:
-		return overlay.Error
-	case state.Recording:
-		return overlay.Recording
-	case state.Transcribing:
-		return overlay.Transcribing
-	}
-	return overlay.Hidden
 }
 
 // TranscriptRecorder persists completed transcripts for later recovery. It is

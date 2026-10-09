@@ -51,9 +51,9 @@ func litPixels(t *testing.T, h *Harness) int {
 // screen and is always the first bright band, so the overlay is the last one.
 // Measuring the union of every lit pixel measures waybar instead, which is a
 // mistake this file made once already.
-// With preview text the overlay is TWO bands — the pill and the strip below
-// it, separated by previewGap — so this spans from the first non-waybar band
-// to the last rather than returning one of them.
+// With preview text, stacked pills, or both, the overlay is SEVERAL bands — one
+// per pill row, separated by rowGap, plus the strip below — so this spans from
+// the first non-waybar band to the last rather than returning one of them.
 func overlayBand(t *testing.T, h *Harness) (rowBand, bool) {
 	t.Helper()
 	bands := findBrightBands(decodePNG(t, h.Grim()))
@@ -239,5 +239,58 @@ func TestPreviewStaysWithinItsShareOfTheScreen(t *testing.T) {
 	}
 	if widest == 0 {
 		t.Error("no overlay pixels found in the lower band")
+	}
+}
+
+// A stacked scene draws one pill per live dictation, so a real compositor must
+// show a taller drawn region than a single pill — and two genuinely separate
+// pill bands, not one taller pill. This is the stacked analogue of the
+// single-pill reach-the-screen checks above.
+func TestStackedPillsReachTheScreen(t *testing.T) {
+	h := StartWithBar(t)
+	t.Setenv("XDG_RUNTIME_DIR", h.XDGRuntime)
+	t.Setenv("WAYLAND_DISPLAY", h.WaylandDisp)
+
+	ov, err := overlay.NewDefault(testTopMargin, testPreviewWidth, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("overlay.NewDefault: %v", err)
+	}
+	defer ov.Close()
+
+	if err := ov.Show(overlay.Recording); err != nil {
+		t.Fatalf("Show(Recording): %v", err)
+	}
+	waitForOverlay(t, h)
+	single, ok := overlayBand(t, h)
+	if !ok {
+		t.Fatal("no overlay band on screen for Recording")
+	}
+
+	if err := ov.ShowStack([]overlay.Visual{overlay.Recording, overlay.Transcribing}); err != nil {
+		t.Fatalf("ShowStack: %v", err)
+	}
+	waitForOverlay(t, h)
+
+	// Waybar, then two pill rows separated by rowGap: three bands in all.
+	bands := findBrightBands(decodePNG(t, h.Grim()))
+	if len(bands) < 3 {
+		t.Fatalf("expected waybar plus two stacked pill bands, got %v", bands)
+	}
+	stacked, ok := overlayBand(t, h)
+	if !ok {
+		t.Fatal("overlay disappeared once a second pill was stacked")
+	}
+	if stackedH, singleH := stacked.end-stacked.start, single.end-single.start; stackedH <= singleH {
+		t.Errorf("stacked overlay spans %d rows, not taller than one pill's %d", stackedH, singleH)
+	}
+
+	// A single pill must still draw the same way it always did: back to one
+	// band after the stack clears.
+	if err := ov.Show(overlay.Recording); err != nil {
+		t.Fatalf("Show(Recording) after stack: %v", err)
+	}
+	waitForOverlay(t, h)
+	if bands := findBrightBands(decodePNG(t, h.Grim())); len(bands) != 2 {
+		t.Errorf("after clearing the stack expected waybar plus one pill, got %v", bands)
 	}
 }

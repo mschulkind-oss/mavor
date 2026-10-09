@@ -14,6 +14,7 @@ import (
 	"github.com/mschulkind-oss/mavor/internal/ipc"
 	"github.com/mschulkind-oss/mavor/internal/models"
 	"github.com/mschulkind-oss/mavor/internal/output"
+	"github.com/mschulkind-oss/mavor/internal/overlay"
 	"github.com/mschulkind-oss/mavor/internal/speech"
 	"github.com/mschulkind-oss/mavor/internal/state"
 )
@@ -272,5 +273,162 @@ func TestStackedFailureDoesNotWedgeTheNextDictation(t *testing.T) {
 	waitForState(t, sock, "idle")
 	if calls := out.Calls(); len(calls) != 1 || calls[0] != "second survived" {
 		t.Fatalf("output = %v, want only the second dictation's text", calls)
+	}
+}
+
+// stackSeen reports whether a recorded overlay call sequence asked for the
+// given pill stack.
+func stackSeen(stacks [][]overlay.Visual, want []overlay.Visual) bool {
+	for _, s := range stacks {
+		if len(s) != len(want) {
+			continue
+		}
+		match := true
+		for i := range want {
+			if s[i] != want[i] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
+// textSeen reports whether a recorded overlay call sequence carried the given
+// subtitle.
+func textSeen(texts []string, want string) bool {
+	for _, s := range texts {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+// Recording over a transcribing cycle asks the overlay for two pills: the live
+// recording row above the earlier dictation still awaiting output.
+func TestStackedDictationsRequestTwoPills(t *testing.T) {
+	ov := &overlay.Mock{}
+	tr := &sequencedTranscriber{
+		texts: []string{"the first thought", "the second thought"},
+		first: make(chan struct{}),
+		hold:  make(chan struct{}),
+	}
+	d, sock := newTestDaemon(t, func(c *Config) {
+		c.Overlay = ov
+		c.Transcriber = tr
+	})
+	stop := runDaemon(t, d)
+	defer stop()
+
+	sendWithRetry(t, sock, "start")
+	waitForState(t, sock, "recording")
+	sendWithRetry(t, sock, "stop")
+	waitForState(t, sock, "transcribing")
+	select {
+	case <-tr.first:
+	case <-time.After(sendTimeout):
+		t.Fatal("first transcription never started")
+	}
+
+	// Record the second while the first still decodes.
+	sendWithRetry(t, sock, "start")
+	waitForState(t, sock, "recording")
+
+	if !stackSeen(ov.Stacks(), []overlay.Visual{overlay.Recording, overlay.Transcribing}) {
+		t.Fatalf("no [Recording Transcribing] stack among %v", ov.Stacks())
+	}
+
+	sendWithRetry(t, sock, "stop")
+	close(tr.hold)
+	waitForState(t, sock, "idle")
+}
+
+// A single dictation keeps its one-pill rendering: every requested stack is a
+// lone row, and the primaries still move Recording -> Transcribing -> Hidden.
+func TestSingleDictationRequestsOnePill(t *testing.T) {
+	ov := &overlay.Mock{}
+	d, sock := newTestDaemon(t, func(c *Config) {
+		c.Overlay = ov
+		c.Transcriber = &speech.Mock{Text: "one thought"}
+	})
+	stop := runDaemon(t, d)
+	defer stop()
+
+	sendWithRetry(t, sock, "start")
+	waitForState(t, sock, "recording")
+	sendWithRetry(t, sock, "stop")
+	waitForState(t, sock, "idle")
+
+	stacks := ov.Stacks()
+	if len(stacks) == 0 {
+		t.Fatal("no overlay stacks requested")
+	}
+	for _, s := range stacks {
+		if len(s) != 1 {
+			t.Fatalf("single dictation requested a %d-pill stack: %v", len(s), s)
+		}
+	}
+	want := []overlay.Visual{overlay.Recording, overlay.Transcribing, overlay.Hidden}
+	if got := ov.Calls(); len(got) != len(want) {
+		t.Fatalf("overlay primaries = %v, want %v", got, want)
+	} else {
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("overlay primary %d = %v, want %v", i, got[i], want[i])
+			}
+		}
+	}
+}
+
+// §7.6: a failed cycle's error pill joins the live stack instead of replacing
+// it, so a recording row and its error are requested together.
+func TestStackedFailureRendersErrorAlongsideTheRecording(t *testing.T) {
+	ov := &overlay.Mock{}
+	tr := &failFirstTranscriber{first: make(chan struct{}), hold: make(chan struct{})}
+	d, sock := newTestDaemon(t, func(c *Config) {
+		c.Overlay = ov
+		c.Transcriber = tr
+	})
+	stop := runDaemon(t, d)
+	defer stop()
+
+	sendWithRetry(t, sock, "start")
+	sendWithRetry(t, sock, "stop")
+	select {
+	case <-tr.first:
+	case <-time.After(sendTimeout):
+		t.Fatal("first transcription never started")
+	}
+
+	// A second recording starts while the first is still failing.
+	sendWithRetry(t, sock, "start")
+	waitForState(t, sock, "recording")
+	close(tr.hold)
+
+	deadline := time.Now().Add(sendTimeout)
+	for time.Now().Before(deadline) {
+		if stackSeen(ov.Stacks(), []overlay.Visual{overlay.Recording, overlay.Error}) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !stackSeen(ov.Stacks(), []overlay.Visual{overlay.Recording, overlay.Error}) {
+		t.Fatalf("no [Recording Error] stack among %v", ov.Stacks())
+	}
+
+	sendWithRetry(t, sock, "stop")
+	waitForState(t, sock, "idle")
+
+	// The error message was painted with the error row, then cleared once the
+	// row left the stack.
+	if !textSeen(ov.Texts(), "first dictation blew up") {
+		t.Fatalf("error subtitle never painted, texts = %v", ov.Texts())
+	}
+	if got := ov.LastText(); got != "" {
+		t.Fatalf("diagnostic subtitle lingered after the error row left the stack: %q", got)
 	}
 }

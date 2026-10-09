@@ -221,11 +221,11 @@ type gatedInitializationHUD struct {
 	once    sync.Once
 }
 
-func (h *gatedInitializationHUD) Show(v overlay.Visual) error {
-	if v == overlay.Initializing {
+func (h *gatedInitializationHUD) ShowStack(pills []overlay.Visual) error {
+	if len(pills) > 0 && pills[0] == overlay.Initializing {
 		h.once.Do(func() { close(h.entered); <-h.release })
 	}
-	return h.diagnosticHUD.Show(v)
+	return h.diagnosticHUD.ShowStack(pills)
 }
 func TestInitializationRequestCannotOverwriteCompletion(t *testing.T) {
 	for _, fail := range []bool{false, true} {

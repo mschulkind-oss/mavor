@@ -51,9 +51,13 @@ type diagnosticHUD struct {
 	diagnostics map[overlay.Visual]string
 }
 
-func (h *diagnosticHUD) Show(v overlay.Visual) error {
+func (h *diagnosticHUD) ShowStack(pills []overlay.Visual) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	v := overlay.Hidden
+	if len(pills) > 0 {
+		v = pills[0]
+	}
 	if v != h.visual {
 		h.text = ""
 	}

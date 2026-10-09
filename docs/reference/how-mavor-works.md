@@ -19,25 +19,29 @@ covers:
   - internal/wayland/
   - cmd/mavor/main.go
 tags: [architecture, fsm, ipc, daemon, wayland, speech, reference]
-summary: "As-built reference for the mavor daemon: the three-state machine, the side-effect listener that hangs off it, the five interfaces the external world sits behind, what happens on every failure path, and the invariants a maintainer breaks by accident."
+summary: "As-built reference for the mavor daemon: the per-cycle state machine and its ordered output dispatcher, the five interfaces the external world sits behind, what happens on every failure path, and the invariants a maintainer breaks by accident."
 ---
 
 # How `mavor` works
 
 **Status:** Core reference verified 2026-09-05 against `7e52f94`; overlay and
 GNOME/output statements reconciled 2026-10-02 against `f8c9f02`-based
-work, with [measured HUD QA](../qa/gnome-hud-qa.md). No new whole-system stamp is claimed.
+work, with [measured HUD QA](../qa/gnome-hud-qa.md); stacked-dictation lifecycle
+reconciled 2026-10-09 against `4877cfa`/`1208a3b` plus the changes in this
+landing commit. No new whole-system stamp is claimed.
 
-`mavor` is one long-lived daemon whose entire shared mutable state is a
-three-value enum. A hotkey-launched CLI pokes it over a Unix socket; the enum
-advances; a listener fires the side effects. Audio capture, speech recognition,
-typing and the on-screen indicator each sit behind an interface, so the daemon's
-own tests run in milliseconds with no compositor and no audio server.
+`mavor` is one long-lived daemon whose shared mutable state is a lifecycle phase
+plus a per-cycle snapshot: one recording slot and an ordered queue of stopped
+cycles awaiting output. A hotkey-launched CLI pokes it over a Unix socket; a
+control request opens or closes the recording slot, and the daemon paints one
+overlay pill per live cycle. Audio capture, speech recognition, typing and the
+on-screen indicator each sit behind an interface, so the daemon's own tests run
+in milliseconds with no compositor and no audio server.
 
 | Component | Lives in |
 | :--- | :--- |
-| The state machine and its listeners | `internal/state` (`Machine`, `State`, `Event`) |
-| Side-effect dispatch, the whole pipeline | `internal/daemon` (`Daemon.onTransition`, `Daemon.runTranscription`) |
+| The state machine and its listeners | `internal/state` (`Machine`, `Snapshot`, `State`, `Event`) |
+| Side-effect dispatch, the whole pipeline | `internal/daemon` (`Daemon.startRecording`, `stopRecording`, `decodeWorker`, `runDispatcher`) |
 | Wire protocol between CLI and daemon | `internal/ipc` (`Request`, `Response`, `Send`) |
 | Capture, level metering, VAD, ducking | `internal/audio` (`Recorder`, `ParecRecorder`, `Ducker`, `DetectSpeech`) |
 | Speech recognition, every runtime | `internal/speech` (`Transcriber`, `StreamTranscriber`, `Resolve`, `Factory`) |
@@ -61,15 +65,19 @@ These are read out of the code as written, and the IDs are cited elsewhere.
 
 **P1. The FSM is the only shared mutable state.** Every other component is
 either stateless or owns state nobody else touches. The one mutex that matters
-guards the state word in `state.Machine`.
+guards the phase, the recording slot and the pending queue in `state.Machine`.
 
 **P2. Side effects hang off state *transitions*, never off IPC requests.**
-`Daemon.handleRequest` only calls `Apply`; all doing happens in the listener.
-This is why `status` can never have a side effect, and why an event that
-produces no transition produces no work.
+`Daemon.handleRequest` only calls the machine's control methods
+(`RecordStart`/`RecordStop`); all doing happens on the transition. This is why
+`status` can never have a side effect, and why a control request the machine
+absorbs produces no work.
 
-**P3. Listeners run off the lock,** which makes the listener re-entrant — it is
-allowed to call `Apply` again, and does.
+**P3. Listeners run off the lock,** so a listener may call back into
+`state.Machine` without deadlocking. Nothing registers one today — the daemon
+paints the overlay from the control path and the decode worker, because a stack
+row depends on facts the machine does not own (a warning window, an error) — but
+the mechanism stays tested.
 
 **P4. Every external dependency is behind an interface with a mock in the same
 package.** `audio.MockRecorder`, `audio.MockDucker`, `speech.Mock`,
@@ -90,26 +98,33 @@ has no state field; it asks the machine. The overlay keeps a `Scene` describing
 what it is drawing, but only writes it — it never reads it back to make a
 decision.
 
-**I2. Every `Apply` call site is in `internal/daemon`.** `handleRequest` for the
-three mutating verbs; `reportError` on any pipeline failure; `runTranscription`
-on each of its completion paths. `Apply` is exported and nothing enforces this.
+**I2. Every FSM call site is in `internal/daemon`.** `startRecording` and
+`stopRecording` (reached from `handleRequest`) drive `RecordStart`/`RecordStop`;
+`abortCycle` calls `AbortRecording`; the dispatcher calls `Finish(id)` after a
+cycle's output is out. The machine is exported and nothing enforces this.
 
-**I3. Listeners run off the lock so the listener may re-enter `Apply`.** Not
-incidental: `reportError` calls `Apply` from inside a listener invocation.
-Holding the lock across listeners would deadlock on the first failure.
+**I3. Listeners run off the lock so a listener may re-enter the machine.** Not
+incidental: a listener callback that reads `State()` or `Snapshot()` takes the
+same lock, so holding it across listeners would deadlock. No production code
+registers one today; the machine is painted from the control path and the decode
+worker.
 
-**I4. At most one transcription goroutine exists at a time**, enforced only by
-the shape of the FSM: the sole `wg.Add(1)` is on the `Recording → Transcribing`
-edge, and `Recording` is unreachable again until that goroutine has driven the
-machine back to `Idle`. There is no explicit guard.
+**I4. At most one recording exists, and at most one decode runs at a time.**
+Capture is single-instance by the recording slot (`RecordingID` is one id or
+none) and, as a backstop, by `ParecRecorder`'s own mutex. Decode is
+single-instance because one `decodeWorker` goroutine drains the `decodeQueue`.
+Any number of stopped cycles may await output (`Pending`, capped at
+`state.MaxPending` = 8); `Idle` is reached only when the last one has been typed.
+The `WaitGroup` covers the decode worker and the dispatcher, so shutdown waits
+for in-flight output before exiting.
 
 **I5. Shutdown order is `Serve` → `wg.Wait` → stop monitors → restore ducking →
 close the overlay → close the transcriber.** Each step is load-bearing:
-`ipc.Server.Serve` waits on its own connection handlers, so no new `Apply` can
-start after it returns; the daemon's `wg.Wait` drains an in-flight
-transcription, so nothing is still writing to `wl-copy` after the binary exits;
-the overlay closes last because that final transcription's `Apply` triggers a
-`Show`, and a closed overlay refuses posts.
+`ipc.Server.Serve` waits on its own connection handlers, so no new control
+request can start after it returns; the daemon's `wg.Wait` drains the decode
+worker and the dispatcher, so nothing is still writing to `wl-copy` after the
+binary exits; the overlay closes last because a final cycle's completion paints
+it, and a closed overlay refuses posts.
 
 **I6. `ParecRecorder` guards its own single-capture invariant** with a mutex and
 a nil check, independently of the FSM. Two overlapping guards for the same
@@ -124,47 +139,63 @@ to start; a failed dial means a stale file from a crash, which is unlinked.
 invocation and holds nothing between runs. Two rapid keypresses are two
 independent processes, and their order at the daemon is the socket accept order.
 
-**I9. The transcript reaches disk before it reaches the screen.**
-`runTranscription` appends to the history log *before* calling `Emit`, because a
-mis-targeted or swallowed emit is exactly when the user needs the text back.
+**I9. The transcript reaches disk before it reaches the screen.** The
+dispatcher appends to the history log *before* calling `Emit`, in the same
+spoken order as what is typed, because a mis-targeted or swallowed emit is
+exactly when the user needs the text back.
 
 ---
 
 ## The state machine
 
-Three states, five events.
+A lifecycle phase, one recording slot, and an ordered queue.
 
-```mermaid
-stateDiagram-v2
-    [*] --> Idle
-    Idle --> Recording: Toggle / RecordStart
-    Recording --> Transcribing: Toggle / RecordStop
-    Recording --> Idle: TranscribeFailed
-    Transcribing --> Idle: TranscribeDone / TranscribeFailed
-```
+`state.Machine` holds a `Phase` — `Ready`, `Initializing`, or `Failed` — plus a
+`Snapshot`: the id of the active recording (`0` when none) and the ordered ids of
+stopped cycles awaiting output. A single `State` cannot say "recording and
+transcribing", so the machine derives the coarse word the IPC wire still
+carries from that snapshot:
 
-| From \ Event | `EventToggle` | `EventRecordStart` | `EventRecordStop` | `EventTranscribeDone` | `EventTranscribeFailed` |
-|---|---|---|---|---|---|
-| `Idle` | → `Recording` | → `Recording` | — | — | — |
-| `Recording` | → `Transcribing` | — | → `Transcribing` | — | → `Idle` |
-| `Transcribing` | — | — | — | → `Idle` | → `Idle` |
+| Condition | `State()` |
+| :--- | :--- |
+| `Phase == Initializing` | `initializing` |
+| `Phase == Failed` | `failed` |
+| `RecordingID != 0` | `recording`, however many cycles are pending |
+| `RecordingID == 0 && len(Pending) > 0` | `transcribing` |
+| otherwise | `idle` |
+
+Control requests drive the recording slot through `RecordStart`/`RecordStop`
+(`Toggle` is "advance the slot": start if none, stop if one). A completed cycle
+is retired by `Finish(id)`, which is idempotent, so a late or cancelled
+completion is harmless. `EventToggle`, `EventRecordStart`, `EventRecordStop` and
+the two completion events stay as the legacy `Apply` entry points and delegate
+to these methods; `EventTranscribeDone`/`Failed` retire the oldest pending id.
+
+| From \ Event | `Toggle` / `RecordStart` | `RecordStop` | `Finish(id)` |
+|---|---|---|---|
+| no recording, no pending | → `recording` (new id) | — | — |
+| recording | — (toggle stops instead) | → `transcribing`, id appended | — |
+| no recording, pending | → `recording` (new id; pending untouched) | — | retire `id`; → `idle` iff empty |
 
 Three things about this table are load-bearing:
 
-**Events with no edge are absorbed silently.** `Apply` returns
-`(currentState, false)`, no listener fires, and the caller gets the unchanged
-state back. There is no "invalid transition" signal anywhere, which is what
-makes a duplicate `mavor stop` harmless.
+**Events with no edge are absorbed silently.** `RecordStart` returns
+`changed=false` when it refuses, no listener fires, and the caller gets the
+unchanged snapshot back. There is no "invalid transition" signal anywhere, which
+is what makes a duplicate `mavor stop` harmless.
+
+**Start no longer waits for the previous dictation.** A toggle while a
+transcription is in flight opens a new recording; at most one recording exists,
+but any number of stopped cycles may be queued for output. This is the "stacked
+dictations" behavior: a follow-up thought is captured immediately and typed after
+the earlier one. The queue is bounded at `state.MaxPending` (eight cycles); a
+start beyond it is refused and logged rather than growing disk use without limit.
 
 **The toggle and the push-to-talk pair are separate vocabularies over the same
-edges.** `EventToggle` means "advance"; `EventRecordStart` and `EventRecordStop`
-name a direction and are no-ops in the wrong state. A held key that repeats, or
-a `stop` that arrives after the compositor already sent one, changes nothing.
-
-**Toggling while transcribing does nothing** — deliberately, and it is the most
-consequential product decision in the tree. `Apply` returns `changed=false`, the
-CLI prints `transcribing`, and the user's impatient second tap is neither queued
-nor treated as a cancel.
+slot.** `Toggle` means "advance"; `RecordStart` and `RecordStop` name a direction
+and are no-ops in the wrong state. A held key that repeats, or a `stop` that
+arrives after the compositor already sent one, changes nothing. `stop` with no
+recording is a no-op even while other cycles transcribe.
 
 > [!WARNING]
 > There is no way to abort a transcription short of killing the daemon. The FSM
@@ -172,8 +203,9 @@ nor treated as a cancel.
 > either needs `Recorder` and `Transcriber` to support abandonment first.
 
 The listener mechanism is a map of IDs to callbacks with a returned unsubscribe
-closure. Listeners fire **only on change** and **only off the lock**. The daemon
-registers exactly one; nothing else subscribes.
+closure. Listeners fire **only on change** and **only off the lock**. No
+production code registers one — the daemon paints explicitly — so this is used
+by tests today.
 
 ## One dictation cycle
 
@@ -189,36 +221,41 @@ sequenceDiagram
 
     K->>C: $mod+grave pressed
     C->>D: {"action":"start"} over the socket
-    D->>M: Apply(EventRecordStart)
-    M-->>D: listener: Idle → Recording
+    D->>M: RecordStart() → new cycle id
     D->>A: Duck audio, Start capture
     D->>D: level monitor + streaming preview goroutines
     D-->>C: {"state":"recording"}
     K->>C: key released
     C->>D: {"action":"stop"}
-    D->>M: Apply(EventRecordStop)
-    M-->>D: listener: Recording → Transcribing
-    D->>A: stop monitors, restore ducked audio
-    D->>A: Stop() → WAV path
+    D->>M: RecordStop() → id appended to Pending
+    D->>A: Stop capture inline → WAV path, then restore ducked audio
+    D->>D: enqueue cycle for the single decode worker
     D->>D: Energy check — skip only if quiet and no preview recognized words
     D->>S: Transcribe(ctx, wav)
     S-->>D: text
     D->>D: strip non-speech markers — a marker-only transcript ends the cycle here
     D->>D: flatten to one line (output.CleanText)
-    D->>D: append to history log
     D->>O: Emit — selected paste, typing, or clipboard driver
-    D->>M: Apply(EventTranscribeDone)
+    D->>M: Finish(id) — Idle only after the last pending cycle
 ```
 
 The side effects run **inline on the handler goroutine**: `handleRequest` calls
-`Apply`, `Apply` calls the listener, and the listener forks `parec` before the
-IPC response is written. So the state in the response is the state after side
-effects were attempted, which is what makes the integration tests deterministic
-— and what puts a fork/exec inside the client's round-trip budget.
+`RecordStart`/`RecordStop`, which duck, start capture, stop capture and enqueue
+the cycle before the IPC response is written. So the state in the response is the
+state after side effects were attempted, which is what makes the integration
+tests deterministic — and what puts a fork/exec inside the client's round-trip
+budget. Capture stop is part of the stop edge on purpose: the WAV is on disk
+before the cycle is queued, so a following start can never interleave a `Stop`
+with a `Start`.
 
-The transcription itself is the exception: the `Recording → Transcribing` edge
-spawns a goroutine tracked by the daemon's `WaitGroup`, because model inference
-takes seconds and the listener must not hold the handler that long.
+Recognition and output are the exception. One `decodeWorker` goroutine
+recognizes queued cycles in capture order, and one `runDispatcher` goroutine
+types and records the finished transcripts, also in spoken order — a slow `Emit`
+for cycle 1 never stalls decoding cycle 2. Both are tracked by the daemon's
+`WaitGroup`, so shutdown waits for them, and a cycle is retired from the machine
+only after its output is out. That is why `Idle` means everything has been typed,
+not merely decoded: two dictations can be in flight at once, and the second
+finishing first does not move it ahead in the text.
 
 **Both temporary files are removed at the end of every cycle** — the captured
 WAV and the `.txt` sidecar whisper-cli writes beside it — so a completed
@@ -368,7 +405,7 @@ cgo.
 | `audio.Ducker` | `Duck`, `Restore` | `CommandDucker` over `wpctl` or `pactl`, auto-detected |
 | `speech.Transcriber` | `Transcribe(ctx, wavPath) (string, error)` | chosen by `speech.Factory` — see below |
 | `output.Dispatcher` | `Emit(ctx, text) error` | `Paste` (default), `Native` / `Wayland` (typing), or `Clipboard` / `X11Clipboard` (copy only) |
-| `overlay.Overlay` | `Show(Visual)`, `SetLevel`, `SetText`, `SetNotice`, `Close` | `overlay.WL` — layer-shell; `overlay.X11` — passive GNOME XWayland |
+| `overlay.Overlay` | `Show(Visual)`, `ShowStack([]Visual)`, `SetLevel`, `SetText`, `SetNotice`, `Close` | `overlay.WL` — layer-shell; `overlay.X11` — passive GNOME XWayland |
 
 Two optional interfaces are discovered by type assertion, so an implementation
 opts in by having the methods: `audio.ChunkReader` (a recorder that can hand
@@ -460,7 +497,9 @@ Real constraints, stated so nobody rediscovers them the hard way:
   interface.
 - **`Visual` is a closed enum carrying no data.** Elapsed time, an error
   message, or "which model is loading" cannot be expressed; the live text and
-  level ride separate methods precisely because `Show` could not carry them.
+  level ride separate methods precisely because `Visual` could not carry them.
+  A stack is a slice of these, one per live dictation, and still carries only
+  states.
 - **The audio format contract is invisible.** 16 kHz mono s16le is chosen in
   `audio.DefaultCommand` because whisper wants it, but no signature states it. A
   recorder that produced 48 kHz stereo would type-check and fail at runtime.
@@ -473,12 +512,12 @@ Every row was traced through the code.
 
 | Failure | What happens | What the user sees |
 | :--- | :--- | :--- |
-| Capture fails to start (`parec` missing, no audio server) | `reportError`: the error visual, a pause, then `EventTranscribeFailed` → `Idle` | The error pill, then nothing typed |
+| Capture fails to start (`parec` missing, no audio server) | `abortCycle`: the error pill joins the live stack, ducking is restored, and the cycle is retired without entering `Pending` | The error pill alongside any other live rows, then nothing typed for that cycle |
 | Capture starts but records nothing | `Stop` rejects a zero-length WAV; same error path | The error pill |
 | A WAV with a header and no samples | Reaches final transcription by default; with `silence_filter = true`, rejected unless preview words override | Depends on the final model result; empty text and annotations are not typed |
-| With `silence_filter = true`, energy check finds no speech and no preview recognized words | `EventTranscribeDone` without calling the transcriber | Pill vanishes, nothing typed |
+| With `silence_filter = true`, energy check finds no speech and no preview recognized words | The cycle completes without calling the transcriber | Pill vanishes, nothing typed |
 | With `silence_filter = true`, energy check rejects quiet or short speech, but the preview recognized words | Run final transcription despite low energy; never emit preview text | Main model's final transcript gets typed, if non-empty |
-| The transcriber errors | `reportError` → `Idle` | The error pill |
+| The transcriber errors | The error pill joins the live stack, then the cycle is retired; later stacked dictations still type | The error pill alongside any other live rows |
 | Whisper decodes near-silence to `[BLANK_AUDIO]` or `(machine whirring)` | `speech.StripNonSpeech` cuts the annotation; what is left is empty, so this becomes the empty-transcript row | Pill vanishes, nothing typed |
 | A dictation longer than ~30s | whisper-cli writes one line per window; `output.CleanText` joins them before the transcript is recorded or typed | One flowing line, and `mavor history` recovers the same string that was typed |
 | Empty transcript | Logged at Warn, `Emit` never called | Pill vanishes, nothing typed |
@@ -528,8 +567,13 @@ XGB and queries read-only Mutter monitor layout through pure-Go D-Bus.
 Neither adds a production GTK/libX11 dependency or Shell extension.
 
 Each backend has one resource-owning loop. Audio setters enqueue bounded samples;
-visual/text updates keep the latest desired state. Preview clears when leaving
-Recording. Complete frames erase older text. Layer-shell requests no exclusive
+visual/text updates keep the latest desired state. A stack is one `ShowStack`
+call carrying the ordered rows — the recording pill first when a capture is
+live, then one transcribing pill per queued cycle — and the painter draws one
+pill per row inside the surface it allocated at startup; a stack longer than the
+three reserved rows collapses into a `+N` count rather than growing the canvas.
+Preview clears when the primary row changes. Complete frames erase older text.
+Layer-shell requests no exclusive
 zone or keyboard interactivity. XWayland sets non-focusable hints and an empty
 SHAPE input region before mapping, never activates or grabs input. The margin is
 a gap below the existing usable-area reservation, not a fixed panel height.
@@ -555,7 +599,9 @@ and unverified physical/lifecycle cases.
 
 The empty space, verified by search rather than assumed:
 
-- **No cancel or abort**, and no queueing of a toggle during transcription.
+- **No cancel or abort.** A toggle during transcription now starts the next
+  recording (see [the state machine](#the-state-machine)); nothing cancels or
+  drops a queued cycle.
 - **No per-utterance model or language selection.** Both are config, read at
   daemon start; changing either needs a restart.
 - **No text post-processing** — no punctuation restoration beyond what the model
@@ -652,7 +698,7 @@ this replaces used.
 | ID | Ruling | Why it stays |
 | :--- | :--- | :--- |
 | OQ-1 | The core contract stays batch: one recording, one `Transcribe`, one string | Streaming arrived as an *optional* interface and a preview channel instead. Whisper is meaningfully worse on short chunks, and keeping the emitted text on the batch path is what lets both runtime families share one pipeline |
-| OQ-2 | The error channel is a fourth `Visual`, held briefly, and not a message | `Show` stays data-free, so no failure path can block on rendering text. The detail lives in the log and the history file |
+| OQ-2 | The error channel is a fourth `Visual`, held briefly, and not a message | `ShowStack` carries panes, not payloads, so no failure path can block on rendering text. The detail lives in the log and the history file |
 | OQ-3 | Zero audio retention: both temporary files are deleted at the end of every cycle | The directory was an unbounded, personal archive nobody had decided to keep. Recovery is the transcript in the history log, not the audio |
 | OQ-4 | The FSM grew `Recording × TranscribeFailed → Idle`, and nothing else | That edge was a real bug — a failed capture start left the overlay claiming RECORDING until two more keypresses cleared it. A cancel event is still deliberately absent |
 | OQ-5 | No implementation registry. The model name selects the implementation, by way of the catalog | A plugin architecture for a single-user tool is the wrong trade. The `engine` key this ruling originally referred to is itself gone: it welded *which model* to *where its runtime runs*, and those are now derived separately |

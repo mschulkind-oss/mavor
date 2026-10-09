@@ -1,13 +1,21 @@
 ---
-next: "Build it — the sketch becomes a real implementation plan first"
+next: "Retire the implementation sketch against what shipped"
 status: accepted
-stage: DECIDED
+stage: BUILT
 depends-on: [visible-model-initialization.md, incremental-final-transcription.md]
 ---
 
 # Stacked dictations: let the next recording start while the last one types
 
-**Status:** 2026-10-09. Nothing built. Source inspected at `ec855d9`.
+**Status:** 2026-10-09, built by `4877cfa` (daemon), `1208a3b` (overlay), and the
+changes in this landing commit that wired the daemon to `ShowStack`.
+**MEASURED:** the state/IPC/CLI transitions, the single- and two-pill overlay
+request sequences, the failed cycle's error row, and a headless-Sway screenshot
+of a stacked scene all ran, with `just check`, `just lint-tagged` and the
+headless-Sway integration suite green. **UNMEASURED:** no real microphone, model
+inference, GPU, or non-Sway desktop ran; a three-deep stack and the `+N`
+collapse were exercised only by unit tests and the storybook painter, and the
+GTK storybook recipes could not run in this environment.
 
 > **In short.** `mavor toggle` while a transcription is in flight is a deliberate
 > no-op today, so a follow-up thought waits for the previous dictation to finish
@@ -707,19 +715,19 @@ one silent dictation cannot wedge the queue.
 ## Open questions for the human
 
 None. Every question has been ruled and compacted into the
-[Decision Ledger](#decision-ledger) below. Nothing here is built yet — a ruling
-is not evidence of implementation, and the `Built` column says so.
+[Decision Ledger](#decision-ledger) below. The ledger's `Built` column records
+what shipped.
 
 ### Decision Ledger
 
 | ID | Ruling / Decision | Date | Settled in | Built |
 | :--- | :--- | :--- | :--- | :--- |
-| OQ-1 | Finished transcripts are typed in spoken order — strictly increasing cycle id — never in completion order | 2026-10-09 | [§5.1](#51-ordering-rule) | no |
-| OQ-2 | Three visible rows (one recording, two transcribing); pending cap of 8, collapsed to a count beyond that; named constants, not config keys | 2026-10-09 | [§5.6](#56-third-dictation-while-two-are-transcribing) | no |
-| OQ-3 | Stacking ships for `after-stop` only; `streaming` and `segments` keep today's behavior | 2026-10-09 | [§8](#8-risks) | no |
-| OQ-4 | `mavor status` reports the stack itself, alongside the derived state; there is no stdout compatibility constraint to preserve | 2026-10-09 | [§6](#6-cli--ipc-surface) | no |
-| OQ-5 | Duck while a capture is active and restore when it stops, so media returns on key release even while typing is still queued | 2026-10-09 | [§5.2](#52-background-audio-ducking) | no |
-| OQ-6 | The second recording's live preview may start late or not at all; capture is never delayed for it | 2026-10-09 | [§5.5](#55-the-preview-companion) | no |
-| OQ-7 | Failure is per-cycle: its error pill shows alongside the recording and transcribing rows for `errorDuration`, then the stack re-renders, and history records the failure | 2026-10-09 | [§7.6](#76-a-failed-cycle-inside-the-stack) | no |
+| OQ-1 | Finished transcripts are typed in spoken order — strictly increasing cycle id — never in completion order | 2026-10-09 | [§5.1](#51-ordering-rule) | yes |
+| OQ-2 | Three visible rows (one recording, two transcribing); pending cap of 8, collapsed to a count beyond that; named constants, not config keys | 2026-10-09 | [§5.6](#56-third-dictation-while-two-are-transcribing) | yes |
+| OQ-3 | Stacking ships for `after-stop` only; `streaming` and `segments` keep today's behavior | 2026-10-09 | [§8](#8-risks) | yes |
+| OQ-4 | `mavor status` reports the stack itself, alongside the derived state; there is no stdout compatibility constraint to preserve | 2026-10-09 | [§6](#6-cli--ipc-surface) | yes |
+| OQ-5 | Duck while a capture is active and restore when it stops, so media returns on key release even while typing is still queued | 2026-10-09 | [§5.2](#52-background-audio-ducking) | yes |
+| OQ-6 | The second recording's live preview may start late or not at all; capture is never delayed for it | 2026-10-09 | [§5.5](#55-the-preview-companion) | yes |
+| OQ-7 | Failure is per-cycle: its error pill shows alongside the recording and transcribing rows for `errorDuration`, then the stack re-renders, and history records the failure | 2026-10-09 | [§7.6](#76-a-failed-cycle-inside-the-stack) | yes |
 | OQ-8 | No cancel verb; out of scope, tracked separately | 2026-10-09 | [§8](#8-risks) | no |
-| OQ-9 | Push-to-talk unchanged: key-down starts, key-up stops, and `stop` while transcribing stays a no-op | 2026-10-09 | [§6](#6-cli--ipc-surface) | no |
+| OQ-9 | Push-to-talk unchanged: key-down starts, key-up stops, and `stop` while transcribing stays a no-op | 2026-10-09 | [§6](#6-cli--ipc-surface) | yes |
