@@ -113,6 +113,17 @@ class Session:
             self.launch(["dbus-daemon", "--config-file=" + str(config), "--nofork", "--print-address=" + str(out.fileno())], "bus", pass_fds=(out.fileno(),))
         until(lambda: bool(address.read_text().strip()), "bus")
         self.env.update(DBUS_SESSION_BUS_ADDRESS=address.read_text().strip(), DBUS_SYSTEM_BUS_ADDRESS=address.read_text().strip())
+        # XWayland refuses to start unless /tmp/.X11-unix carries the sticky bit,
+        # and Mutter aborts the whole Shell when XWayland fails — so the Shell
+        # dies before publishing the socket this harness waits for, and the
+        # failure reads as a bare 30s "Shell socket" timeout with no hint of the
+        # cause. /tmp is per-launch, and whichever X client creates the directory
+        # first decides its mode: the headless Sway harness leaves it 0755. So
+        # whether this works depends on which harness ran first; establish the
+        # precondition here instead of depending on that ordering.
+        x11_sockets = pathlib.Path("/tmp/.X11-unix")
+        x11_sockets.mkdir(mode=0o1777, exist_ok=True)
+        os.chmod(x11_sockets, 0o1777)
         self.shell = self.launch([shell, "--headless", "--wayland", *["--virtual-monitor="+m for m in self.monitors], "--wayland-display=mavor-hud", "--unsafe-mode"], "shell")
         until(lambda: (self.run / "r/mavor-hud").exists(), "Shell socket", 30)
         self.env["WAYLAND_DISPLAY"] = "mavor-hud"
@@ -167,8 +178,8 @@ class Session:
             log.write(json.dumps({"request": data, "response": response}) + "\n")
         return response
 
-    def apply_frame(self, visual, level=None, text=None):
-        self.request("apply", visual=visual, level=level, text=text)
+    def apply_frame(self, visual, level=None, text=None, stack=None):
+        self.request("apply", visual=visual, level=level, text=text, stack=stack)
         return validate_receipt(self.request("await_frame", timeout_ms=5000))
 
 

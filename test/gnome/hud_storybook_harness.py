@@ -16,10 +16,15 @@ def main():
         session.start_child(binary)
         for scene in scenes:
             visual = names[scene['Visual']]
-            receipt = session.apply_frame(visual, scene['AudioLevel'], scene['Preview'])
+            # The catalogue carries the extra pill rows for a stacked scene and the
+            # child paints the primary plus these. Without forwarding them the HUD
+            # draws one pill and the receipt can never match the catalogue, which
+            # is what the "scene/receipt mismatch" failure reported.
+            stack = [names[v] for v in (scene.get('Stack') or [])]
+            receipt = session.apply_frame(visual, scene['AudioLevel'], scene['Preview'], stack=stack)
             if scene['FeedFrames'] > 1:
                 for _ in range(scene['FeedFrames'] - 1):
-                    receipt = session.apply_frame(visual, scene['AudioLevel'], scene['Preview'])
+                    receipt = session.apply_frame(visual, scene['AudioLevel'], scene['Preview'], stack=stack)
                     time.sleep(.04)
             time.sleep(.1)
             receipt = session.request('await_frame', timeout_ms=5000)['receipt']

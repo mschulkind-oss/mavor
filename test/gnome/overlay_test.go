@@ -26,13 +26,50 @@ import (
 )
 
 type overlayCommand struct {
-	Command   string   `json:"command"`
-	Version   int      `json:"version"`
-	Sequence  uint64   `json:"sequence"`
-	Visual    string   `json:"visual"`
+	Command  string `json:"command"`
+	Version  int    `json:"version"`
+	Sequence uint64 `json:"sequence"`
+	Visual   string `json:"visual"`
+	// Stack are the pill rows below the primary, top to bottom. The storybook
+	// catalogue carries them; without this field a stacked scene reaches the
+	// child as a single pill and its receipt can never match the catalogue.
+	Stack     []string `json:"stack"`
 	Level     *float64 `json:"level"`
 	Text      *string  `json:"text"`
 	TimeoutMS int      `json:"timeout_ms"`
+}
+
+// overlayVisual maps a protocol visual name to the production enum. The empty
+// name is not valid here: callers that mean "keep the current row" test for it
+// themselves.
+func overlayVisual(name string) (overlay.Visual, bool) {
+	switch name {
+	case "hidden":
+		return overlay.Hidden, true
+	case "recording":
+		return overlay.Recording, true
+	case "transcribing":
+		return overlay.Transcribing, true
+	case "error":
+		return overlay.Error, true
+	case "initializing":
+		return overlay.Initializing, true
+	case "degraded":
+		return overlay.Degraded, true
+	}
+	return overlay.Hidden, false
+}
+
+func sameVisuals(a, b []overlay.Visual) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // TestOverlayChild is a generic process wrapping the production Overlay.
@@ -63,6 +100,7 @@ func serveOverlay() error {
 	encoder := json.NewEncoder(os.Stdout)
 	var last uint64
 	visual := overlay.Hidden
+	var stack []overlay.Visual
 	var backupClose func() error
 	defer func() {
 		if backupClose != nil {
@@ -148,22 +186,22 @@ func serveOverlay() error {
 			err = encoder.Encode(map[string]any{"sequence": last, "status": "stopped"})
 		case "apply":
 			next := visual
-			switch command.Visual {
-			case "":
-			case "hidden":
-				next = overlay.Hidden
-			case "recording":
-				next = overlay.Recording
-			case "transcribing":
-				next = overlay.Transcribing
-			case "error":
-				next = overlay.Error
-			case "initializing":
-				next = overlay.Initializing
-			case "degraded":
-				next = overlay.Degraded
-			default:
-				return fmt.Errorf("invalid visual")
+			if command.Visual != "" {
+				v, ok := overlayVisual(command.Visual)
+				if !ok {
+					return fmt.Errorf("invalid visual")
+				}
+				next = v
+			}
+			// An omitted or null stack means no stack, so a scene that follows a
+			// stacked one cannot inherit its rows.
+			nextStack := make([]overlay.Visual, 0, len(command.Stack))
+			for _, name := range command.Stack {
+				v, ok := overlayVisual(name)
+				if !ok {
+					return fmt.Errorf("invalid stack visual %q", name)
+				}
+				nextStack = append(nextStack, v)
 			}
 			if command.Level != nil {
 				v := *command.Level
@@ -171,11 +209,12 @@ func serveOverlay() error {
 					return fmt.Errorf("level outside finite [0,1]")
 				}
 			}
-			if next != visual || !applied {
-				if err := o.Show(next); err != nil {
+			if next != visual || !sameVisuals(nextStack, stack) || !applied {
+				if err := o.ShowStack(append([]overlay.Visual{next}, nextStack...)); err != nil {
 					return err
 				}
 				visual = next
+				stack = nextStack
 			}
 			applied = true
 			if command.Level != nil {
