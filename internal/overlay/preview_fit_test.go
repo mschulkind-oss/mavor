@@ -159,3 +159,23 @@ func TestRenderIntoRefusesATooSmallBuffer(t *testing.T) {
 		t.Error("RenderInto accepted a buffer smaller than the scene")
 	}
 }
+
+// A stack adds rows below the pill; it is not a second subtitle. The preview
+// strip's width — and so the whole surface's width — is unchanged by it, which
+// is what keeps a stacked scene from re-centering the overlay on screen.
+func TestStackDoesNotWidenTheScene(t *testing.T) {
+	base := Scene{Visual: Recording, Preview: strings.Repeat("word ", 60), MaxPreviewWidth: 400}
+	stacked := base
+	stacked.Stack = []Visual{Transcribing, Transcribing}
+	bw, _, err := SceneSize(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sw, _, err := SceneSize(stacked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sw != bw {
+		t.Errorf("a stack changed the scene width from %d to %d; rows are added below, not beside", bw, sw)
+	}
+}

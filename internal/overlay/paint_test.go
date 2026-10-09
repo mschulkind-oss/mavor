@@ -186,6 +186,35 @@ func TestPreviewStripWidensTheSurface(t *testing.T) {
 
 func sceneWH(s Scene) (int, int, error) { return SceneSize(s) }
 
+// A stacked scene renders one whole pill per row. The scene is unpinned here,
+// so SceneSize has to grow to hold every row the painter draws — the two must
+// agree for both the fixed surface and the storybook.
+func TestRenderDrawsEveryStackedRow(t *testing.T) {
+	s := Scene{Visual: Recording, Stack: []Visual{Transcribing, Transcribing}, Phase: 0.5, Levels: ramp()}
+	img, err := Render(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, h, err := SceneSize(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if img.Bounds().Dy() != h {
+		t.Fatalf("rendered height %d, SceneSize said %d — a stacked row would be cut", img.Bounds().Dy(), h)
+	}
+	f, err := textFaces()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, pillH := pillSize(f, s)
+	for i := range rowsFor(s) {
+		band := image.Rect(0, rowTop(pillH, i), w, rowTop(pillH, i)+pillH)
+		if !rowHasInk(img, band) {
+			t.Fatalf("row %d (%v) painted nothing", i, band)
+		}
+	}
+}
+
 // The pulse animation has to actually change pixels, or the dot is static.
 func TestPulsePhaseChangesTheDot(t *testing.T) {
 	a, err := Render(Scene{Visual: Recording, Phase: 0})
@@ -293,7 +322,7 @@ func TestPreviewBackdropClearsItsText(t *testing.T) {
 	pw := previewStripWidth(f, s)
 	ph := previewSize + 2*previewPadY + 4
 	px := (img.Bounds().Dx() - pw) / 2
-	py := pillH + previewGap
+	py := stripY(pillH, 1, 1)
 
 	// Inside the strip, the glyphs are the only bright pixels; the fill is
 	// near-black. Halfway between the two is a safe threshold.

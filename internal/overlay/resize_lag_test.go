@@ -92,3 +92,28 @@ func TestBlitHandlesASceneSmallerThanTheSurface(t *testing.T) {
 		t.Error("a scene smaller than the surface blitted nothing")
 	}
 }
+
+// A stacked scene has the same property as a single pill: it is sized from the
+// scene, so a surface that is still one row tall must crop it rather than read
+// or write past the destination.
+func TestBlitCropsAStackedSceneLargerThanTheSurface(t *testing.T) {
+	scene := Scene{Visual: Recording, Stack: []Visual{Transcribing, Transcribing}, MaxPreviewWidth: 1280}
+	w, h, err := SceneSize(scene)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	if err := RenderInto(img, scene); err != nil {
+		t.Fatal(err)
+	}
+
+	// The surface as it still is on the resize frame: one pill tall, before any
+	// stacked row was acked.
+	const sw, sh = 1280, 56
+	buf := &wayland.Buffer{Width: sw, Height: sh, Stride: sw * 4, Pix: make([]byte, sw*sh*4)}
+	blit(img, buf, img.Bounds())
+
+	if len(buf.Pix) != sw*sh*4 {
+		t.Fatalf("blit resized the destination: %d bytes, want %d", len(buf.Pix), sw*sh*4)
+	}
+}

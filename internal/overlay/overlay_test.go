@@ -22,6 +22,11 @@ func TestNoopRecordsShows(t *testing.T) {
 	if !reflect.DeepEqual(n.Calls(), want) {
 		t.Fatalf("Calls = %v, want %v", n.Calls(), want)
 	}
+	// Show is the single-pill form of ShowStack, so each call records a
+	// one-element stack and the two APIs cannot drift.
+	if stacks := n.Stacks(); len(stacks) != 3 || !reflect.DeepEqual(stacks[0], []Visual{Recording}) {
+		t.Fatalf("Stacks = %v, want three one-pill stacks", stacks)
+	}
 	if err := n.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}

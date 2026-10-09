@@ -7,6 +7,7 @@ import "sync"
 type Mock struct {
 	mu         sync.Mutex
 	calls      []Visual
+	stacks     [][]Visual
 	levels     []float64
 	texts      []string
 	notices    []string
@@ -21,13 +22,20 @@ type Mock struct {
 	CloseErr  error
 }
 
-func (m *Mock) Show(v Visual) error {
+// Show is the single-pill form of ShowStack, so a caller that only ever shows
+// one pill records exactly as it always did.
+func (m *Mock) Show(v Visual) error { return m.ShowStack([]Visual{v}) }
+
+func (m *Mock) ShowStack(pills []Visual) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.ShowErr != nil {
 		return m.ShowErr
 	}
-	m.calls = append(m.calls, v)
+	m.stacks = append(m.stacks, append([]Visual(nil), pills...))
+	if len(pills) > 0 {
+		m.calls = append(m.calls, pills[0])
+	}
 	return nil
 }
 
@@ -78,6 +86,18 @@ func (m *Mock) Calls() []Visual {
 	return out
 }
 
+// Stacks returns a snapshot of every pill stack passed to ShowStack, in call
+// order. A Show call appears as a one-element stack.
+func (m *Mock) Stacks() [][]Visual {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([][]Visual, len(m.stacks))
+	for i, s := range m.stacks {
+		out[i] = append([]Visual(nil), s...)
+	}
+	return out
+}
+
 func (m *Mock) Levels() []float64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -124,6 +144,7 @@ func (m *Mock) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls = nil
+	m.stacks = nil
 	m.levels = nil
 	m.texts = nil
 	m.notices = nil

@@ -54,17 +54,34 @@ func (o *X11) mutate(change func(*desired)) error {
 	o.revision++
 	return nil
 }
-func (o *X11) Show(v Visual) error {
-	if v < Hidden || v > Degraded {
-		return errors.New("overlay: invalid visual")
+
+// Show transitions to a single visual state: the one-pill form of ShowStack.
+func (o *X11) Show(v Visual) error { return o.ShowStack([]Visual{v}) }
+
+// ShowStack transitions to an ordered stack of pill rows, pills[0] being the
+// primary. An empty slice hides the window.
+func (o *X11) ShowStack(pills []Visual) error {
+	for _, v := range pills {
+		if v < Hidden || v > Degraded {
+			return errors.New("overlay: invalid visual")
+		}
+	}
+	primary := Hidden
+	if len(pills) > 0 {
+		primary = pills[0]
 	}
 	err := o.mutate(func(d *desired) {
-		if v != d.visual {
+		if primary != d.visual {
 			d.preview = ""
 			d.notice = ""
 			d.levels = nil
 		}
-		d.visual = v
+		d.visual = primary
+		if len(pills) > 1 {
+			d.stack = append([]Visual(nil), pills[1:]...)
+		} else {
+			d.stack = nil
+		}
 	})
 	if err == nil {
 		select {
@@ -219,6 +236,7 @@ func (o *X11) run(t *xTransport) {
 			scene.Visual = d.visual
 			scene.Preview = d.preview
 			scene.Notice = d.notice
+			scene.Stack = d.stack
 			if n := len(d.levels); n > 0 {
 				level = d.levels[n-1]
 				for _, v := range d.levels {

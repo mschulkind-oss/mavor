@@ -78,11 +78,11 @@ func TestNoticeIsPaintedInAFixedCanvas(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, pillH := pillSize(f, s)
-	noticeRow := image.Rect(0, stripY(pillH, 2), w, stripY(pillH, 2)+stripHeight())
+	noticeRow := image.Rect(0, stripY(pillH, 1, 2), w, stripY(pillH, 1, 2)+stripHeight())
 	if !rowHasInk(img, noticeRow) {
 		t.Fatalf("nothing was painted in the notice's strip %v", noticeRow)
 	}
-	previewRow := image.Rect(0, stripY(pillH, 1), w, stripY(pillH, 1)+stripHeight())
+	previewRow := image.Rect(0, stripY(pillH, 1, 1), w, stripY(pillH, 1, 1)+stripHeight())
 	if !rowHasInk(img, previewRow) {
 		t.Fatalf("the preview stopped being painted at %v", previewRow)
 	}

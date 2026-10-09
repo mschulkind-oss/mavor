@@ -12,6 +12,7 @@ import "sync"
 type Noop struct {
 	mu         sync.Mutex
 	calls      []Visual
+	stacks     [][]Visual
 	levels     []float64
 	texts      []string
 	notices    []string
@@ -20,9 +21,16 @@ type Noop struct {
 	lastNotice string
 }
 
-func (n *Noop) Show(v Visual) error {
+// Show is the single-pill form of ShowStack, so a caller that only ever shows
+// one pill records exactly as it always did.
+func (n *Noop) Show(v Visual) error { return n.ShowStack([]Visual{v}) }
+
+func (n *Noop) ShowStack(pills []Visual) error {
 	n.mu.Lock()
-	n.calls = append(n.calls, v)
+	n.stacks = append(n.stacks, append([]Visual(nil), pills...))
+	if len(pills) > 0 {
+		n.calls = append(n.calls, pills[0])
+	}
 	n.mu.Unlock()
 	return nil
 }
@@ -53,12 +61,25 @@ func (n *Noop) SetNotice(text string) error {
 
 func (n *Noop) Close() error { return nil }
 
-// Calls returns a snapshot of the visual states Show has been called with.
+// Calls returns a snapshot of the primary visual each Show/ShowStack call
+// carried.
 func (n *Noop) Calls() []Visual {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	out := make([]Visual, len(n.calls))
 	copy(out, n.calls)
+	return out
+}
+
+// Stacks returns a snapshot of every pill stack passed to ShowStack, in call
+// order. A Show call appears as a one-element stack.
+func (n *Noop) Stacks() [][]Visual {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	out := make([][]Visual, len(n.stacks))
+	for i, s := range n.stacks {
+		out[i] = append([]Visual(nil), s...)
+	}
 	return out
 }
 

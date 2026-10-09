@@ -11,7 +11,7 @@ import (
 )
 
 func TestSharedCatalogAndTemplate(t *testing.T) {
-	want := []string{"hidden", "recording-00", "recording-15", "recording-35", "recording-55", "recording-75", "recording-100", "transcribing", "error", "preview-short", "preview-long", "preview-cleared", "initializing", "ready-after-initializing", "initializing-before-error", "initialization-error", "gpu-request-error", "degraded", "motion-quiet", "motion-speech", "motion-pause", "motion-recovery", "motion-decayed"}
+	want := []string{"hidden", "recording-00", "recording-15", "recording-35", "recording-55", "recording-75", "recording-100", "transcribing", "error", "stacked", "stacked-transcribing", "stacked-error", "preview-short", "preview-long", "preview-cleared", "initializing", "ready-after-initializing", "initializing-before-error", "initialization-error", "gpu-request-error", "degraded", "motion-quiet", "motion-speech", "motion-pause", "motion-recovery", "motion-decayed", "motion-stacked"}
 	scenes := Scenes()
 	if len(scenes) != len(want) {
 		t.Fatalf("catalog IDs changed: got %d want %d", len(scenes), len(want))

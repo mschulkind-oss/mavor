@@ -65,6 +65,11 @@ type WL struct {
 type desired struct {
 	visual  Visual
 	preview string
+	// stack are the extra pill rows below the primary (visual), top to bottom:
+	// the transcribing rows of dictations still being finalized. Empty for a
+	// single-dictation scene. Owned by whoever set it, so takeDesired hands the
+	// render loop a slice no producer will write again.
+	stack []Visual
 	// notice is the second strip's text — a fact about the model rather than
 	// about this utterance. Stored whatever the state; which states may paint
 	// it is a paint-time decision (hasNotice), so a notice set out of order
@@ -360,6 +365,7 @@ func (o *WL) run(st *wlState) {
 		st.scene.Visual = d.visual
 		st.scene.Preview = d.preview
 		st.scene.Notice = d.notice
+		st.scene.Stack = d.stack
 		// EXACTLY ONE column per frame, whatever arrived.
 		//
 		// The recorder samples every 30 ms and this loop paints every
@@ -701,11 +707,21 @@ func blit(img *image.RGBA, buf *wayland.Buffer, region image.Rectangle) {
 
 // post hands work to the render goroutine, failing rather than blocking if the
 
-// Show transitions to a visual state. Never dropped: it is recorded as the
-// latest wanted state, and the next frame paints it.
-func (o *WL) Show(v Visual) error {
-	if v < Hidden || v > Degraded {
-		return errors.New("overlay: invalid visual")
+// Show transitions to a single visual state: the one-pill form of ShowStack.
+func (o *WL) Show(v Visual) error { return o.ShowStack([]Visual{v}) }
+
+// ShowStack transitions to an ordered stack of pill rows, pills[0] being the
+// primary. Never dropped: it is recorded as the latest wanted state, and the
+// next frame paints it. An empty slice hides the window.
+func (o *WL) ShowStack(pills []Visual) error {
+	for _, v := range pills {
+		if v < Hidden || v > Degraded {
+			return errors.New("overlay: invalid visual")
+		}
+	}
+	primary := Hidden
+	if len(pills) > 0 {
+		primary = pills[0]
 	}
 	select {
 	case <-o.done:
@@ -713,13 +729,22 @@ func (o *WL) Show(v Visual) error {
 	default:
 	}
 	o.mu.Lock()
-	if v != o.want.visual {
+	if primary != o.want.visual {
 		// A state change starts the preview over: the text belonged to the
-		// state being left.
+		// state being left. A stack that merely grows while the primary stays
+		// the recording keeps its preview — that preview is still this
+		// dictation's.
 		o.want.preview = ""
 		o.want.notice = ""
 	}
-	o.want.visual = v
+	o.want.visual = primary
+	if len(pills) > 1 {
+		// A fresh slice: takeDesired snapshots the struct by value, and the
+		// render loop must see a stack no later write can mutate.
+		o.want.stack = append([]Visual(nil), pills[1:]...)
+	} else {
+		o.want.stack = nil
+	}
 	o.want.setAt = time.Now()
 	o.wantSeq++
 	o.mu.Unlock()

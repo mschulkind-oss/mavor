@@ -36,6 +36,28 @@ func TestSceneBoundsContainsEveryPixelDrawn(t *testing.T) {
 		Notice: "GPU memory full — model in system RAM", MaxPreviewWidth: 640,
 		SurfaceW: 1280, SurfaceH: fixedH, Levels: ramp(),
 	}
+	// Stacked dictations. A row left out of the damage rectangle would leave
+	// stale pixels on screen for the frame that changes it, so every row of a
+	// stack has to be inside SceneBounds. These use the height the overlay
+	// actually allocates, which is where the rows live.
+	scenes["stacked recording + transcribing"] = Scene{
+		Visual: Recording, Stack: []Visual{Transcribing}, SurfaceW: 1280, SurfaceH: fixedH, Levels: ramp(),
+	}
+	scenes["stacked three rows"] = Scene{
+		Visual: Recording, Stack: []Visual{Transcribing, Transcribing}, SurfaceW: 1280, SurfaceH: fixedH, Levels: ramp(),
+	}
+	scenes["stacked transcribing only"] = Scene{
+		Visual: Transcribing, Stack: []Visual{Transcribing}, SurfaceW: 1280, SurfaceH: fixedH,
+	}
+	scenes["stacked with error and preview"] = Scene{
+		Visual: Recording, Stack: []Visual{Error, Transcribing},
+		Preview: "the quick brown fox jumps over the lazy dog", MaxPreviewWidth: 640,
+		SurfaceW: 1280, SurfaceH: fixedH, Levels: ramp(),
+	}
+	scenes["stacked collapsed"] = Scene{
+		Visual: Recording, Stack: []Visual{Transcribing, Transcribing, Transcribing, Transcribing},
+		SurfaceW: 1280, SurfaceH: fixedH, Levels: ramp(),
+	}
 
 	for name, s := range scenes {
 		t.Run(name, func(t *testing.T) {

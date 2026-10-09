@@ -49,6 +49,12 @@ func (v Visual) String() string {
 type Overlay interface {
 	// Show transitions to the given visual state. Hidden hides the window.
 	Show(v Visual) error
+	// ShowStack draws an ordered stack of pill rows, top to bottom: pills[0] is
+	// the primary row (the recording pill when one is live), and later entries
+	// are the transcribing rows of dictations still being finalized. An empty
+	// slice hides the window. Show(v) is ShowStack([]Visual{v}), so every
+	// single-dictation caller keeps working.
+	ShowStack(pills []Visual) error
 	// SetLevel updates the live audio energy level [0.0, 1.0] for active metering.
 	SetLevel(level float64) error
 	// SetText updates a recording preview or a lifecycle diagnostic subtitle.

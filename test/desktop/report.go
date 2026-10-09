@@ -20,12 +20,16 @@ type StoryState struct {
 	BadgeClass  string
 	Description string
 	Visual      overlay.Visual
-	FeedFrames  int
-	Motion      string // ordered timed controlled-fixture phase, never microphone evidence
-	Preview     string
-	AudioLevel  float64 // 0.0 - 1.0 (used if Visual == overlay.Recording)
-	LevelPct    int
-	Specs       map[string]string
+	// Stack are the extra pill rows drawn below the primary, top to bottom —
+	// the still-transcribing dictations in a stacked-dictation scene. Empty
+	// for every single-dictation scene.
+	Stack      []overlay.Visual
+	FeedFrames int
+	Motion     string // ordered timed controlled-fixture phase, never microphone evidence
+	Preview    string
+	AudioLevel float64 // 0.0 - 1.0 (used if Visual == overlay.Recording)
+	LevelPct   int
+	Specs      map[string]string
 }
 
 type StateCapture struct {
@@ -246,6 +250,46 @@ func Scenes() []StoryState {
 			states[i].Description = "Native desktop baseline: the production HUD is hidden."
 		}
 	}
+	// Stacked dictations: the fixed surface reserves three pill rows (one
+	// recording plus two transcribing), so these scenes exercise the full
+	// reservation, the transcribing-only mapping, and the failed-cycle error
+	// pill drawn alongside the other rows rather than instead of them.
+	for _, s := range []StoryState{
+		{
+			ID:         "stacked",
+			Title:      "Stacked dictations (recording + two transcribing)",
+			Badge:      "RECORDING + 2",
+			BadgeClass: "badge-recording",
+			Visual:     overlay.Recording,
+			Stack:      []overlay.Visual{overlay.Transcribing, overlay.Transcribing},
+			AudioLevel: 0.55,
+			Preview:    "Live preview of the dictation being recorded",
+			Description: "Controlled fixture: one recording pill and two transcribing pills, the maximum the fixed surface reserves. " +
+				"Only the recording row has a waveform; the transcribing rows show typing dots. No inference runs in this storybook.",
+		},
+		{
+			ID:          "stacked-transcribing",
+			Title:       "Stacked transcribing (no recording)",
+			Badge:       "TRANSCRIBING x2",
+			BadgeClass:  "badge-transcribing",
+			Visual:      overlay.Transcribing,
+			Stack:       []overlay.Visual{overlay.Transcribing},
+			Description: "Controlled fixture: two finished dictations still being finalized, no capture active. The first pending cycle is the primary row and the rest stack under it.",
+		},
+		{
+			ID:          "stacked-error",
+			Title:       "Stacked dictations with a failed cycle",
+			Badge:       "RECORDING + ERROR",
+			BadgeClass:  "badge-recording",
+			Visual:      overlay.Recording,
+			Stack:       []overlay.Visual{overlay.Error, overlay.Transcribing},
+			AudioLevel:  0.55,
+			Description: "Controlled fixture: a failed cycle's error pill drawn alongside the live recording and transcribing rows, not instead of them. Not a real model failure.",
+		},
+	} {
+		s.Index = len(states) + 1
+		states = append(states, s)
+	}
 	for _, p := range []struct{ id, text string }{{"preview-short", "Live preview"}, {"preview-long", "A deliberately long preview sentence that exceeds the available width and keeps only the most recent words while speaking to the local transcription model"}, {"preview-cleared", ""}} {
 		states = append(states, StoryState{Index: len(states) + 1, ID: p.id, Title: p.id, Badge: "RECORDING", BadgeClass: "badge-recording", Visual: overlay.Recording, AudioLevel: .55, Preview: p.text, Description: "Preview is overlay-only; no output is emitted.", Specs: map[string]string{}})
 	}
@@ -270,6 +314,19 @@ func Scenes() []StoryState {
 	} {
 		states = append(states, StoryState{Index: len(states) + 1, ID: "motion-" + phase.id, Title: "Timed waveform: " + phase.id, Badge: "RECORDING", BadgeClass: "badge-recording", Visual: overlay.Recording, AudioLevel: phase.level, FeedFrames: phase.frames, Motion: phase.id, Description: "Controlled timed RMS fixture, not real microphone audio or model inference. Continuous production history: quiet → speech → pause → recovery → full decay."})
 	}
+	states = append(states, StoryState{
+		Index:       len(states) + 1,
+		ID:          "motion-stacked",
+		Title:       "Timed stacked dictations",
+		Badge:       "RECORDING + 1",
+		BadgeClass:  "badge-recording",
+		Visual:      overlay.Recording,
+		Stack:       []overlay.Visual{overlay.Transcribing},
+		AudioLevel:  .04,
+		FeedFrames:  12,
+		Motion:      "stacked",
+		Description: "Controlled timed RMS fixture: the recording row scrolls while a transcribing row is stacked under it. Not real microphone audio or model inference.",
+	})
 	for i := range states {
 		if states[i].Motion != "" {
 			continue
@@ -887,7 +944,7 @@ const storybookHTMLTemplate = `<!DOCTYPE html>
       </div>
     </div>
 
-    {{if .MotionFile}}<section class="state-card"><div class="card-body"><h2>Timed changing waveform</h2><p>Five real compositor captures: quiet → speech → pause → recovery → decay. Controlled RMS fixture, not real microphone/model evidence. GIF dwell times reflect measured capture intervals; the final frame is held for one second. This is a sparse capture sequence, not an invented smooth movie.</p><img src="{{.MotionFile}}" alt="Timed real HUD captures" style="width:100%"></div></section>{{end}}
+    {{if .MotionFile}}<section class="state-card"><div class="card-body"><h2>Timed changing waveform</h2><p>Real compositor captures: quiet → speech → pause → recovery → decay, then the stacked-dictation rows. Controlled RMS fixture, not real microphone/model evidence. GIF dwell times reflect measured capture intervals; the final frame is held for one second. This is a sparse capture sequence, not an invented smooth movie.</p><img src="{{.MotionFile}}" alt="Timed real HUD captures" style="width:100%"></div></section>{{end}}
     <div class="state-feed">
       {{range .Captures}}
       <article class="state-card" id="state-{{.State.Index}}" data-category="{{if eq .State.Visual 1}}recording{{else if eq .State.Visual 2}}transcribing{{else if eq .State.Visual 3}}error{{else if eq .State.Visual 4}}initializing{{else if eq .State.Visual 5}}degraded{{else}}hidden{{end}}">

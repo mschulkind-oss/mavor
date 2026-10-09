@@ -32,7 +32,7 @@ func Drive(ctx context.Context, o overlay.Overlay, s StoryState) (overlay.FrameR
 	if !ok {
 		return overlay.FrameReceipt{}, fmt.Errorf("real frame observer required")
 	}
-	if err := o.Show(s.Visual); err != nil {
+	if err := o.ShowStack(append([]overlay.Visual{s.Visual}, s.Stack...)); err != nil {
 		return overlay.FrameReceipt{}, err
 	}
 	if err := o.SetText(s.Preview); err != nil {
@@ -52,6 +52,20 @@ func Drive(ctx context.Context, o overlay.Overlay, s StoryState) (overlay.FrameR
 		time.Sleep(40 * time.Millisecond)
 	}
 	return observer.SyncFrame(ctx)
+}
+
+// sameStack compares a receipt's stacked pill rows with the scene they were
+// rendered from. Order matters: the stack is drawn top to bottom.
+func sameStack(got, want []overlay.Visual) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func BuildReport(dir, prefix, compositor, method, layout string, evidence []Evidence) error {
@@ -77,7 +91,7 @@ func BuildReport(dir, prefix, compositor, method, layout string, evidence []Evid
 		if i > 0 && (e.Receipt.Frame <= evidence[i-1].Receipt.Frame || e.Receipt.Revision <= evidence[i-1].Receipt.Revision) {
 			return fmt.Errorf("stale/reused submission receipt %s", s.ID)
 		}
-		if e.ID != s.ID || e.Receipt.Scene.Visual != s.Visual || e.Receipt.Scene.Preview != s.Preview {
+		if e.ID != s.ID || e.Receipt.Scene.Visual != s.Visual || e.Receipt.Scene.Preview != s.Preview || !sameStack(e.Receipt.Scene.Stack, s.Stack) {
 			return fmt.Errorf("scene/receipt mismatch %s", s.ID)
 		}
 		raw, img, err := read(e.File)
@@ -91,7 +105,7 @@ func BuildReport(dir, prefix, compositor, method, layout string, evidence []Evid
 			// No shifted/synthesized reference and no enlarged waveform tolerance.
 			err = fmt.Errorf("no real submission matched timed capture")
 			for _, r := range e.Candidates {
-				if r.SubmittedAt.IsZero() || r.Frame < e.Receipt.Frame || r.Revision < e.Receipt.Revision || r.Scene.Visual != s.Visual || r.Scene.Preview != s.Preview || r.SubmittedAt.After(e.CaptureEnded) {
+				if r.SubmittedAt.IsZero() || r.Frame < e.Receipt.Frame || r.Revision < e.Receipt.Revision || r.Scene.Visual != s.Visual || r.Scene.Preview != s.Preview || !sameStack(r.Scene.Stack, s.Stack) || r.SubmittedAt.After(e.CaptureEnded) {
 					continue
 				}
 				bounds, matchErr := Validate(base, img, r)

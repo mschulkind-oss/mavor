@@ -18,9 +18,11 @@ func motionFixture() []Evidence {
 			continue
 		}
 		e := Evidence{ID: s.ID, CaptureStarted: at, CaptureEnded: at.Add(100 * time.Millisecond)}
+		e.Receipt.Scene.Visual = s.Visual
+		e.Receipt.Scene.Stack = s.Stack
 		e.Receipt.Scene.Levels = make([]float64, 46)
 		switch s.Motion {
-		case "speech", "recovery":
+		case "speech", "recovery", "stacked":
 			for i := 23; i < 46; i++ {
 				e.Receipt.Scene.Levels[i] = .4
 			}

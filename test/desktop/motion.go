@@ -13,7 +13,8 @@ import (
 )
 
 func validateMotion(evidence []Evidence) error {
-	phases := []string{"quiet", "speech", "pause", "recovery", "decayed"}
+	// The ordered waveform phases come first, then the stacked-dictation scene.
+	phases := []string{"quiet", "speech", "pause", "recovery", "decayed", "stacked"}
 	var motion []Evidence
 	for _, e := range evidence {
 		if strings.HasPrefix(e.ID, "motion-") {
@@ -39,6 +40,18 @@ func validateMotion(evidence []Evidence) error {
 			if lv > max {
 				max = lv
 			}
+		}
+		if phases[i] == "stacked" {
+			// The stacked scene is a recording row with a transcribing row under
+			// it. The stack has to reach the receipt, or the GIF would show a
+			// single pill, and the waveform has to keep moving.
+			if len(e.Receipt.Scene.Stack) == 0 {
+				return fmt.Errorf("stacked motion missing its rows: %s", e.ID)
+			}
+			if max == 0 {
+				return fmt.Errorf("stacked motion lost its waveform: %s", e.ID)
+			}
+			continue
 		}
 		switch phases[i] {
 		case "quiet", "decayed":

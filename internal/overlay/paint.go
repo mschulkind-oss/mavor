@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"image/draw"
 	"math"
+	"strconv"
 	"sync"
 
 	"golang.org/x/image/font"
@@ -58,6 +59,17 @@ const (
 	previewPadX = 24
 	previewPadY = 11
 	previewGap  = 6
+
+	// maxStackRows is how many pill rows the fixed surface reserves height for:
+	// one recording plus two visible transcribing rows (the stacked-dictations
+	// OQ-2 ruling). The surface is allocated once and never resized, so this is
+	// a hard budget, not a hint. A longer stack collapses into a "+N" count on
+	// the last visible row rather than growing the canvas.
+	maxStackRows = 3
+	// rowGap is the vertical space between two stacked pills. It is separate
+	// from previewGap because the two separate different things: pills from each
+	// other, and the strips from the last pill.
+	rowGap = 6
 )
 
 // Scene is everything the renderer needs to draw one frame.
@@ -78,6 +90,13 @@ type Scene struct {
 	// drawn while recording: it explains why this dictation may be slow, which
 	// is not something to say over the transcribing or error pill.
 	Notice string
+	// Stack are additional whole pill rows drawn below the primary, top to
+	// bottom: the transcribing rows of dictations still being finalized. They
+	// carry no waveform and no subtitle. Empty for every single-dictation
+	// scene, so existing callers are unaffected. At most maxStackRows rows are
+	// drawn in total; a longer stack shows a "+N" count on its last row. See
+	// docs/design/stacked-dictations.md §7.
+	Stack []Visual
 	// MaxPreviewWidth caps the preview strip in pixels, including its
 	// padding. Zero means uncapped, which is what a scene built by hand in a
 	// test gets. See FitPreviewTail for what happens to text that exceeds it.
@@ -98,12 +117,13 @@ type Scene struct {
 }
 
 // FixedSurfaceSize is the canvas the overlay allocates once and keeps: wide
-// enough for the preview cap, and tall enough for the preview strip and the
-// notice strip whether or not either is showing.
+// enough for the preview cap, and tall enough for maxStackRows pill rows plus
+// the preview strip and the notice strip whether or not either is showing.
 //
 // The height is reserved unconditionally on purpose. A surface that grows when
-// a strip arrives is a resize, and the whole point is to have none. The
-// reserved region is transparent, so an idle overlay looks exactly as it did.
+// a strip or a stacked row arrives is a resize, and the whole point is to have
+// none. The reserved region is transparent, so an idle overlay looks exactly as
+// it did, and a single-dictation scene never paints the rows it does not use.
 func FixedSurfaceSize(maxPreviewWidth int) (int, int, error) {
 	f, err := textFaces()
 	if err != nil {
@@ -121,7 +141,7 @@ func FixedSurfaceSize(maxPreviewWidth int) (int, int, error) {
 		w = maxPreviewWidth
 	}
 	_, pillH := pillSize(f, Scene{Visual: Recording})
-	h := pillH + 2*(previewGap+stripHeight())
+	h := rowsHeight(pillH, maxStackRows) + 2*(previewGap+stripHeight())
 	return w, h, nil
 }
 
@@ -528,13 +548,70 @@ func FitPreviewTail(f font.Face, s string, maxTextPx float64, tracking float64) 
 func stripHeight() int { return previewSize + 2*previewPadY + 4 }
 
 // stripY is the top of the n-th subtitle strip, counting from one under the
-// pill: strip 1 is the preview, strip 2 the notice.
+// LAST pill row: strip 1 is the preview, strip 2 the notice. rows is how many
+// pill rows are drawn, so the strips sit under a stack as they do under a
+// single pill.
 //
 // The notice keeps the SECOND slot even when no preview is showing. Sliding up
 // into an empty first slot would move it again the moment the first partial
 // arrived, and a line that jumps while you speak is worse than a line with a
 // gap above it.
-func stripY(pillH, n int) int { return pillH + n*previewGap + (n-1)*stripHeight() }
+func stripY(pillH, rows, n int) int {
+	return rowsHeight(pillH, rows) + n*previewGap + (n-1)*stripHeight()
+}
+
+// rowsHeight is the total height of n stacked pill rows: n pills and the n-1
+// gaps between them. One row is exactly one pill, so single-dictation geometry
+// is unchanged.
+func rowsHeight(pillH, n int) int {
+	if n < 1 {
+		n = 1
+	}
+	return n*pillH + (n-1)*rowGap
+}
+
+// rowTop is the y offset of the i-th pill row (0 is the primary). All pills are
+// the same height, so the offset is a pure function of the index.
+func rowTop(pillH, i int) int { return i * (pillH + rowGap) }
+
+// pillRow is one drawn row: a visual state, and — only on the last row of an
+// over-long stack — how many rows are collapsed behind it.
+//
+// The count is carried on the pill rather than as a separate marker row because
+// the fixed canvas reserves exactly maxStackRows rows: there is no room to add
+// one, and a floating count with no pill under it would read as a glitch.
+type pillRow struct {
+	v      Visual
+	hidden int
+}
+
+func (r pillRow) label() string {
+	label := labelFor(r.v)
+	if r.hidden > 0 {
+		label += " +" + strconv.Itoa(r.hidden)
+	}
+	return label
+}
+
+// rowsFor returns the pill rows the scene draws, top to bottom, capped at
+// maxStackRows. Rows past the cap are not drawn; the last visible row reports
+// how many were collapsed through its hidden count.
+func rowsFor(s Scene) []pillRow {
+	total := 1 + len(s.Stack)
+	n := total
+	if n > maxStackRows {
+		n = maxStackRows
+	}
+	rows := make([]pillRow, 0, n)
+	rows = append(rows, pillRow{v: s.Visual})
+	for i := 0; i < n-1; i++ {
+		rows = append(rows, pillRow{v: s.Stack[i]})
+	}
+	if total > n {
+		rows[n-1].hidden = total - n
+	}
+	return rows
+}
 
 // previewStripWidth is the width of the preview strip in pixels.
 //
@@ -589,12 +666,21 @@ func SceneSize(s Scene) (int, int, error) {
 		return 0, 0, err
 	}
 	// A pinned canvas is the answer whatever is on it: the surface must not
-	// change size as the contents do.
+	// change size as the contents do. This is also why a stack taller than the
+	// reservation cannot resize anything — it is drawn inside the canvas the
+	// overlay already allocated.
 	if s.SurfaceW > 0 && s.SurfaceH > 0 {
 		return s.SurfaceW, s.SurfaceH, nil
 	}
-	pillW, pillH := pillSize(f, s)
-	w, h := pillW, pillH
+	rows := rowsFor(s)
+	_, pillH := pillSize(f, s)
+	w := 0
+	for _, r := range rows {
+		if pw, _ := pillSizeFor(f, r.v, r.label()); pw > w {
+			w = pw
+		}
+	}
+	h := rowsHeight(pillH, len(rows))
 	preview, notice := hasSubtitle(s), hasNotice(s)
 	if preview {
 		if pw := previewStripWidth(f, s); pw > w {
@@ -619,21 +705,42 @@ func SceneSize(s Scene) (int, int, error) {
 
 // pillSize measures the recording pill for the current state.
 func pillSize(f *faces, s Scene) (int, int) {
+	return pillSizeFor(f, s.Visual, labelFor(s.Visual))
+}
+
+// pillSizeFor measures one pill row. It takes the label rather than reading it
+// from the visual so a collapsed stack row (label plus " +N") measures to the
+// width it is actually drawn at.
+func pillSizeFor(f *faces, v Visual, label string) (int, int) {
 	h := waveHeight + 2*barPaddingY
 	w := 2 * barPaddingX
-	switch s.Visual {
+	switch v {
 	case Recording:
 		w += recDotBoxW + 10
-		w += int(math.Ceil(textWidth(f.label, recordingLabelText, labelTracking*labelSize)))
+		w += int(math.Ceil(textWidth(f.label, label, labelTracking*labelSize)))
 		w += 12 + waveCols*waveColWidth
 	case Transcribing, Initializing:
-		w += int(math.Ceil(textWidth(f.label, activityLabel(s.Visual), labelTracking*labelSize)))
+		w += int(math.Ceil(textWidth(f.label, label, labelTracking*labelSize)))
 		w += 12 + 3*typingDotPitch
 	case Error, Degraded:
 		w += errIconBox + 10
-		w += int(math.Ceil(textWidth(f.label, warningLabel(s.Visual), labelTracking*labelSize)))
+		w += int(math.Ceil(textWidth(f.label, label, labelTracking*labelSize)))
 	}
 	return w, h
+}
+
+// labelFor is the text a pill row carries for a visual state. Measurement and
+// drawing both read it, so they cannot drift apart.
+func labelFor(v Visual) string {
+	switch v {
+	case Recording:
+		return recordingLabelText
+	case Transcribing, Initializing:
+		return activityLabel(v)
+	case Error, Degraded:
+		return warningLabel(v)
+	}
+	return ""
 }
 
 // Label strings, kept here so measurement and drawing cannot drift apart.
@@ -670,20 +777,29 @@ func SceneBounds(s Scene) (image.Rectangle, error) {
 		return image.Rectangle{}, err
 	}
 
-	pillW, pillH := pillSize(f, s)
-	pillX := (w - pillW) / 2
-	r := image.Rect(pillX, 0, pillX+pillW, pillH)
+	rows := rowsFor(s)
+	_, pillH := pillSize(f, s)
+	// Union every drawn row, not just the primary: the damage rectangle feeds
+	// the Wayland damage region, and a stacked row left out of it would leave
+	// stale pixels on screen for the frame that changes it.
+	r := image.Rectangle{}
+	for i, row := range rows {
+		pw, ph := pillSizeFor(f, row.v, row.label())
+		px := (w - pw) / 2
+		y := rowTop(pillH, i)
+		r = r.Union(image.Rect(px, y, px+pw, y+ph))
+	}
 
 	if hasSubtitle(s) {
 		pw := previewStripWidth(f, s)
 		px := (w - pw) / 2
-		py := stripY(pillH, 1)
+		py := stripY(pillH, len(rows), 1)
 		r = r.Union(image.Rect(px, py, px+pw, py+stripHeight()))
 	}
 	if hasNotice(s) {
 		nw := noticeStripWidth(f, s)
 		nx := (w - nw) / 2
-		ny := stripY(pillH, 2)
+		ny := stripY(pillH, len(rows), 2)
 		r = r.Union(image.Rect(nx, ny, nx+nw, ny+stripHeight()))
 	}
 	return r, nil
@@ -736,55 +852,94 @@ func RenderInto(img *image.RGBA, s Scene) error {
 		return nil
 	}
 
-	pillW, pillH := pillSize(f, s)
-	// The pill is centred horizontally; the preview strip below may be wider.
-	pillX := (w - pillW) / 2
-	pillRect := image.Rect(pillX, 0, pillX+pillW, pillH)
+	_, pillH := pillSize(f, s)
+	// Each row is a whole pill, centred horizontally on its own: a transcribing
+	// row is narrower than the recording pill above it, and centring each keeps
+	// the stack symmetric. Only the primary row owns the waveform; a stacked
+	// transcribing row animates its typing dots and carries no data.
+	rows := rowsFor(s)
+	for i, row := range rows {
+		rowW, _ := pillSizeFor(f, row.v, row.label())
+		rowX := (w - rowW) / 2
+		y := rowTop(pillH, i)
+		var levels []float64
+		if i == 0 {
+			levels = s.Levels
+		}
+		drawPill(img, f, row.v, row.label(), rowX, y, rowW, pillH, s.Phase, levels)
+	}
+
+	if hasSubtitle(s) {
+		pw := previewStripWidth(f, s)
+		px := (w - pw) / 2
+		py := stripY(pillH, len(rows), 1)
+		strip := previewStripCache.strip(f, s.Preview, previewText(f, s), pw, stripHeight())
+		draw.Draw(img, image.Rect(px, py, px+pw, py+stripHeight()), strip, image.Point{}, draw.Over)
+	}
+
+	if hasNotice(s) {
+		nw := noticeStripWidth(f, s)
+		nx := (w - nw) / 2
+		ny := stripY(pillH, len(rows), 2)
+		strip := noticeStripCache.strip(f, s.Notice, noticeText(f, s), nw, stripHeight())
+		draw.Draw(img, image.Rect(nx, ny, nx+nw, ny+stripHeight()), strip, image.Point{}, draw.Over)
+	}
+
+	return nil
+}
+
+// drawPill paints one pill row at (pillX, y): the gradient, the inset
+// highlight, and the state's own contents — the waveform for the recording row,
+// typing dots for a transcribing row, the warning triangle for an error row.
+// Every vertical position is the row's own, so a stacked row animates exactly
+// as a primary one does.
+func drawPill(img *image.RGBA, f *faces, v Visual, label string, pillX, y, pillW, pillH int, phase float64, levels []float64) {
+	pillRect := image.Rect(pillX, y, pillX+pillW, y+pillH)
 
 	top, bottom := recTop, recBottom
-	switch s.Visual {
+	switch v {
 	case Transcribing, Initializing, Degraded:
 		top, bottom = tscTop, tscBottom
 	case Error:
 		top, bottom = errTop, errBottom
 	}
 	fillGradient(img, pillRect, top, bottom, func(r *path) {
-		roundRectPath(r, float32(pillX), 0, float32(pillW), float32(pillH), pillRadius)
+		roundRectPath(r, float32(pillX), float32(y), float32(pillW), float32(pillH), pillRadius)
 	})
 
 	// A one-pixel light line inside the top edge, the CSS inset highlight.
-	fillRoundRect(img, float32(pillX)+pillRadius/2, 0, float32(pillW)-pillRadius, 1, 0.5,
+	fillRoundRect(img, float32(pillX)+pillRadius/2, float32(y), float32(pillW)-pillRadius, 1, 0.5,
 		color.NRGBA{0xff, 0xff, 0xff, 0x40})
 
 	// Baseline that centres the caps vertically in the pill.
 	m := f.label.Metrics()
-	baseline := float64(pillH)/2 + float64(m.Ascent-m.Descent)/128.0
+	baseline := float64(y) + float64(pillH)/2 + float64(m.Ascent-m.Descent)/128.0
 
 	x := float64(pillX + barPaddingX)
-	switch s.Visual {
+	switch v {
 	case Recording:
 		// The dot rides on the cap-height centre, not the line-box centre.
-		cy := float64(pillH)/2 - f.capRise
-		scale := 0.85 + 0.30*s.Phase // matches the CSS pulse keyframes
-		alpha := uint8(0.35*255 + (1.0-0.35)*255*s.Phase)
+		cy := float64(y) + float64(pillH)/2 - f.capRise
+		scale := 0.85 + 0.30*phase // matches the CSS pulse keyframes
+		alpha := uint8(0.35*255 + (1.0-0.35)*255*phase)
 		dc := dotWarm
 		dc.A = alpha
 		rad := recDotDiameter / 2 * scale
 		fillCircle(img, float32(x+recDotBoxW/2), float32(cy), float32(rad), dc)
 		x += recDotBoxW + 10
 
-		drawText(img, f.label, recordingLabelText, x, baseline, inkWhite, labelTracking*labelSize)
-		x += textWidth(f.label, recordingLabelText, labelTracking*labelSize) + 12
+		drawText(img, f.label, label, x, baseline, inkWhite, labelTracking*labelSize)
+		x += textWidth(f.label, label, labelTracking*labelSize) + 12
 
-		drawWave(img, s.Levels, x, float64(barPaddingY), waveHeight)
+		drawWave(img, levels, x, float64(y+barPaddingY), waveHeight)
 
 	case Transcribing, Initializing:
-		drawText(img, f.label, activityLabel(s.Visual), x, baseline, inkWhite, labelTracking*labelSize)
-		x += textWidth(f.label, activityLabel(s.Visual), labelTracking*labelSize) + 12
-		cy := float64(pillH) / 2
+		drawText(img, f.label, label, x, baseline, inkWhite, labelTracking*labelSize)
+		x += textWidth(f.label, label, labelTracking*labelSize) + 12
+		cy := float64(y) + float64(pillH)/2
 		for i := 0; i < 3; i++ {
 			// Each dot leads the next by a fixed slice of the cycle.
-			p := math.Mod(s.Phase+float64(i)*0.16, 1.0)
+			p := math.Mod(phase+float64(i)*0.16, 1.0)
 			a := 0.25 + 0.75*math.Max(0, 1-math.Abs(p-0.3)/0.3)
 			c := typingInk
 			c.A = uint8(a * 255)
@@ -793,29 +948,11 @@ func RenderInto(img *image.RGBA, s Scene) error {
 		}
 
 	case Error, Degraded:
-		cy := float64(pillH) / 2
+		cy := float64(y) + float64(pillH)/2
 		drawWarning(img, x, cy, errIconBox, errInk)
 		x += errIconBox + 10
-		drawText(img, f.label, warningLabel(s.Visual), x, baseline, inkWhite, labelTracking*labelSize)
+		drawText(img, f.label, label, x, baseline, inkWhite, labelTracking*labelSize)
 	}
-
-	if hasSubtitle(s) {
-		pw := previewStripWidth(f, s)
-		px := (w - pw) / 2
-		py := stripY(pillH, 1)
-		strip := previewStripCache.strip(f, s.Preview, previewText(f, s), pw, stripHeight())
-		draw.Draw(img, image.Rect(px, py, px+pw, py+stripHeight()), strip, image.Point{}, draw.Over)
-	}
-
-	if hasNotice(s) {
-		nw := noticeStripWidth(f, s)
-		nx := (w - nw) / 2
-		ny := stripY(pillH, 2)
-		strip := noticeStripCache.strip(f, s.Notice, noticeText(f, s), nw, stripHeight())
-		draw.Draw(img, image.Rect(nx, ny, nx+nw, ny+stripHeight()), strip, image.Point{}, draw.Over)
-	}
-
-	return nil
 }
 
 // drawWave paints the time-scrolling level trace, newest column at the right.
