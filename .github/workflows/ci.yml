@@ -18,6 +18,15 @@ jobs:
       - name: Quality Gate (check-ci)
         run: just check-ci
 
+      # `check-ci` runs the unit tests uninstrumented, so nothing else in the
+      # pipeline would see a data race. The overlay now paints from several
+      # goroutines at once — control handler, decode worker, ordered dispatcher,
+      # two timers — which is exactly what the race detector polices. It lives
+      # here rather than in check-ci because the race build is several times
+      # slower and the pre-commit hook shares that recipe.
+      - name: Unit tests (race detector)
+        run: just test-race
+
   # The integration suite is the only thing that renders the overlay in a real
   # compositor, and every overlay bug that reached a user this week was
   # invisible to check-ci. It ran nowhere but a developer's machine, which

@@ -76,6 +76,19 @@ lint-ci:
 test *args:
     go test ./... {{args}}
 
+# Unit tests under the race detector. mavor paints from several goroutines at
+# once — the control handler, the decode worker, the ordered dispatcher and two
+# timers — and stacked dictations made that concurrency load-bearing, so a data
+# race is a live possibility rather than a theoretical one. `test` instruments
+# nothing and cannot see one.
+#
+# Deliberately NOT part of `check-ci`. The race build is several times slower,
+# and a pre-commit hook that takes minutes is a hook people learn to bypass;
+# CI runs it instead (see .github/workflows/ci.yml), which is where a slow
+# backstop belongs.
+test-race *args:
+    go test -race ./... {{args}}
+
 # Tidy modules, ensure test model is present, and run doctor check.
 setup:
     go mod tidy
