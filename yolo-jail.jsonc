@@ -155,6 +155,43 @@
       // "amd", so naming the AMD driver is a fact about this jail, not a
       // guess.  Verify after a restart with:  vulkaninfo --summary
       "VK_ICD_FILENAMES": "/share/vulkan/icd.d/radeon_icd.x86_64.json"
+    },
+    {
+      // INHERITED FROM THE IMAGE, NOT OURS.  The jail exports
+      // LD_LIBRARY_PATH=/lib:/usr/lib:/usr/lib/x86_64-linux-gnu.  /lib and
+      // /usr/lib in the merged tree are symlink farms onto ONE nix glibc
+      // (2.44-25 today), so the variable forces that libc onto every binary —
+      // including mise/nix-installed ones whose own ELF interpreter is a
+      // DIFFERENT glibc build.
+      //
+      // staticcheck is what breaks here.  mise installs it as a prebuilt whose
+      // .interp is /nix/store/8kvxvr3p...-glibc-2.42-67/lib/ld-linux-x86-64.so.2,
+      // so the 2.42 loader loads the merged tree's 2.44 libc and dies before
+      // main():
+      //
+      //   staticcheck: symbol lookup error: /lib/libc.so.6:
+      //   undefined symbol: __pointer_chk_guard, version GLIBC_PRIVATE
+      //
+      // GLIBC_PRIVATE is private between a MATCHED loader/libc pair, so mixing
+      // two glibc builds is unsupported.  staticcheck is in `just lint` and
+      // `just lint-ci`, so this breaks `just check` and therefore the
+      // pre-commit hook for every commit in this repo.
+      //
+      // Measured: `LD_LIBRARY_PATH=/lib staticcheck --version` fails,
+      // `LD_LIBRARY_PATH=/usr/lib staticcheck --version` fails, unset passes,
+      // and `LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu` passes — which is the
+      // tell, because that third directory does not exist in this image at all.
+      // The value is generic rather than derived from what the image contains.
+      //
+      // Unsetting is free for binaries that DO want the merged tree: a glibc
+      // loader already searches /lib and /usr/lib by default, and the third
+      // entry is inert.  Verified without it: vulkaninfo --summary, just check,
+      // bash, git, go, python3 and wl-copy all still work.
+      //
+      // This is a workaround for a yolo bug — the merged tree's glibc should not
+      // shadow a binary's own — so delete this entry once
+      // `LD_LIBRARY_PATH=/lib staticcheck --version` succeeds.
+      "LD_LIBRARY_PATH": null
     }
   ],
   // Extra tools to install via mise (key: tool name, value: version string).
