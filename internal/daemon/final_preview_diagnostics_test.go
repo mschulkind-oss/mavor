@@ -54,7 +54,7 @@ func TestFinalCompanionDiagnostics(t *testing.T) {
 				c.PreviewCompanion = src
 				c.Logger = slog.New(slog.NewTextHandler(logs, nil))
 			})
-			if err := d.startFinalCycle(t.Context()); err != nil {
+			if err := d.startFinalCycle(t.Context(), &dictationCycle{id: 1}); err != nil {
 				t.Fatal(err)
 			}
 			defer func() {

@@ -195,22 +195,20 @@ func TestPhraseResultArrivingAfterStopIsDropped(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	d.startStreamingMonitoring(ctx)
+	c := &dictationCycle{id: 1}
+	d.recording = c
+	d.startStreamingMonitoring(ctx, c)
 
-	d.streamMu.Lock()
-	gen := d.streamGen
-	d.streamMu.Unlock()
-
-	d.appendPhrase(ctx, gen, "during the recording")
+	d.appendPhrase(ctx, c, "during the recording")
 	if got := ov.LastText(); got != "during the recording" {
 		t.Fatalf("overlay text = %q, want the phrase painted while recording", got)
 	}
 
-	d.stopStreamingMonitoring()
+	d.stopStreamingMonitoring(c)
 
 	// The transcription that was still decoding when the user released the
 	// key lands here.
-	d.appendPhrase(ctx, gen, "arrived too late")
+	d.appendPhrase(ctx, c, "arrived too late")
 
 	if got := ov.LastText(); got != "" {
 		t.Fatalf("overlay text = %q, want it cleared and left cleared", got)
@@ -236,14 +234,12 @@ func TestStreamPartialArrivingAfterStopIsDropped(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	d.startStreamingMonitoring(ctx)
+	c := &dictationCycle{id: 1}
+	d.recording = c
+	d.startStreamingMonitoring(ctx, c)
 
-	d.streamMu.Lock()
-	gen := d.streamGen
-	d.streamMu.Unlock()
-
-	d.stopStreamingMonitoring()
-	d.setPreview(ctx, gen, "late partial")
+	d.stopStreamingMonitoring(c)
+	d.setPreview(ctx, c, "late partial")
 
 	for _, txt := range ov.Texts() {
 		if txt == "late partial" {
@@ -262,8 +258,13 @@ func TestPhrasePreviewDropsNonSpeechMarkers(t *testing.T) {
 		c.PreviewMode = speech.PreviewPhrases
 	})
 	ctx := t.Context()
+	c := &dictationCycle{id: 1}
+	d.recording = c
+	d.streamMu.Lock()
+	d.liveID = c.id
+	d.streamMu.Unlock()
 
-	d.appendPhrase(ctx, d.streamGen, "[BLANK_AUDIO]")
+	d.appendPhrase(ctx, c, "[BLANK_AUDIO]")
 	if got := d.streamHistory; got != "" {
 		t.Errorf("streamHistory = %q after a marker-only phrase, want empty", got)
 	}
@@ -271,7 +272,7 @@ func TestPhrasePreviewDropsNonSpeechMarkers(t *testing.T) {
 		t.Errorf("overlay painted %v, want nothing", texts)
 	}
 
-	d.appendPhrase(ctx, d.streamGen, "hello (paper rustling) world")
+	d.appendPhrase(ctx, c, "hello (paper rustling) world")
 	if got, want := d.streamHistory, "hello world"; got != want {
 		t.Errorf("streamHistory = %q, want %q", got, want)
 	}

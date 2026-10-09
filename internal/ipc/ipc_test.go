@@ -2,10 +2,12 @@ package ipc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -192,5 +194,28 @@ func TestConcurrentClients(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&calls); got != n+1 {
 		t.Fatalf("handler called %d times, want %d", got, n+1)
+	}
+}
+
+// The stack is reported as explicit fields alongside the derived state, and a
+// zero value stays off the wire so an older decoder sees the same response it
+// always did.
+func TestResponseCarriesStackFields(t *testing.T) {
+	sock, stop := startServer(t, func(Request) Response {
+		return Response{State: "recording", Recording: true, Transcribing: 2}
+	})
+	defer stop()
+
+	resp := sendWithRetry(t, sock, Request{Action: "status"})
+	if resp.State != "recording" || !resp.Recording || resp.Transcribing != 2 {
+		t.Fatalf("resp = %+v, want recording with a stack of 2", resp)
+	}
+
+	b, err := json.Marshal(Response{State: "idle"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "recording") || strings.Contains(string(b), "transcribing") {
+		t.Fatalf("zero stack fields present on the wire: %s", b)
 	}
 }

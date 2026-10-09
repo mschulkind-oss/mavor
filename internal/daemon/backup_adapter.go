@@ -2,36 +2,65 @@ package daemon
 
 import (
 	"context"
+	"strings"
+	"time"
+
 	"github.com/mschulkind-oss/mavor/internal/audio"
 	"github.com/mschulkind-oss/mavor/internal/output"
 	"github.com/mschulkind-oss/mavor/internal/overlay"
 	"github.com/mschulkind-oss/mavor/internal/speech"
-	"strings"
-	"time"
 )
 
-// startBackup replaces companion preview ownership; it never adds a PCM reader.
-func (d *Daemon) startBackup(ctx context.Context, gen uint64) {
-	if d.backup != nil {
-		_ = d.backup.Cancel(context.Background())
-		d.backup = nil
+// The companion backup is a single-instance resource, like the recorder: one
+// stream at a time. These accessors keep its pointer under one lock so the
+// control path, the preview pump, the decode worker, and shutdown never race
+// the pointer itself.
+func (d *Daemon) takeBackup() *BackupCycle {
+	d.backupMu.Lock()
+	defer d.backupMu.Unlock()
+	b := d.backup
+	d.backup = nil
+	return b
+}
+
+func (d *Daemon) installBackup(b *BackupCycle) {
+	d.backupMu.Lock()
+	d.backup = b
+	d.backupMu.Unlock()
+}
+
+func (d *Daemon) currentBackup() *BackupCycle {
+	d.backupMu.Lock()
+	defer d.backupMu.Unlock()
+	return d.backup
+}
+
+func (d *Daemon) cancelBackup() {
+	if b := d.takeBackup(); b != nil {
+		_ = b.Cancel(context.Background())
 	}
-	b, err := NewBackupCycle(ctx, d.companion, BackupCycleOptions{CycleID: d.cycleID, Model: d.companionModel, OnPartial: func(text string) {
+}
+
+// startBackup replaces companion preview ownership; it never adds a PCM reader.
+func (d *Daemon) startBackup(ctx context.Context, cycle *dictationCycle) {
+	d.cancelBackup()
+	b, err := NewBackupCycle(ctx, d.companion, BackupCycleOptions{CycleID: cycle.id, Model: d.companionModel, OnPartial: func(text string) {
 		if d.previewEnabled {
-			d.setPreview(ctx, gen, soften(text))
+			d.setPreview(ctx, cycle, soften(text))
 		}
 	}})
 	if err != nil {
 		d.logger.Warn("preview: companion start failed — backup unavailable", "err", err)
 		return
 	}
-	d.backup = b
+	d.installBackup(b)
 }
 func (d *Daemon) feedBackup(pcm []byte) {
-	if d.backup == nil {
+	b := d.currentBackup()
+	if b == nil {
 		return
 	}
-	if err := d.backup.Feed(pcm); err != nil {
+	if err := b.Feed(pcm); err != nil {
 		phase := "feed"
 		if strings.Contains(err.Error(), "queue") {
 			phase = "queue"
@@ -43,9 +72,7 @@ func (d *Daemon) runBackupPump(ctx context.Context) {
 	done := d.streamFeedDone
 	cr, ok := d.recorder.(audio.ChunkReader)
 	if !ok {
-		if d.backup != nil {
-			_ = d.backup.Cancel(context.Background())
-		}
+		d.cancelBackup()
 		close(done)
 		return
 	}
@@ -60,9 +87,7 @@ func (d *Daemon) runBackupPump(ctx context.Context) {
 			case <-ticker.C:
 				pcm, err := cr.ReadChunk()
 				if err != nil {
-					if d.backup != nil {
-						_ = d.backup.Cancel(context.Background())
-					}
+					d.cancelBackup()
 					continue
 				}
 				if len(pcm) > 0 {

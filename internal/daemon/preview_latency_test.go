@@ -184,14 +184,12 @@ func TestTheNextRecordingWaitsForTheDrain(t *testing.T) {
 	stop := runDaemon(t, d)
 	defer stop()
 
-	// Record, stop, and immediately record again — the drain from the first
-	// stop is still running when the second recording starts.
-	//
-	// Waiting for idle first is not politeness, it is the FSM: a toggle that
-	// arrives while the previous transcription is still running is a no-op by
-	// design, so without this the loop asks for a recording that never
-	// starts and the test times out waiting for a state it prevented itself
-	// from reaching. That is what it did on CI.
+	// Record, stop, and record again once the FSM is back to idle, so the
+	// recognizer's final decode of the previous stream is the only thing the
+	// next StartStream could collide with. (Stacking would let a recording start
+	// while the previous one transcribes; a new recording then skips its own
+	// preview rather than waiting, which is a different path from the drain this
+	// test pins.)
 	for i := 0; i < rounds; i++ {
 		waitForState(t, sock, "idle")
 		sendWithRetry(t, sock, "toggle")

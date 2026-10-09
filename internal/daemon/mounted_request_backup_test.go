@@ -122,5 +122,5 @@ func TestMountedCompanionRequestBackupEndToEnd(t *testing.T) {
 	if _, e = os.Stat(sock); !os.IsNotExist(e) {
 		t.Fatal("socket survived shutdown")
 	}
-	t.Logf("same cycle=%d finalized=%q source=%s model=%s output_count=%d history_count=%d warning=%q child_reaped=true", d.cycleID, final, status.Source, entries[0].Model, len(got), len(entries), warning)
+	t.Logf("finalized=%q source=%s model=%s output_count=%d history_count=%d warning=%q child_reaped=true", final, status.Source, entries[0].Model, len(got), len(entries), warning)
 }

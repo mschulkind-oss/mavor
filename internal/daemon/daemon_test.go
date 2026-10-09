@@ -292,10 +292,15 @@ func TestTranscribeFailureShowsErrorOverlay(t *testing.T) {
 	}
 }
 
-func TestDuckingOnRecordingAndRestoreOnIdle(t *testing.T) {
+// Ducking is keyed on capture, not on the transcription tail: duck while a
+// recording is active and restore the moment it stops. The old Idle restore is
+// gone — with stacking, Idle means every dictation finished, long after capture
+// — so a cycle does exactly one duck and one restore.
+func TestDuckingRestoresWhenCaptureStops(t *testing.T) {
 	ducker := &audio.MockDucker{}
 	d, sock := newTestDaemon(t, func(c *Config) {
 		c.Ducker = ducker
+		c.Transcriber = &speech.Mock{Text: "hello world", Delay: 200 * time.Millisecond}
 	})
 	stop := runDaemon(t, d)
 	defer stop()
@@ -311,24 +316,22 @@ func TestDuckingOnRecordingAndRestoreOnIdle(t *testing.T) {
 	if !ducker.IsDucked() {
 		t.Fatalf("ducker should be ducked while in Recording")
 	}
-	duckCalls, _ := ducker.Calls()
-	if duckCalls != 1 {
-		t.Errorf("duckCalls = %d, want 1", duckCalls)
+	if duckCalls, restoreCalls := ducker.Calls(); duckCalls != 1 || restoreCalls != 0 {
+		t.Fatalf("ducker calls = (%d, %d), want one duck and no restore yet", duckCalls, restoreCalls)
 	}
 
-	// Toggle: Recording -> Transcribing -> ... -> Idle
+	// Toggle: Recording -> Transcribing. Capture has stopped, so media comes
+	// back now, and the restore is not repeated when the tail finishes.
 	sendWithRetry(t, sock, "toggle")
-	waitForState(t, sock, "idle")
-
+	waitForState(t, sock, "transcribing")
 	if ducker.IsDucked() {
-		t.Fatalf("ducker should be restored when returning to Idle")
+		t.Fatalf("ducker should be restored as capture stops, not held through the tail")
 	}
-	// Restore fires on entering Transcribing (capture has stopped) and again
-	// on Idle as a safety net for paths that skip Transcribing, so the count
-	// is not pinned — what matters is one duck and an eventual restore.
+
+	waitForState(t, sock, "idle")
 	duckCalls, restoreCalls := ducker.Calls()
-	if duckCalls != 1 || restoreCalls < 1 {
-		t.Errorf("ducker calls = (%d, %d), want duck 1 and at least one restore", duckCalls, restoreCalls)
+	if duckCalls != 1 || restoreCalls != 1 {
+		t.Errorf("ducker calls = (%d, %d), want exactly one duck and one restore", duckCalls, restoreCalls)
 	}
 }
 
@@ -423,14 +426,20 @@ type blockingTranscriber struct {
 }
 
 func (b *blockingTranscriber) Transcribe(ctx context.Context, wavPath string) (string, error) {
-	close(b.started)
+	select {
+	case b.started <- struct{}{}:
+	default:
+	}
 	<-b.release
 	return "hello world", nil
 }
 
+// Start while recording is still a no-op. The change stacking ships is that
+// start while *transcribing* opens a fresh recording rather than doing nothing;
+// the earlier cycle keeps decoding and both transcripts come out in order.
 func TestStartIdempotency(t *testing.T) {
 	out := &output.Mock{}
-	started := make(chan struct{})
+	started := make(chan struct{}, 8)
 	release := make(chan struct{})
 	d, sock := newTestDaemon(t, func(c *Config) {
 		c.Output = out
@@ -468,30 +477,36 @@ func TestStartIdempotency(t *testing.T) {
 		t.Fatal("transcription never started")
 	}
 
-	// Start while Transcribing: no-op, stays transcribing
+	// Start while Transcribing starts a new recording: the stack.
 	resp = sendWithRetry(t, sock, "start")
-	if resp.State != "transcribing" {
-		t.Fatalf("start while transcribing returned state %q, want transcribing", resp.State)
+	if resp.State != "recording" {
+		t.Fatalf("start while transcribing returned state %q, want recording", resp.State)
 	}
-	if got := sendWithRetry(t, sock, "status"); got.State != "transcribing" {
-		t.Fatalf("status while transcribing = %q, want transcribing", got.State)
+	if got := sendWithRetry(t, sock, "status"); got.State != "recording" {
+		t.Fatalf("status while recording over a pending cycle = %q, want recording", got.State)
 	}
 
-	// Unblock transcription
+	// Stopping the second recording queues it behind the first.
+	resp = sendWithRetry(t, sock, "stop")
+	if resp.State != "transcribing" {
+		t.Fatalf("stop of the stacked recording returned state %q, want transcribing", resp.State)
+	}
+
+	// Unblock both transcriptions.
 	close(release)
 
 	waitForState(t, sock, "idle")
 
-	// Verify transcription completed normally and produced one output
+	// Both completions were typed, in spoken order.
 	calls := out.Calls()
-	if len(calls) != 1 || calls[0] != "hello world" {
-		t.Fatalf("output.Calls = %v, want [\"hello world\"]", calls)
+	if len(calls) != 2 || calls[0] != "hello world" || calls[1] != "hello world" {
+		t.Fatalf("output.Calls = %v, want two \"hello world\"", calls)
 	}
 }
 
 func TestStopIdempotency(t *testing.T) {
 	out := &output.Mock{}
-	started := make(chan struct{})
+	started := make(chan struct{}, 8)
 	release := make(chan struct{})
 	d, sock := newTestDaemon(t, func(c *Config) {
 		c.Output = out

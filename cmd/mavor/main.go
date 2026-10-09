@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -89,12 +90,15 @@ func newStopCmd() *cobra.Command {
 }
 
 func newStatusCmd() *cobra.Command {
-	return &cobra.Command{
+	var jsonOut bool
+	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "print the daemon state (idle, recording, transcribing)",
+		Short: "print the daemon state and the stacked dictations",
 		Args:  cobra.NoArgs,
-		RunE:  func(_ *cobra.Command, _ []string) error { return runStatus() },
+		RunE:  func(_ *cobra.Command, _ []string) error { return runStatus(jsonOut) },
 	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit the whole status response as JSON")
+	return cmd
 }
 
 func runDaemon(verbose bool, logFile string) error {
@@ -279,7 +283,7 @@ func runStop() error {
 	return nil
 }
 
-func runStatus() error {
+func runStatus(jsonOut bool) error {
 	cfg, err := config.Load("")
 	if err != nil {
 		return err
@@ -288,17 +292,36 @@ func runStatus() error {
 	if err != nil {
 		return fmt.Errorf("status: %w (is the daemon running?)", err)
 	}
+	if jsonOut {
+		if resp.Error != "" {
+			return errors.New(resp.Error)
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(resp)
+	}
 	return writeStatus(os.Stdout, os.Stderr, resp)
 }
 
-// writeStatus preserves machine-readable state stdout; diagnostics and actual
-// completed source are separate so an idle state does not erase a backup warning.
+// stackRowsShown is how many rows the status stack prints before collapsing the
+// rest to a count — the same three visible rows the overlay reserves.
+const stackRowsShown = 3
+
+// writeStatus prints the derived state on stdout with the live dictations
+// stacked beneath it — the recording row first, then one row per stopped cycle
+// awaiting output — and provenance diagnostics on stderr, so an idle state does
+// not erase a backup warning.
 func writeStatus(out, diagnostic io.Writer, resp ipc.Response) error {
 	if resp.Error != "" {
 		return errors.New(resp.Error)
 	}
 	if _, err := fmt.Fprintln(out, resp.State); err != nil {
 		return err
+	}
+	for _, row := range stackRows(resp) {
+		if _, err := fmt.Fprintln(out, "  -", row); err != nil {
+			return err
+		}
 	}
 	if resp.Source != "" {
 		if _, err := fmt.Fprintln(diagnostic, "source:", resp.Source); err != nil {
@@ -310,6 +333,25 @@ func writeStatus(out, diagnostic io.Writer, resp ipc.Response) error {
 		return err
 	}
 	return nil
+}
+
+// stackRows lists the live dictations in spoken order: the recording first,
+// then one row per stopped cycle awaiting output. Beyond the visible rows the
+// rest collapse to a count rather than growing without bound.
+func stackRows(resp ipc.Response) []string {
+	rows := make([]string, 0, resp.Transcribing+1)
+	if resp.Recording {
+		rows = append(rows, "recording")
+	}
+	for i := 0; i < resp.Transcribing; i++ {
+		rows = append(rows, "transcribing")
+	}
+	if len(rows) > stackRowsShown {
+		hidden := len(rows) - stackRowsShown
+		rows = rows[:stackRowsShown]
+		rows = append(rows, fmt.Sprintf("... and %d more", hidden))
+	}
+	return rows
 }
 
 // globSorted returns matches for pattern in a stable order, or nil. Glob's own

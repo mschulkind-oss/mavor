@@ -76,9 +76,11 @@ func TestLegacyMainPreviewFeedJoinsBeforeStop(t *testing.T) {
 	}
 	src := &heldMainStream{MockStreamTranscriber: speech.NewMockStreamTranscriber("tail"), entered: make(chan struct{}), release: make(chan struct{}), stopped: make(chan struct{})}
 	d, _ := newTestDaemon(t, func(c *Config) { c.Recorder = rec; c.Transcriber = src; c.PreviewMode = speech.PreviewMainModel })
-	d.startStreamingMonitoring(t.Context())
+	d.recording = &dictationCycle{id: 1}
+	c := d.recording
+	d.startStreamingMonitoring(t.Context(), c)
 	<-src.entered
-	d.stopStreamingMonitoring()
+	d.stopStreamingMonitoring(c)
 	select {
 	case <-src.stopped:
 		close(src.release)

@@ -21,7 +21,14 @@ type incrementalCycle struct {
 func (d *Daemon) incrementalFinal() bool {
 	return d.finalMode != "" && d.finalMode != models.FinalAfterStop
 }
-func (d *Daemon) startFinalCycle(ctx context.Context) error {
+
+// stackingAllowed reports whether a new recording may start while an earlier
+// cycle is still transcribing. It may not for the live-final modes (streaming
+// and segments), which hold the one main recognizer across the whole capture
+// and keep today's behavior (§8, ruling OQ-3); after-stop stacks.
+func (d *Daemon) stackingAllowed() bool { return !d.incrementalFinal() }
+
+func (d *Daemon) startFinalCycle(ctx context.Context, cycle *dictationCycle) error {
 	if main, ok := d.transcriber.(speech.StreamTranscriber); ok && d.companion == main && d.previewMode == speech.PreviewCompanion {
 		return errors.New("main final and companion cannot share a recognizer")
 	}
@@ -30,9 +37,8 @@ func (d *Daemon) startFinalCycle(ctx context.Context) error {
 		return err
 	}
 	d.streamMu.Lock()
-	d.streamGen++
-	gen := d.streamGen
-	d.streamHadSpeech = false
+	d.liveID = cycle.id
+	cycle.hadSpeech = false
 	d.streamHistory = ""
 	d.streamMu.Unlock()
 	c := &incrementalCycle{done: make(chan struct{})}
@@ -40,13 +46,13 @@ func (d *Daemon) startFinalCycle(ctx context.Context) error {
 		// Recognition evidence is independent of whether the HUD is enabled.
 		if speech.StripNonSpeech(text) != "" {
 			d.streamMu.Lock()
-			if d.streamGen == gen && ctx.Err() == nil {
-				d.streamHadSpeech = true
+			if d.liveID == cycle.id && ctx.Err() == nil {
+				cycle.hadSpeech = true
 			}
 			d.streamMu.Unlock()
 		}
 		if d.previewEnabled && d.previewMode != speech.PreviewCompanion {
-			d.setPreview(ctx, gen, soften(text))
+			d.setPreview(ctx, cycle, soften(text))
 		}
 	}
 	session, err := speech.NewFinalSession(ctx, d.transcriber, speech.FinalSessionOptions{Mode: d.finalMode, Logger: d.logger, OnPartial: onPartial})
@@ -58,14 +64,12 @@ func (d *Daemon) startFinalCycle(ctx context.Context) error {
 	c.cancel = cancel
 	d.finalCycle = c
 	if d.previewMode == speech.PreviewCompanion && d.companion != nil {
-		d.startBackup(ctx, gen)
+		d.startBackup(ctx, cycle)
 	}
 	cr, ok := d.recorder.(audio.ChunkReader)
 	if !ok {
 		session.FailLive("recorder does not implement ChunkReader")
-		if d.backup != nil {
-			_ = d.backup.Cancel(context.Background())
-		}
+		d.cancelBackup()
 		close(c.done)
 		return nil
 	}
@@ -81,9 +85,7 @@ func (d *Daemon) startFinalCycle(ctx context.Context) error {
 				pcm, err := cr.ReadChunk()
 				if err != nil {
 					session.FailLive("ReadChunk: " + err.Error())
-					if d.backup != nil {
-						_ = d.backup.Cancel(context.Background())
-					}
+					d.cancelBackup()
 					continue
 				}
 				if len(pcm) == 0 {
@@ -105,7 +107,7 @@ func (d *Daemon) stopFinalPump() {
 		c.cancel()
 		<-c.done
 		d.streamMu.Lock()
-		d.streamGen++
+		d.liveID = 0
 		if d.overlay != nil {
 			_ = d.overlay.SetText("")
 		}
@@ -114,9 +116,7 @@ func (d *Daemon) stopFinalPump() {
 }
 func (d *Daemon) cancelFinalCycle() {
 	d.stopFinalPump()
-	if d.backup != nil {
-		_ = d.backup.Cancel(context.Background())
-	}
+	d.cancelBackup()
 	if d.finalCycle != nil {
 		_ = d.finalCycle.session.Cancel(context.Background())
 	}

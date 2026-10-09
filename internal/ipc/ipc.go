@@ -31,6 +31,14 @@ type Response struct {
 	// GPU-resident weights to track, or the probe could not read the child.
 	// See speech.Residency for the states themselves.
 	Residency string `json:"residency,omitempty"`
+	// Recording is true while a capture is active. State already derives to
+	// "recording" in that case; this makes the stack explicit for a caller that
+	// wants to render each row rather than the coarse word.
+	Recording bool `json:"recording,omitempty"`
+	// Transcribing is the number of stopped dictations awaiting output. State
+	// stays "transcribing" for all of them; the count is what says how deep the
+	// stack is.
+	Transcribing int `json:"transcribing,omitempty"`
 }
 
 type Handler func(Request) Response

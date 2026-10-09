@@ -83,25 +83,23 @@ func TestQuietRecordingWithPreviewRunsFinalTranscription(t *testing.T) {
 			stop := runDaemon(t, d)
 			defer stop()
 			sendWithRetry(t, sock, "toggle")
-			d.streamMu.Lock()
-			gen := d.streamGen
-			d.streamMu.Unlock()
-			if tc.stale {
-				gen--
-			}
+			c := d.recording
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			if tc.cancelled {
 				cancel()
 			}
+			if tc.stale {
+				c = &dictationCycle{id: c.id - 1}
+			}
 			if tc.partial != "" {
-				d.setPreview(ctx, gen, tc.partial)
+				d.setPreview(ctx, c, tc.partial)
 			}
 			if tc.name == "partial later cleared" {
-				d.setPreview(ctx, gen, "")
+				d.setPreview(ctx, c, "")
 			}
 			if tc.phrase != "" {
-				d.appendPhrase(ctx, gen, tc.phrase)
+				d.appendPhrase(ctx, c, tc.phrase)
 			}
 			sendWithRetry(t, sock, "toggle")
 			waitForState(t, sock, "idle")
@@ -147,11 +145,9 @@ func TestPreviewSpeechEvidenceDoesNotLeakToNextRecording(t *testing.T) {
 			rec.FixturePath = quietRecording(t)
 		}
 		sendWithRetry(t, sock, "toggle")
-		d.streamMu.Lock()
-		gen := d.streamGen
-		d.streamMu.Unlock()
+		c := d.recording
 		if round == 0 {
-			d.appendPhrase(t.Context(), gen, "first recording only")
+			d.appendPhrase(t.Context(), c, "first recording only")
 		}
 		sendWithRetry(t, sock, "toggle")
 		waitForState(t, sock, "idle")
@@ -208,11 +204,9 @@ func TestQuietPreviewDoesNotWaitForTailWhenWordsAlreadyRecognized(t *testing.T) 
 				d.awaitStreamDrain(t.Context())
 			}()
 			sendWithRetry(t, sock, "toggle")
+			c := d.recording
 			if partial {
-				d.streamMu.Lock()
-				gen := d.streamGen
-				d.streamMu.Unlock()
-				d.setPreview(t.Context(), gen, "recognized partial")
+				d.setPreview(t.Context(), c, "recognized partial")
 			}
 			// IPC must not wait for the tail, even for a quiet recording.
 			sendWithRetry(t, sock, "toggle")
@@ -233,7 +227,7 @@ func TestQuietPreviewDoesNotWaitForTailWhenWordsAlreadyRecognized(t *testing.T) 
 				// is still finishing.
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
-				if d.previewRecognizedSpeech(ctx) {
+				if d.previewRecognizedSpeech(ctx, c) {
 					t.Fatal("unexpected speech evidence before the held decode completed")
 				}
 				if got := sendWithRetry(t, sock, "status").State; got != "transcribing" {

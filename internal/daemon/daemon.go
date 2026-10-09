@@ -34,8 +34,16 @@ import (
 )
 
 type Daemon struct {
-	backup                    *BackupCycle
-	cycleID                   uint64
+	// recording is the single active capture, or nil. Cycles that have stopped
+	// but not yet emitted live in the machine's Pending queue and the decode
+	// worker's channel.
+	recording *dictationCycle
+	// decodeQueue feeds the one decode worker. A cycle is enqueued when its
+	// capture has stopped and its WAV is on disk.
+	decodeQueue chan *dictationCycle
+	// dispatcher emits finished transcripts in spoken order.
+	dispatcher *dispatcher
+
 	provenanceMu              sync.Mutex
 	warningWG                 sync.WaitGroup
 	source, warning           string
@@ -48,6 +56,10 @@ type Daemon struct {
 	finalMode                 models.FinalMode
 	finalCycle                *incrementalCycle
 
+	// runCtx is the daemon's lifetime context, captured in Run so IPC control
+	// requests can drive capture and transcription. Set before the server
+	// accepts its first request.
+	runCtx            context.Context
 	socket            string
 	machine           *state.Machine
 	recorder          audio.Recorder
@@ -92,25 +104,39 @@ type Daemon struct {
 	// without blocking: a reading already pending is the same reading.
 	residencyKick chan struct{}
 
-	// streamMu guards every field below it AND the overlay's text. The
-	// overlay has one writer — the preview driver, between start and stop
-	// (§10.3 of docs/design/configuration-surface.md) — and streamGen is how
-	// that is enforced: it moves on when a recording stops, so a result still
-	// in flight finds its generation gone and is dropped rather than painted.
-	streamMu        sync.Mutex
-	streamHistory   string
-	streamGen       uint64
-	streamSource    speech.StreamTranscriber
-	streamHadSpeech bool // Recognition evidence for this recording, never output text.
-
-	// streamDrain closes when the previous main-preview StopStream or companion
-	// BackupCycle finalization has returned. Main-preview text never emits. With SilenceFilter enabled, a quiet
-	// recording without recognition evidence waits for it before deciding to
-	// skip transcription.
-	// The next StartStream also waits before reusing the same recognizer.
-	streamDrain    chan struct{}
+	// streamMu guards every field below it AND the overlay's text. There is one
+	// live recording at a time, so the priming and feed machinery is
+	// daemon-global; the per-recording facts a stopped cycle still needs are
+	// copied onto its dictationCycle. liveID names the recording whose preview
+	// may paint: it is the one-writer guard (§10.3 of
+	// docs/design/configuration-surface.md), cleared when capture stops so a
+	// result still in flight finds its id gone and is dropped rather than
+	// painted.
+	streamMu       sync.Mutex
+	streamHistory  string
+	liveID         uint64
+	streamSource   speech.StreamTranscriber
 	streamFeedDone chan struct{}
-	streamUsesMain bool
+
+	// streamDrain is the most recently stopped recording's preview drain, kept
+	// so the next recording can await it before reusing a recognizer. The cycle
+	// being decoded reads its own drain from the cycle.
+	streamDrain chan struct{}
+
+	// backup is the companion stream finalizing this recording, if the preview
+	// source is the companion. Only one recording uses it at a time: a new
+	// recording whose earlier cycle still has a preview drain open skips its
+	// preview (see startRecording), so a second companion stream never starts
+	// while the first is still transcribing. Guarded by backupMu.
+	backupMu sync.Mutex
+	backup   *BackupCycle
+
+	// lastVisual dedups overlay Show calls. The derived state can move
+	// Transcribing -> Recording -> Transcribing across stacked cycles, and a
+	// repaint of the same visual would restart the pill's strips for no reason.
+	// Guarded by visualMu: control requests and the decode worker both paint.
+	visualMu   sync.Mutex
+	lastVisual overlay.Visual
 }
 
 type Initialized struct {
@@ -208,6 +234,8 @@ func New(c Config) *Daemon {
 		socket:                c.Socket,
 		finalMode:             c.FinalMode,
 		machine:               state.New(),
+		decodeQueue:           make(chan *dictationCycle, state.MaxPending),
+		dispatcher:            newDispatcher(),
 		recorder:              c.Recorder,
 		transcriber:           c.Transcriber,
 		output:                c.Output,
@@ -235,6 +263,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// a SIGTERM would rather than needing a second path out of Serve.
 	ctx, stop := context.WithCancel(ctx)
 	defer stop()
+	d.runCtx = ctx
 
 	var replaced atomic.Bool
 	if d.binaryPath != "" {
@@ -247,13 +276,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// per-utterance fact.
 	go d.watchResidency(ctx)
 
-	// Subscribe the side-effect handler BEFORE the IPC server starts so the
-	// first toggle can't race the listener registration.
+	// One decode worker and one ordered dispatcher for the daemon's life. The
+	// worker decodes cycles one at a time; the dispatcher owns output, so a slow
+	// Emit never stalls recognition of the next dictation.
 	wg := &sync.WaitGroup{}
-	unsub := d.machine.Subscribe(func(s state.State) {
-		d.onTransition(ctx, s, wg)
-	})
-	defer unsub()
+	wg.Add(2)
+	go func() { defer wg.Done(); d.decodeWorker(ctx) }()
+	go func() { defer wg.Done(); d.runDispatcher(ctx) }()
 
 	var initWG sync.WaitGroup
 	var initErr error
@@ -295,6 +324,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 				d.setResidencyProbe(loaded.Residency)
 				d.machine.Apply(state.EventReady)
 				d.controlMu.Unlock()
+				d.showDerived()
 				// The model has just loaded: one reading now, so the status
 				// reply and `mavor doctor` start from the truth rather than
 				// from unknown until the first tick.
@@ -308,7 +338,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			d.provenanceMu.Unlock()
 			if ctx.Err() == nil {
 				d.machine.Apply(state.EventInitializeFailed)
-				_ = d.overlay.SetText(e.Error())
+				d.showError(e.Error())
 				d.controlMu.Unlock()
 				d.syncHUD(ctx)
 				timer := time.NewTimer(d.errorDuration)
@@ -329,41 +359,40 @@ func (d *Daemon) Run(ctx context.Context) error {
 		err = initErr
 	}
 
-	// Wait for any in-flight transcription pipeline before returning so we
-	// don't leave a goroutine writing to wl-copy after the binary exits.
+	// Wait for any in-flight decode or output before returning so we don't
+	// leave a goroutine writing to wl-copy after the binary exits.
 	if d.incrementalFinal() {
 		d.cancelFinalCycle()
-		if d.machine.State() == state.Recording {
-			if wav, e := d.recorder.Stop(); e == nil {
-				_ = os.Remove(wav)
-				_ = os.Remove(wav + ".txt")
-			}
+	}
+	if d.machine.Snapshot().Recording() {
+		if wav, e := d.recorder.Stop(); e == nil {
+			removeCapture(wav)
 		}
 	}
 	wg.Wait()
 	d.warningWG.Wait()
 	d.stopLevelMonitoring()
-	d.stopStreamingMonitoring()
-	d.awaitStreamDrain(context.Background())
-	if d.backup != nil {
-		_ = d.backup.Cancel(context.Background())
-	}
-	if !d.incrementalFinal() && d.machine.State() == state.Recording {
-		if wav, e := d.recorder.Stop(); e == nil {
-			_ = os.Remove(wav)
-			_ = os.Remove(wav + ".txt")
+	d.stopStreamingMonitoring(nil)
+	d.cancelBackup()
+	// Cycles the worker never picked up are abandoned; drop their capture files
+	// rather than leaking them in the recording directory.
+	for {
+		select {
+		case c := <-d.decodeQueue:
+			removeCapture(c.wav)
+			continue
+		default:
 		}
+		break
 	}
 	// An error here now means the device would not confirm the restore —
 	// i.e. it may still be muted — which is worth a log line on the way out
-	// rather than silence.
-	if err := func() error {
-		if d.cycleID == 0 {
-			return nil
+	// rather than silence. Ducking is keyed on an active capture, so restore
+	// exactly when one was in progress.
+	if d.machine.Snapshot().Recording() {
+		if err := d.ducker.Restore(); err != nil {
+			d.logger.Warn("ducking: restore on shutdown failed — background audio may still be ducked", "err", err)
 		}
-		return d.ducker.Restore()
-	}(); err != nil {
-		d.logger.Warn("ducking: restore on shutdown failed — background audio may still be ducked", "err", err)
 	}
 	_ = d.overlay.Close()
 	if closer, ok := d.transcriber.(io.Closer); ok {
@@ -380,6 +409,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 func (d *Daemon) handleRequest(req ipc.Request) (resp ipc.Response) {
 	defer func() {
+		snap := d.machine.Snapshot()
+		if resp.State == "" {
+			resp.State = snap.State().String()
+		}
+		resp.Recording = snap.RecordingID != 0
+		resp.Transcribing = len(snap.Pending)
 		resp.Source, resp.Warning = d.statusProvenance()
 		resp.Residency = d.statusResidency()
 		if resp.State == "failed" {
@@ -395,144 +430,286 @@ func (d *Daemon) handleRequest(req ipc.Request) (resp ipc.Response) {
 	// The blocked request owns presentation, not recording intent. Readiness and
 	// failure use the same control lock, so this cannot repaint a finished load.
 	if (req.Action == "start" || req.Action == "toggle") && d.machine.State() == state.Initializing {
-		_ = d.overlay.Show(overlay.Initializing)
-		_ = d.overlay.SetText("Models still initializing; cannot record yet. Press again after ready.")
-		return ipc.Response{State: state.Initializing.String()}
+		d.showAndSetText(overlay.Initializing, "Models still initializing; cannot record yet. Press again after ready.")
+		return
 	}
 	d.logger.Info("ipc: request", "action", req.Action, "state_before", d.machine.State())
 	switch req.Action {
 	case "toggle":
-		next, changed := d.machine.Apply(state.EventToggle)
-		d.logger.Info("ipc: toggle result", "state_after", next, "changed", changed)
-		return ipc.Response{State: next.String()}
+		if d.machine.Snapshot().Recording() {
+			resp.State = d.stopRecording().String()
+		} else {
+			resp.State = d.startRecording().String()
+		}
 	case "start":
-		next, changed := d.machine.Apply(state.EventRecordStart)
-		d.logger.Info("ipc: start result", "state_after", next, "changed", changed)
-		return ipc.Response{State: next.String()}
+		resp.State = d.startRecording().String()
 	case "stop":
-		next, changed := d.machine.Apply(state.EventRecordStop)
-		d.logger.Info("ipc: stop result", "state_after", next, "changed", changed)
-		return ipc.Response{State: next.String()}
+		resp.State = d.stopRecording().String()
 	case "status":
-		return ipc.Response{State: d.machine.State().String()}
+		// resp.State is filled from the live snapshot by the deferred read.
 	default:
 		d.logger.Warn("ipc: unknown action", "action", req.Action)
-		return ipc.Response{Error: fmt.Sprintf("unknown action %q", req.Action)}
+		resp.Error = fmt.Sprintf("unknown action %q", req.Action)
 	}
+	return resp
 }
 
-func (d *Daemon) reportError(ctx context.Context, reason string, err error) {
+// === overlay painting (one writer under visualMu) ===
+
+// showDerived paints the coarse visual the current snapshot implies, unless a
+// completed warning is still being held on screen. It skips a repaint of the
+// same visual and logs nothing for it.
+func (d *Daemon) showDerived() {
+	s := d.machine.State()
+	d.provenanceMu.Lock()
+	keepWarning := s == state.Idle && time.Now().Before(d.warningUntil)
+	d.provenanceMu.Unlock()
+	if keepWarning {
+		return
+	}
+	d.setVisual(visualFor(s))
+}
+
+// setVisual shows v unless it is already the visible one.
+func (d *Daemon) setVisual(v overlay.Visual) {
+	if d.overlay == nil {
+		return
+	}
+	d.visualMu.Lock()
+	if d.lastVisual == v {
+		d.visualMu.Unlock()
+		return
+	}
+	d.lastVisual = v
+	d.visualMu.Unlock()
+	if err := d.overlay.Show(v); err != nil {
+		d.logger.Warn("overlay show failed", "visual", v, "err", err)
+		return
+	}
+	d.logger.Info("overlay: shown", "visual", v)
+	d.kickResidency()
+}
+
+// showAndSetText repaints v with a subtitle regardless of the dedup, for the
+// error and demand-for-initialization states where the text is the message.
+func (d *Daemon) showAndSetText(v overlay.Visual, text string) {
+	if d.overlay == nil {
+		return
+	}
+	d.visualMu.Lock()
+	d.lastVisual = v
+	d.visualMu.Unlock()
+	_ = d.overlay.Show(v)
+	_ = d.overlay.SetText(text)
+	d.kickResidency()
+}
+
+func (d *Daemon) showError(text string) {
+	d.logger.Error("pipeline error", "err", text)
+	d.showAndSetText(overlay.Error, text)
+}
+
+// startRecording opens the recording slot. It runs under controlMu: capture is
+// single-instance, so a start never interleaves with another start or a stop.
+func (d *Daemon) startRecording() state.State {
+	ctx := d.runCtx
+	// Live-final modes do not stack (§8, ruling OQ-3): with streaming/segments
+	// the main recognizer is still finishing the previous cycle, so a start
+	// while one is transcribing stays today's no-op.
+	if !d.stackingAllowed() && len(d.machine.Snapshot().Pending) > 0 {
+		d.logger.Info("pipeline: start refused — live-final mode does not stack")
+		return d.machine.State()
+	}
+	id, snap, changed := d.machine.RecordStart()
+	if !changed {
+		d.logger.Info("ipc: start result", "state_after", d.machine.State(), "changed", false)
+		return d.machine.State()
+	}
+	cycle := &dictationCycle{id: id}
+	d.recording = cycle
+	d.dispatcher.register(id)
+	d.provenanceMu.Lock()
+	d.source, d.warning = "", ""
+	d.warningUntil = time.Time{}
+	d.warningGen++
+	d.provenanceMu.Unlock()
+	d.streamMu.Lock()
+	d.streamHistory = ""
+	d.streamMu.Unlock()
+	d.setVisual(overlay.Recording)
+	if err := d.ducker.Duck(); err != nil {
+		d.logger.Warn("ducking: duck failed", "err", err)
+	} else {
+		d.logger.Info("ducking: volume ducked")
+	}
+	d.logger.Info("pipeline: starting recorder", "cycle", id)
+	if err := d.recorder.Start(ctx); err != nil {
+		d.abortCycle(ctx, cycle, "pipeline: recorder start failed — returning to idle", err)
+		return d.machine.State()
+	}
+	d.startLevelMonitoring(ctx)
+	// A later recording gets a live preview only when no earlier cycle is still
+	// awaiting output. That is the ruled feel (§5.5, OQ-6): capture is never
+	// delayed for a preview, and the single recognizer is never fed a new stream
+	// while an earlier cycle's final decode still holds it.
+	if len(snap.Pending) > 0 {
+		d.logger.Info("preview: skipped for this recording — an earlier dictation is still transcribing", "cycle", id)
+		return d.machine.State()
+	}
+	if d.incrementalFinal() {
+		if err := d.startFinalCycle(ctx, cycle); err != nil {
+			if wav, e := d.recorder.Stop(); e == nil {
+				removeCapture(wav)
+			}
+			d.abortCycle(ctx, cycle, "pipeline: final session start failed", err)
+			return d.machine.State()
+		}
+	} else {
+		d.startStreamingMonitoring(ctx, cycle)
+	}
+	return d.machine.State()
+}
+
+// stopRecording closes the recording slot, stops capture inline, and enqueues
+// the cycle for the decode worker. Running under controlMu is what serializes
+// the recorder hand-off: the next Start cannot run until Stop has returned.
+func (d *Daemon) stopRecording() state.State {
+	cycle := d.recording
+	id, snap, changed := d.machine.RecordStop()
+	if !changed {
+		d.logger.Info("ipc: stop result", "state_after", d.machine.State(), "changed", false)
+		return d.machine.State()
+	}
+	d.recording = nil
+	d.stopLevelMonitoring()
+	if d.incrementalFinal() {
+		d.stopFinalPump()
+	} else {
+		d.stopStreamingMonitoring(cycle)
+	}
+	// Capture stop is part of this edge: the WAV is on disk before the cycle is
+	// queued, so a new recording can never interleave Start/Stop.
+	wav, err := d.recorder.Stop()
+	// Capture is finished — only the tail is being decoded — so bring background
+	// media back up rather than holding it down for the transcription. This is
+	// the ruled feel (OQ-5): restored on key release, on every stop path, even
+	// one whose WAV did not reap cleanly.
+	if rerr := d.ducker.Restore(); rerr != nil {
+		d.logger.Warn("ducking: restore failed", "err", rerr)
+	} else {
+		d.logger.Info("ducking: volume restored")
+	}
+	if err != nil {
+		d.reportCycleError(d.runCtx, cycle, "pipeline: recorder.Stop failed — aborting", err)
+		// The cycle is in Pending but produced no audio; completing it with an
+		// empty outcome advances spoken order without typing anything.
+		d.completeCycle(cycle, &dispatchOutcome{source: "main", model: d.mainModel}, true)
+		return snap.State()
+	}
+	cycle.wav = wav
+	d.showDerived()
+	d.logger.Info("pipeline: queueing cycle for transcription", "cycle", id, "pending", len(snap.Pending))
+	select {
+	case d.decodeQueue <- cycle:
+	case <-d.runCtx.Done():
+	}
+	return snap.State()
+}
+
+// abortCycle discards a recording that failed before it produced audio and
+// returns the machine to where it was. The error pill lingers for errorDuration
+// via the dispatcher's rerender, and the capture duck is undone because a
+// recording was opened before the failure.
+func (d *Daemon) abortCycle(ctx context.Context, cycle *dictationCycle, reason string, err error) {
+	d.reportCycleError(ctx, cycle, reason, err)
+	d.machine.AbortRecording()
+	if rerr := d.ducker.Restore(); rerr != nil {
+		d.logger.Warn("ducking: restore failed", "err", rerr)
+	}
+	d.dispatcher.complete(cycle.id, &dispatchOutcome{keepError: true})
+}
+
+// reportCycleError paints a failure and records it as the daemon's last
+// warning. The cycle still advances spoken order (the caller completes it), so
+// one silent dictation cannot wedge the queue.
+func (d *Daemon) reportCycleError(_ context.Context, cycle *dictationCycle, reason string, err error) {
 	d.provenanceMu.Lock()
 	d.warning = err.Error()
 	d.provenanceMu.Unlock()
-	d.logger.Error(reason, "err", err)
-	if d.overlay != nil {
-		_ = d.overlay.Show(overlay.Error)
-		_ = d.overlay.SetText(err.Error())
-	}
-	if d.errorDuration > 0 {
-		timer := time.NewTimer(d.errorDuration)
-		select {
-		case <-ctx.Done():
-		case <-timer.C:
-		}
-		timer.Stop()
-	}
-	d.machine.Apply(state.EventTranscribeFailed)
+	d.logger.Error(reason, "err", err, "cycle", cycle.id)
+	d.showError(err.Error())
 }
 
-// onTransition is the side-effect dispatcher. It runs OFF the FSM lock so
-// it's free to call back into Apply (e.g. EventTranscribeDone).
-func (d *Daemon) onTransition(ctx context.Context, s state.State, wg *sync.WaitGroup) {
-	d.logger.Info("state: transitioned", "to", s)
-	if s == state.Initializing {
-		// Startup is quiet; only a recording request reveals initialization.
+// decodeWorker is the single decode path: cycles are recognized one at a time,
+// in the order their captures stopped.
+func (d *Daemon) decodeWorker(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case cycle := <-d.decodeQueue:
+			d.decodeCycle(ctx, cycle)
+		}
+	}
+}
+
+// runDispatcher emits finished transcripts in spoken order, one at a time,
+// separate from the decode worker so a slow Emit never stalls recognition. It
+// retires each cycle from the machine only after its output is out, so Idle
+// means everything has been typed, not merely decoded.
+func (d *Daemon) runDispatcher(ctx context.Context) {
+	for {
+		if id, out, ok := d.dispatcher.pop(); ok {
+			d.emitOutcome(ctx, out)
+			d.machine.Finish(id)
+			if out.keepError {
+				d.scheduleRerender(ctx, d.errorDuration)
+			} else {
+				d.showDerived()
+			}
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-d.dispatcher.wake:
+		}
+	}
+}
+
+func (d *Daemon) emitOutcome(ctx context.Context, out *dispatchOutcome) {
+	if out.text == "" {
 		return
 	}
-	d.provenanceMu.Lock()
-	keepWarning := s == state.Idle && time.Now().Before(d.warningUntil)
-	if s == state.Recording {
-		d.source = ""
-		d.warning = ""
-		d.warningUntil = time.Time{}
-		d.warningGen++
-		d.cycleID++
-	}
-	d.provenanceMu.Unlock()
-	if err := func() error {
-		if keepWarning {
-			return nil
+	// Record before typing: a failed or mis-targeted emit is exactly when the
+	// user needs the transcript back, so it must already be on disk — and in the
+	// same order as Emit, so history and what was typed agree.
+	if d.history != nil {
+		if err := d.history.Append(history.Entry{Text: out.text, At: time.Now(), Source: out.source, Model: out.model, Warning: out.warning}); err != nil {
+			d.logger.Warn("history: append failed", "err", err)
 		}
-		return d.overlay.Show(visualFor(s))
-	}(); err != nil {
-		d.logger.Warn("overlay show failed", "state", s, "err", err)
+	}
+	d.logger.Info("pipeline: dispatching output")
+	emitStart := time.Now()
+	if err := d.output.Emit(ctx, out.text); err != nil {
+		// We still complete the FSM transition; the user already heard
+		// themselves and clipboard fallback may have worked.
+		d.logger.Warn("pipeline: output dispatch reported error (continuing)", "err", err)
 	} else {
-		d.logger.Info("overlay: shown", "state", s, "visual", visualFor(s))
+		d.logger.Info("pipeline: output dispatch ok")
 	}
-	// Show starts the strips over on a visual change, and a state change can
-	// change whether a residency note belongs on screen: decide now rather
-	// than up to a poll later.
-	d.kickResidency()
-	switch s {
-	case state.Idle:
-		d.stopLevelMonitoring()
-		d.stopStreamingMonitoring()
-		if err := func() error {
-			if d.cycleID == 0 {
-				return nil
-			}
-			return d.ducker.Restore()
-		}(); err != nil {
-			d.logger.Warn("ducking: restore failed", "err", err)
-		} else {
-			d.logger.Info("ducking: volume restored")
-		}
-	case state.Recording:
-		if err := d.ducker.Duck(); err != nil {
-			d.logger.Warn("ducking: duck failed", "err", err)
-		} else {
-			d.logger.Info("ducking: volume ducked")
-		}
-		d.logger.Info("pipeline: starting recorder")
-		if err := d.recorder.Start(ctx); err != nil {
-			d.reportError(ctx, "pipeline: recorder start failed — returning to idle", err)
-			return
-		}
-		d.startLevelMonitoring(ctx)
-		if d.incrementalFinal() {
-			if err := d.startFinalCycle(ctx); err != nil {
-				if wav, e := d.recorder.Stop(); e == nil {
-					_ = os.Remove(wav)
-					_ = os.Remove(wav + ".txt")
-				}
-				d.reportError(ctx, "pipeline: final session start failed", err)
-				return
-			}
-		} else {
-			d.startStreamingMonitoring(ctx)
-		}
-	case state.Transcribing:
-		d.stopLevelMonitoring()
-		if d.incrementalFinal() {
-			d.stopFinalPump()
-		} else {
-			d.stopStreamingMonitoring()
-		}
-		// Capture is finished by now — only the tail is being decoded — so
-		// bring background media back up rather than holding it down for the
-		// length of the transcription.
-		if err := d.ducker.Restore(); err != nil {
-			d.logger.Warn("ducking: restore failed", "err", err)
-		} else {
-			d.logger.Info("ducking: volume restored")
-		}
-		d.logger.Info("pipeline: spawning transcription goroutine")
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			d.runTranscription(ctx)
-		}()
+	d.provenanceMu.Lock()
+	d.source = out.source
+	d.warning = out.warning
+	d.provenanceMu.Unlock()
+	if out.warning != "" {
+		d.retainWarning(ctx)
 	}
+	var charsPerSec int64
+	if emitMS := time.Since(emitStart).Milliseconds(); emitMS > 0 {
+		charsPerSec = int64(len(out.text)) * 1000 / emitMS
+	}
+	d.logger.Info("pipeline: emit complete", "chars", len(out.text), "chars_per_sec", charsPerSec)
 }
 
 func (d *Daemon) startLevelMonitoring(ctx context.Context) {
@@ -678,14 +855,17 @@ func (d *Daemon) statusResidency() string {
 // startStreamingMonitoring drives the overlay's live text preview while the
 // user speaks. It never emits output: partial results are provisional, and the
 // cleaned-up transcript is inserted once, when transcription completes.
-func (d *Daemon) startStreamingMonitoring(ctx context.Context) {
+func (d *Daemon) startStreamingMonitoring(ctx context.Context, c *dictationCycle) {
 	if !d.previewEnabled && d.companion == nil {
 		d.logger.Info("streaming: preview disabled (preview.enabled = false)")
 		return
 	}
 	src := d.previewStreamSource()
-	// The previous recording's final decode may still be running; it holds
-	// the same recognizer this is about to restart.
+	// The previous recording's final decode may still be running; it holds the
+	// same recognizer this is about to restart. Capture asks for a preview only
+	// when no earlier cycle is pending, so this is normally already closed —
+	// but awaiting it here is the backstop against feeding a recognizer that is
+	// still finishing the last stream.
 	d.awaitStreamDrain(ctx)
 
 	d.streamMu.Lock()
@@ -695,28 +875,27 @@ func (d *Daemon) startStreamingMonitoring(ctx context.Context) {
 	ctxStream, cancel := context.WithCancel(ctx)
 	d.streamCancel = cancel
 	d.streamHistory = ""
-	d.streamHadSpeech = false
-	d.streamGen++
-	gen := d.streamGen
+	d.liveID = c.id
+	c.hadSpeech = false
 	d.streamSource = src
 	d.streamFeedDone = make(chan struct{})
-	d.streamUsesMain = d.previewMode != speech.PreviewCompanion
+	c.usesMain = d.previewMode != speech.PreviewCompanion
 	d.streamMu.Unlock()
 
 	if d.previewMode == speech.PreviewCompanion && d.companion != nil {
 		d.streamMu.Lock()
 		d.streamSource = nil
-		d.streamUsesMain = false
+		c.usesMain = false
 		d.streamMu.Unlock()
-		d.startBackup(ctx, gen)
+		d.startBackup(ctx, c)
 		d.runBackupPump(ctxStream)
 		return
 	}
 	if src != nil {
-		d.runStreamPreview(ctxStream, gen, src)
+		d.runStreamPreview(ctxStream, c, src)
 		return
 	}
-	d.runPhrasePreview(ctxStream, gen)
+	d.runPhrasePreview(ctxStream, c)
 }
 
 // previewStreamSource is the recognizer that will paint the overlay, or nil
@@ -757,7 +936,7 @@ const PreviewTick = 30 * time.Millisecond
 // runStreamPreview feeds captured audio to a recognizer that decodes
 // incrementally — the main model when it can do that, otherwise the companion
 // loaded alongside it — and paints what it emits.
-func (d *Daemon) runStreamPreview(ctx context.Context, gen uint64, src speech.StreamTranscriber) {
+func (d *Daemon) runStreamPreview(ctx context.Context, c *dictationCycle, src speech.StreamTranscriber) {
 	d.logger.Info("streaming: initializing transducer stream session")
 	if err := src.StartStream(ctx); err != nil {
 		close(d.streamFeedDone)
@@ -834,7 +1013,7 @@ func (d *Daemon) runStreamPreview(ctx context.Context, gen uint64, src speech.St
 						d.logger.Info("streaming: preview is producing text", "after_chunks", fed)
 					}
 					gotText++
-					d.setPreview(ctx, gen, partial)
+					d.setPreview(ctx, c, partial)
 				}
 			}
 		}
@@ -846,7 +1025,7 @@ func (d *Daemon) runStreamPreview(ctx context.Context, gen uint64, src speech.St
 // to the preview. It is what runs when the main model does not decode
 // incrementally and no companion is available — cheaper, slower, and prone to
 // filling silence with words that were not said.
-func (d *Daemon) runPhrasePreview(ctx context.Context, gen uint64) {
+func (d *Daemon) runPhrasePreview(ctx context.Context, c *dictationCycle) {
 	d.logger.Info("streaming: initializing phrase-mode preview",
 		"silence_threshold", d.silenceThreshold,
 		"min_phrase", d.minPhraseDuration)
@@ -894,7 +1073,7 @@ func (d *Daemon) runPhrasePreview(ctx context.Context, gen uint64) {
 				silenceFrames = 0
 				pcm := phrase.take()
 				phrases.Add(1)
-				go func() { defer phrases.Done(); d.transcribePhrase(ctx, gen, pcm) }()
+				go func() { defer phrases.Done(); d.transcribePhrase(ctx, c, pcm) }()
 			}
 		}
 	}()
@@ -903,7 +1082,7 @@ func (d *Daemon) runPhrasePreview(ctx context.Context, gen uint64) {
 // transcribePhrase decodes one phrase with the main model for the preview.
 // A failure drops that phrase and nothing else: it must never abort the
 // recording or the final transcript (§10.2).
-func (d *Daemon) transcribePhrase(ctx context.Context, gen uint64, phrase []int16) {
+func (d *Daemon) transcribePhrase(ctx context.Context, c *dictationCycle, phrase []int16) {
 	if len(phrase) == 0 {
 		return
 	}
@@ -919,14 +1098,14 @@ func (d *Daemon) transcribePhrase(ctx context.Context, gen uint64, phrase []int1
 		d.logger.Warn("streaming: transcribe phrase failed", "err", err)
 		return
 	}
-	d.appendPhrase(ctx, gen, txt)
+	d.appendPhrase(ctx, c, txt)
 }
 
 // appendPhrase adds one phrase-mode result to the preview. On stop all preview
 // work is cancelled and its results discarded (§10.3), and a transcription
 // still in flight is precisely the result that can outlive its recording: it
 // is dropped here, not appended.
-func (d *Daemon) appendPhrase(ctx context.Context, gen uint64, text string) {
+func (d *Daemon) appendPhrase(ctx context.Context, c *dictationCycle, text string) {
 	// Phrase mode re-transcribes with the main model, so it produces the same
 	// non-speech annotations the final transcript does — a pause mid-sentence
 	// paints "[BLANK_AUDIO]" across the HUD. Cut them here, before the empty
@@ -938,11 +1117,11 @@ func (d *Daemon) appendPhrase(ctx context.Context, gen uint64, text string) {
 
 	d.streamMu.Lock()
 	defer d.streamMu.Unlock()
-	if !d.previewLive(ctx, gen) {
+	if !d.previewLive(ctx, c) {
 		d.logger.Debug("streaming: phrase result arrived after stop — dropped", "text", text)
 		return
 	}
-	d.streamHadSpeech = true
+	c.hadSpeech = true
 	if d.streamHistory != "" {
 		d.streamHistory += " "
 	}
@@ -956,17 +1135,17 @@ func (d *Daemon) appendPhrase(ctx context.Context, gen uint64, text string) {
 // setPreview paints preview text for one recording, dropping anything that
 // arrives after that recording stopped. Both preview mechanisms write the
 // overlay through here, which is what makes the driver its one writer.
-func (d *Daemon) setPreview(ctx context.Context, gen uint64, text string) {
+func (d *Daemon) setPreview(ctx context.Context, c *dictationCycle, text string) {
 	// Partials read off the main model carry its annotations too.
 	text = speech.StripNonSpeech(text)
 	d.streamMu.Lock()
 	defer d.streamMu.Unlock()
-	if !d.previewLive(ctx, gen) {
+	if !d.previewLive(ctx, c) {
 		d.logger.Debug("streaming: partial arrived after stop — dropped", "text", text)
 		return
 	}
 	if strings.TrimSpace(text) != "" {
-		d.streamHadSpeech = true
+		c.hadSpeech = true
 	}
 	if d.overlay != nil {
 		_ = d.overlay.SetText(text)
@@ -975,11 +1154,14 @@ func (d *Daemon) setPreview(ctx context.Context, gen uint64, text string) {
 
 // previewLive reports whether the recording that produced a preview result is
 // still the current one. Callers hold streamMu.
-func (d *Daemon) previewLive(ctx context.Context, gen uint64) bool {
-	return gen == d.streamGen && ctx.Err() == nil
+func (d *Daemon) previewLive(ctx context.Context, c *dictationCycle) bool {
+	return c != nil && c.id == d.liveID && ctx.Err() == nil
 }
 
-func (d *Daemon) stopStreamingMonitoring() {
+// stopStreamingMonitoring cancels the live preview. c is the cycle that
+// stopped, whose own drain and recognition evidence the final decode reads; it
+// may be nil on shutdown, when there is no cycle to record them on.
+func (d *Daemon) stopStreamingMonitoring(c *dictationCycle) {
 	d.provenanceMu.Lock()
 	keepDiagnostic := d.machine.State() == state.Failed || time.Now().Before(d.warningUntil)
 	d.provenanceMu.Unlock()
@@ -992,11 +1174,11 @@ func (d *Daemon) stopStreamingMonitoring() {
 	done := d.streamFeedDone
 	d.streamFeedDone = nil
 	d.streamSource = nil
-	// Moving the generation on under the same lock the writers take is what
+	// Moving the live id on under the same lock the writers take is what
 	// discards the work still in flight: a phrase transcription or a partial
-	// that lands after this finds its generation gone and paints nothing.
-	d.streamGen++
-	stoppedGen := d.streamGen
+	// that lands after this finds its recording no longer live and paints
+	// nothing.
+	d.liveID = 0
 	d.streamHistory = ""
 	if d.overlay != nil && !keepDiagnostic {
 		_ = d.overlay.SetText("")
@@ -1004,13 +1186,16 @@ func (d *Daemon) stopStreamingMonitoring() {
 	drain := make(chan struct{})
 	if src != nil || done != nil {
 		d.streamDrain = drain
+		if c != nil {
+			c.drain = drain
+		}
 	}
 	d.streamMu.Unlock()
 
 	if src == nil && done == nil {
 		return
 	}
-	if d.backup != nil && src == nil {
+	if backup := d.currentBackup(); backup != nil && src == nil {
 		if done != nil {
 			<-done
 		}
@@ -1020,12 +1205,9 @@ func (d *Daemon) stopStreamingMonitoring() {
 
 	// StopStream makes the recognizer decode whatever audio it still holds.
 	// Its text is never emitted, but recognition can prevent the energy
-	// filter from discarding a quiet recording. Waiting for it here charged
-	// the user twice for nothing:
-	// this runs on the FSM listener, which state.Machine.Apply calls before
-	// returning, so a slow final decode delayed BOTH the `mavor stop` /
-	// `toggle` command's own reply AND the spawn of runTranscription, the
-	// call that produces the text the user is waiting for.
+	// filter from discarding a quiet recording. It runs here rather than
+	// synchronously on the control path so a slow final decode never delays the
+	// `mavor stop` reply or the capture hand-off.
 	go func() {
 		defer close(drain)
 		if done != nil {
@@ -1039,8 +1221,8 @@ func (d *Daemon) stopStreamingMonitoring() {
 		if err == nil && finalText != "" {
 			if strings.TrimSpace(speech.StripNonSpeech(finalText)) != "" {
 				d.streamMu.Lock()
-				if d.streamGen == stoppedGen {
-					d.streamHadSpeech = true
+				if c != nil {
+					c.hadSpeech = true
 				}
 				d.streamMu.Unlock()
 			}
@@ -1050,13 +1232,30 @@ func (d *Daemon) stopStreamingMonitoring() {
 	}()
 }
 
-// awaitStreamDrain blocks until the previous recording's StopStream has
-// returned, so a recognizer is never fed a new stream while it is still
-// finishing the last one. It is normally already closed by the time a user
-// starts speaking again.
+// awaitStreamDrain blocks until the most recently stopped recording's
+// StopStream has returned, so a recognizer is never fed a new stream while it
+// is still finishing the last one. It is normally already closed.
 func (d *Daemon) awaitStreamDrain(ctx context.Context) {
 	d.streamMu.Lock()
 	drain := d.streamDrain
+	d.streamMu.Unlock()
+	if drain == nil {
+		return
+	}
+	select {
+	case <-drain:
+	case <-ctx.Done():
+		return
+	}
+}
+
+// awaitCycleDrain blocks until this cycle's preview decode has returned.
+func (d *Daemon) awaitCycleDrain(ctx context.Context, c *dictationCycle) {
+	d.streamMu.Lock()
+	var drain chan struct{}
+	if c != nil {
+		drain = c.drain
+	}
 	d.streamMu.Unlock()
 	if drain == nil {
 		return
@@ -1072,9 +1271,13 @@ func (d *Daemon) awaitStreamDrain(ctx context.Context) {
 // recording. Once any words were recognized, later empty partials cannot erase
 // that evidence. Only a recording the energy filter would otherwise discard
 // needs to wait for the tail decode, and only if it has no recognized words yet.
-func (d *Daemon) previewRecognizedSpeech(ctx context.Context) bool {
+func (d *Daemon) previewRecognizedSpeech(ctx context.Context, c *dictationCycle) bool {
 	d.streamMu.Lock()
-	hadSpeech, drain := d.streamHadSpeech, d.streamDrain
+	var hadSpeech bool
+	var drain chan struct{}
+	if c != nil {
+		hadSpeech, drain = c.hadSpeech, c.drain
+	}
 	d.streamMu.Unlock()
 	if hadSpeech {
 		return true
@@ -1088,113 +1291,110 @@ func (d *Daemon) previewRecognizedSpeech(ctx context.Context) bool {
 	}
 	d.streamMu.Lock()
 	defer d.streamMu.Unlock()
-	return d.streamHadSpeech
+	if c == nil {
+		return false
+	}
+	return c.hadSpeech
 }
 
-func (d *Daemon) runTranscription(ctx context.Context) {
+// decodeCycle recognizes one stopped recording and hands the result to the
+// dispatcher. It runs on the single decode worker, so cycles are recognized in
+// spoken order; the dispatcher, not this function, owns output.
+func (d *Daemon) decodeCycle(ctx context.Context, c *dictationCycle) {
 	cycleStart := time.Now()
-	d.logger.Info("pipeline: stopping recorder for transcription")
-	wav, err := d.recorder.Stop()
-	if err != nil {
-		if d.incrementalFinal() {
-			d.cancelFinalCycle()
-		} else if d.backup != nil {
-			_ = d.backup.Cancel(context.Background())
-		}
-		d.reportError(ctx, "pipeline: recorder.Stop failed — aborting", err)
+	wav := c.wav
+	out := &dispatchOutcome{source: "main", model: d.mainModel}
+	if wav == "" {
+		d.completeCycle(c, out, false)
 		return
 	}
-	if wav != "" {
-		defer func() {
-			_ = os.Remove(wav)
-			_ = os.Remove(wav + ".txt")
-		}()
-	}
-	d.logger.Info("pipeline: recorder.Stop ok", "wav", wav)
+	defer removeCapture(wav)
+
+	// The companion backup finalizes this recording. There is one at a time: a
+	// recording whose earlier cycle had a preview drain open skipped its
+	// preview, so d.backup belongs to this cycle alone.
 	type completedBackup struct {
 		result BackupResult
 		err    error
 	}
 	var backupDone chan completedBackup
-	if d.backup != nil {
-		b := d.backup
+	if b := d.takeBackup(); b != nil {
 		backupDone = make(chan completedBackup, 1)
+		// The companion's finalization is this cycle's drain: the energy filter
+		// waits on it for recognition evidence, and a later recording would wait
+		// on it before reusing the companion. Re-pointing the cycle's drain here
+		// is what makes the finalized tail count.
 		drain := make(chan struct{})
 		d.streamMu.Lock()
-		gen := d.streamGen
-		d.streamDrain = drain
+		c.drain = drain
 		d.streamMu.Unlock()
 		go func() {
 			defer close(drain)
 			r, e := b.Finish(ctx, wav)
 			if e == nil && strings.TrimSpace(speech.StripNonSpeech(r.Text)) != "" {
 				d.streamMu.Lock()
-				if d.streamGen == gen {
-					d.streamHadSpeech = true
-				}
+				c.hadSpeech = true
 				d.streamMu.Unlock()
 			}
 			backupDone <- completedBackup{r, e}
 		}()
 		defer func() { <-backupDone }()
 	}
-	selectedSource, selectedModel, warning := "main", d.mainModel, ""
 
 	// The energy filter measures loudness, not intelligibility: quiet or short
 	// speech can fail it even after the preview recognized words. Recognition
 	// wins that disagreement; only the main model's final transcript is emitted.
 	if d.silenceFilter && wav != "" && !d.incrementalFinal() {
 		if hasSpeech, vadErr := audio.DetectSpeech(wav, 150*time.Millisecond); vadErr == nil && !hasSpeech {
-			if !d.previewRecognizedSpeech(ctx) {
-				d.logger.Info("pipeline: silence detected by VAD pre-filter — skipping transcription")
-				d.machine.Apply(state.EventTranscribeDone)
+			if !d.previewRecognizedSpeech(ctx, c) {
+				d.logger.Info("pipeline: silence detected by VAD pre-filter — skipping transcription", "cycle", c.id)
+				d.completeCycle(c, out, false)
 				return
 			}
-			d.logger.Info("pipeline: preview recognized speech below energy threshold — running final transcription")
+			d.logger.Info("pipeline: preview recognized speech below energy threshold — running final transcription", "cycle", c.id)
 		}
 	}
 
 	transcribeStart := time.Now()
 	var text string
+	var err error
 	if d.incrementalFinal() {
-		cycle := d.finalCycle
-		if cycle == nil {
+		final := d.finalCycle
+		if final == nil {
 			err = errors.New("missing final session")
 		} else {
 			var result speech.FinalResult
-			result, err = cycle.session.Finish(ctx, wav)
+			result, err = final.session.Finish(ctx, wav)
 			text = result.Text
 			d.logger.Info("pipeline: final session", "requested", result.RequestedMode, "actual", result.ActualMode, "replay_reason", result.ReplayReason, "stats", result.Stats)
 			// Enabled energy rejection still requires recognition evidence, including
 			// authoritative last-tail text; disabled never gates quiet audio.
 			if err == nil && d.silenceFilter && (result.ActualMode == models.FinalAfterStop || strings.TrimSpace(speech.StripNonSpeech(text)) == "") {
-				if hasSpeech, e := audio.DetectSpeech(wav, 150*time.Millisecond); e == nil && !hasSpeech && !d.previewRecognizedSpeech(ctx) {
+				if hasSpeech, e := audio.DetectSpeech(wav, 150*time.Millisecond); e == nil && !hasSpeech && !d.previewRecognizedSpeech(ctx, c) {
 					text = ""
 				}
 			}
 		}
 	} else {
-		d.streamMu.Lock()
-		usesMain := d.streamUsesMain
-		d.streamMu.Unlock()
-		if usesMain {
-			d.awaitStreamDrain(ctx)
+		if c.usesMain {
+			d.awaitCycleDrain(ctx, c)
 		}
 		text, err = d.transcriber.Transcribe(ctx, wav)
 	}
 	if err != nil {
 		if ctx.Err() != nil {
+			d.completeCycle(c, out, false)
 			return
 		}
 		mainErr := err
 		if speech.IsGPURequestFailure(err) {
-			_ = d.overlay.Show(overlay.Error)
-			_ = d.overlay.SetText(mainErr.Error())
+			d.showError(mainErr.Error())
 			d.syncHUD(ctx)
 			timer := time.NewTimer(d.errorDuration)
 			select {
 			case <-ctx.Done():
 				timer.Stop()
+				d.completeCycle(c, out, false)
 				return
 			case <-timer.C:
 			}
@@ -1202,22 +1402,22 @@ func (d *Daemon) runTranscription(ctx context.Context) {
 				var completed completedBackup
 				select {
 				case <-ctx.Done():
+					d.completeCycle(c, out, false)
 					return
 				case completed = <-backupDone:
 				}
 				backupDone <- completed
 				r := completed.result
-				if completed.err == nil && usableBackup(r, d.cycleID) {
+				if completed.err == nil && usableBackup(r, c.id) {
 					text = r.Text
 					err = nil
-					selectedSource = "companion-backup"
-					selectedModel = r.Model
-					warning = fmt.Sprintf("GPU-enabled server request failed: %v; finalized companion backup: %s", mainErr, r.Model)
-					d.logger.Warn("pipeline: using finalized companion backup", "warning", warning, "cycle", r.CycleID)
-					_ = d.overlay.Show(overlay.Degraded)
-					_ = d.overlay.SetText(warning)
+					out.source = "companion-backup"
+					out.model = r.Model
+					out.warning = fmt.Sprintf("GPU-enabled server request failed: %v; finalized companion backup: %s", mainErr, r.Model)
+					d.logger.Warn("pipeline: using finalized companion backup", "warning", out.warning, "cycle", r.CycleID)
+					d.showAndSetText(overlay.Degraded, out.warning)
 					d.provenanceMu.Lock()
-					d.warning = warning
+					d.warning = out.warning
 					d.warningUntil = time.Now().Add(3 * time.Second)
 					d.provenanceMu.Unlock()
 				} else {
@@ -1226,12 +1426,13 @@ func (d *Daemon) runTranscription(ctx context.Context) {
 			}
 		}
 		if err != nil {
-			d.reportError(ctx, "pipeline: transcribe failed — aborting", mainErr)
+			d.reportCycleError(ctx, c, "pipeline: transcribe failed — aborting", mainErr)
+			d.completeCycle(c, out, true)
 			return
 		}
 	}
 	transcribeMS := time.Since(transcribeStart).Milliseconds()
-	d.logger.Info("pipeline: transcript received", "text_len", len(text), "transcribe_ms", transcribeMS)
+	d.logger.Info("pipeline: transcript received", "cycle", c.id, "text_len", len(text), "transcribe_ms", transcribeMS)
 
 	// Whisper decodes near-speech to an annotation rather than to nothing, so
 	// "[BLANK_AUDIO]" reaches here as a perfectly ordinary non-empty string and
@@ -1251,55 +1452,65 @@ func (d *Daemon) runTranscription(ctx context.Context) {
 	text = output.CleanText(text)
 
 	if text == "" {
-		d.logger.Warn("pipeline: empty transcript — skipping emit (whisper found no speech?)")
-		d.machine.Apply(state.EventTranscribeDone)
+		d.logger.Warn("pipeline: empty transcript — skipping emit (whisper found no speech?)", "cycle", c.id)
+		d.completeCycle(c, out, false)
 		return
 	}
 	if ctx.Err() != nil {
+		d.completeCycle(c, out, false)
 		return
 	}
+	out.text = text
+	// The dispatcher emits in spoken order; this only records the completion.
+	d.completeCycle(c, out, false)
 
-	// Record before typing: a failed or mis-targeted emit is exactly when the
-	// user needs the transcript back, so it must already be on disk.
-	if d.history != nil {
-		if err := d.history.Append(history.Entry{Text: text, At: time.Now(), Source: selectedSource, Model: selectedModel, Warning: warning}); err != nil {
-			d.logger.Warn("history: append failed", "err", err)
-		}
-	}
-
-	d.logger.Info("pipeline: dispatching output")
-	emitStart := time.Now()
-	if err := d.output.Emit(ctx, text); err != nil {
-		// We still complete the FSM transition; the user already heard
-		// themselves and clipboard fallback may have worked.
-		d.logger.Warn("pipeline: output dispatch reported error (continuing)", "err", err)
-	} else {
-		d.logger.Info("pipeline: output dispatch ok")
-	}
-	d.provenanceMu.Lock()
-	d.source = selectedSource
-	d.warning = warning
-	d.provenanceMu.Unlock()
-	if warning != "" {
-		d.retainWarning(ctx)
-	}
-	emitMS := time.Since(emitStart).Milliseconds()
-	d.machine.Apply(state.EventTranscribeDone)
-
-	// The overlay stays up for this whole span, so "it lingered" is a
+	// The overlay stays up for the whole emit span, so "it lingered" is a
 	// question about which stage was slow rather than about the overlay.
-	// Typing is per-character and is usually the long pole on a long
-	// dictation: chars_per_sec is the number that says so.
-	var charsPerSec int64
-	if emitMS > 0 {
-		charsPerSec = int64(len(text)) * 1000 / emitMS
-	}
-	d.logger.Info("pipeline: cycle complete (back to idle)",
+	d.logger.Info("pipeline: cycle complete",
+		"cycle", c.id,
 		"chars", len(text),
 		"transcribe_ms", transcribeMS,
-		"emit_ms", emitMS,
-		"emit_chars_per_sec", charsPerSec,
 		"total_ms", time.Since(cycleStart).Milliseconds())
+}
+
+// completeCycle queues a finished cycle with the dispatcher. The dispatcher,
+// not this call, retires the cycle from the machine — after its output is out,
+// so return to Idle means everything has been typed. keepError leaves the error
+// pill up for errorDuration once the cycle is retired.
+func (d *Daemon) completeCycle(c *dictationCycle, out *dispatchOutcome, keepError bool) {
+	out.keepError = keepError
+	d.dispatcher.complete(c.id, out)
+}
+
+// scheduleRerender repaints the derived visual after a delay, so an error or
+// warning has its moment before the stack replaces it.
+func (d *Daemon) scheduleRerender(ctx context.Context, after time.Duration) {
+	if after <= 0 {
+		d.showDerived()
+		return
+	}
+	d.warningWG.Add(1)
+	go func() {
+		defer d.warningWG.Done()
+		timer := time.NewTimer(after)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+		d.showDerived()
+	}()
+}
+
+// removeCapture deletes a stopped recording and the sidecar whisper-cli may
+// write beside it.
+func removeCapture(wav string) {
+	if wav == "" {
+		return
+	}
+	_ = os.Remove(wav)
+	_ = os.Remove(wav + ".txt")
 }
 
 func visualFor(s state.State) overlay.Visual {
