@@ -74,6 +74,12 @@ func TestCaptureStartFailureRestoresDuckingAndAdvancesTheQueue(t *testing.T) {
 	if !textSeen(ov.Texts(), boom.Error()) {
 		t.Fatalf("capture-start error never painted, texts = %v", ov.Texts())
 	}
+	// The aborted capture must also clear the single-capture field: abortCycle
+	// is the only writer of it other than start/stop, so leaving it set carries
+	// a second source of truth that can disagree with the machine's slot.
+	if d.recording != nil {
+		t.Fatalf("abortCycle left d.recording set: %+v", d.recording)
+	}
 
 	// The aborted cycle has to complete: a later dictation types only if the
 	// dispatcher's frontier moved past the aborted id rather than parking every
