@@ -34,8 +34,9 @@ func newDoctorCmd() *cobra.Command {
 			"Besides checking the environment, doctor is the second half of the config\n" +
 			"file: it reports the derived facts a user cannot read off config.toml —\n" +
 			"which runtime and placement the model got, the thread count and where it\n" +
-			"came from, whether a GPU backend actually loaded, and where preview text\n" +
-			"will come from.",
+			"came from, whether a GPU backend actually loaded, whether the model the\n" +
+			"daemon loaded is still in VRAM rather than system RAM, and where preview\n" +
+			"text will come from.",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if fix {
@@ -82,6 +83,7 @@ func runDoctor() error {
 		{"Runtime and placement", checkRuntime},
 		{"Inference threads", checkThreads},
 		{"GPU acceleration", checkGPU},
+		{"GPU model residency", checkResidency},
 		{"Configuration file", checkConfig},
 		{"Voice model availability", checkModel},
 		{"Live preview source", checkPreview},
@@ -828,6 +830,34 @@ func checkOSCDucking() (bool, string) {
 		return false, msg + fmt.Sprintf("; %v did not answer and will be left alone", missing)
 	}
 	return true, msg + fmt.Sprintf("; muted with %d while recording", d.MutedValue())
+}
+
+// checkResidency reports where the running daemon's main model currently lives.
+//
+// It is a report, not a gate. A model that has been pushed into system RAM
+// still transcribes; it is slower than the configuration promised, which is
+// what the overlay warns about during a dictation, and nothing in the config
+// can undo an eviction. So no outcome here fails the run — the checks that
+// fail are the ones with something to fix.
+func checkResidency() (bool, string) {
+	cfg, _ := config.Load("")
+	resp, err := ipc.Send(cfg.Paths.Socket, ipc.Request{Action: "status"}, 500*time.Millisecond)
+	if err != nil {
+		return true, "unknown — the daemon is not running, so no model is loaded"
+	}
+	return residencyVerdict(resp.Residency)
+}
+
+// residencyVerdict is checkResidency minus the socket, so the wording of each
+// outcome can be tested without a daemon.
+func residencyVerdict(residency string) (bool, string) {
+	switch residency {
+	case "vram":
+		return true, "the model the daemon loaded is resident in VRAM"
+	case "gtt":
+		return true, "the model the daemon loaded is in system RAM (GTT), not VRAM — GPU acceleration is degraded, and the overlay says so while recording (close what else is using the card, or run a smaller model)"
+	}
+	return true, "unknown — there is no GPU-resident model to report on (no daemon, no amdgpu, or a runtime that runs in-process on the CPU)"
 }
 
 func checkDaemon() (bool, string) {

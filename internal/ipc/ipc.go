@@ -26,6 +26,11 @@ type Response struct {
 	Warning string `json:"warning,omitempty"`
 	State   string `json:"state,omitempty"`
 	Error   string `json:"error,omitempty"`
+	// Residency names where the daemon's main model currently lives: "vram"
+	// or "gtt". Empty means there is nothing to report — the model has no
+	// GPU-resident weights to track, or the probe could not read the child.
+	// See speech.Residency for the states themselves.
+	Residency string `json:"residency,omitempty"`
 }
 
 type Handler func(Request) Response

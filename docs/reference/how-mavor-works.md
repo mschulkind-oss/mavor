@@ -234,6 +234,10 @@ Recording starts two monitor goroutines, both cancelled on the way out of
   to `Overlay.SetLevel`, which is what animates the waveform.
 - **The preview** feeds the overlay's subtitle line via `Overlay.SetText`.
 
+A third monitor, the residency sampler below, is not tied to a recording: it
+runs for the life of the daemon, because residency changes when the model loads
+or when something else takes the card, not when you speak.
+
 Two mechanisms can produce that text, and which one runs is decided **once, at
 daemon start**, by `speech.ResolvePreview` — not per recording and not by a type
 assertion on the main transcriber:
@@ -289,6 +293,22 @@ and arrives in visible lumps.
 `daemon.soften()` lowercases an all-upper-case partial on its way to
 `Overlay.SetText`. That transform exists for this class of companion; do not
 remove it as cosmetic.
+
+### The residency note
+
+The strip below the preview is a fact about the model rather than about the
+utterance: `speech.ResidencyProbe` reads the supervised child's own
+`/proc/<pid>/fdinfo`, sums its amdgpu footprint, and compares VRAM against the
+size of the GGML file the child loaded. Whisper uploads the weight file to the
+device as one buffer, so a footprint below the file's size — or amdgpu's own
+`amd-evicted-vram` counter showing a model's worth pushed out on the kernels
+that print it — means the weights were evicted into system RAM (GTT), the state
+in which dictation works but is slower than the configuration promised. The
+probe answers `ResidencyUnknown` for a stopped child, a non-amdgpu card, a
+container that cannot see the host's process table, and every runtime with no
+warm GPU child (sherpa, subprocess, remote); the daemon then paints nothing, and
+never fails a dictation over it. The same fact is in the daemon's status reply,
+which is what `mavor doctor`'s `GPU model residency` line reports.
 
 > [!WARNING]
 > Provisional preview never emits. Successful main results remain authoritative.
@@ -348,7 +368,7 @@ cgo.
 | `audio.Ducker` | `Duck`, `Restore` | `CommandDucker` over `wpctl` or `pactl`, auto-detected |
 | `speech.Transcriber` | `Transcribe(ctx, wavPath) (string, error)` | chosen by `speech.Factory` — see below |
 | `output.Dispatcher` | `Emit(ctx, text) error` | `Paste` (default), `Native` / `Wayland` (typing), or `Clipboard` / `X11Clipboard` (copy only) |
-| `overlay.Overlay` | `Show(Visual)`, `SetLevel`, `SetText`, `Close` | `overlay.WL` — layer-shell; `overlay.X11` — passive GNOME XWayland |
+| `overlay.Overlay` | `Show(Visual)`, `SetLevel`, `SetText`, `SetNotice`, `Close` | `overlay.WL` — layer-shell; `overlay.X11` — passive GNOME XWayland |
 
 Two optional interfaces are discovered by type assertion, so an implementation
 opts in by having the methods: `audio.ChunkReader` (a recorder that can hand

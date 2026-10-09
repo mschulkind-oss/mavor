@@ -71,6 +71,13 @@ type Scene struct {
 	// keeping up, not to be read back, so a long dictation shows its tail
 	// rather than growing a surface nobody can fit on screen.
 	Preview string
+	// Notice is a fact about the model rather than about this utterance — today
+	// the residency warning that the main weights were evicted from VRAM into
+	// system RAM — drawn on its own strip under the preview so that it and a
+	// live preview can be on screen at once. Empty hides it, and it is only
+	// drawn while recording: it explains why this dictation may be slow, which
+	// is not something to say over the transcribing or error pill.
+	Notice string
 	// MaxPreviewWidth caps the preview strip in pixels, including its
 	// padding. Zero means uncapped, which is what a scene built by hand in a
 	// test gets. See FitPreviewTail for what happens to text that exceeds it.
@@ -91,11 +98,11 @@ type Scene struct {
 }
 
 // FixedSurfaceSize is the canvas the overlay allocates once and keeps: wide
-// enough for the preview cap, and tall enough for the preview strip whether or
-// not one is showing.
+// enough for the preview cap, and tall enough for the preview strip and the
+// notice strip whether or not either is showing.
 //
 // The height is reserved unconditionally on purpose. A surface that grows when
-// the preview arrives is a resize, and the whole point is to have none. The
+// a strip arrives is a resize, and the whole point is to have none. The
 // reserved region is transparent, so an idle overlay looks exactly as it did.
 func FixedSurfaceSize(maxPreviewWidth int) (int, int, error) {
 	f, err := textFaces()
@@ -114,7 +121,7 @@ func FixedSurfaceSize(maxPreviewWidth int) (int, int, error) {
 		w = maxPreviewWidth
 	}
 	_, pillH := pillSize(f, Scene{Visual: Recording})
-	h := pillH + previewGap + previewSize + 2*previewPadY + 4
+	h := pillH + 2*(previewGap+stripHeight())
 	return w, h, nil
 }
 
@@ -516,6 +523,19 @@ func FitPreviewTail(f font.Face, s string, maxTextPx float64, tracking float64) 
 	return previewEllipsis + string(r[len(r)-kept:])
 }
 
+// stripHeight is the height of one subtitle strip: the text line, its padding,
+// and the one-pixel edge the painter adds round it.
+func stripHeight() int { return previewSize + 2*previewPadY + 4 }
+
+// stripY is the top of the n-th subtitle strip, counting from one under the
+// pill: strip 1 is the preview, strip 2 the notice.
+//
+// The notice keeps the SECOND slot even when no preview is showing. Sliding up
+// into an empty first slot would move it again the moment the first partial
+// arrived, and a line that jumps while you speak is worse than a line with a
+// gap above it.
+func stripY(pillH, n int) int { return pillH + n*previewGap + (n-1)*stripHeight() }
+
 // previewStripWidth is the width of the preview strip in pixels.
 //
 // Capped scenes get a CONSTANT width rather than one that hugs the text. The
@@ -530,18 +550,37 @@ func previewStripWidth(f *faces, s Scene) int {
 	return int(math.Ceil(textWidth(f.preview, previewText(f, s), 0.03*previewSize))) + 2*previewPadX
 }
 
-// previewText is the string actually drawn, and the single place the cap is
-// applied — SceneSize and Render must agree on it or the surface will not
-// match its contents.
+// previewText is the string actually drawn, capped by fitStrip — SceneSize and
+// Render must agree on it or the surface will not match its contents.
 func previewText(f *faces, s Scene) string {
-	if s.Preview == "" {
+	return fitStrip(f, s.Preview, s.MaxPreviewWidth)
+}
+
+// noticeStripWidth is previewStripWidth for the notice strip, capped the same
+// way so the second line cannot be wider than the canvas the overlay allocated.
+func noticeStripWidth(f *faces, s Scene) int {
+	if s.MaxPreviewWidth > 0 {
+		return s.MaxPreviewWidth
+	}
+	return int(math.Ceil(textWidth(f.preview, noticeText(f, s), 0.03*previewSize))) + 2*previewPadX
+}
+
+// noticeText is the notice actually drawn, capped exactly as the preview is.
+func noticeText(f *faces, s Scene) string {
+	return fitStrip(f, s.Notice, s.MaxPreviewWidth)
+}
+
+// fitStrip trims a strip's text to the cap. A scene with no cap is left alone,
+// which is what the storybook and hand-built test scenes want.
+func fitStrip(f *faces, text string, maxPreviewWidth int) string {
+	if text == "" {
 		return ""
 	}
-	maxText := float64(s.MaxPreviewWidth - 2*previewPadX)
-	if s.MaxPreviewWidth == 0 {
+	maxText := float64(maxPreviewWidth - 2*previewPadX)
+	if maxPreviewWidth == 0 {
 		maxText = 0
 	}
-	return FitPreviewTail(f.preview, s.Preview, maxText, 0.03*previewSize)
+	return FitPreviewTail(f.preview, text, maxText, 0.03*previewSize)
 }
 
 func SceneSize(s Scene) (int, int, error) {
@@ -556,13 +595,24 @@ func SceneSize(s Scene) (int, int, error) {
 	}
 	pillW, pillH := pillSize(f, s)
 	w, h := pillW, pillH
-	if hasSubtitle(s) {
-		pw := previewStripWidth(f, s)
-		ph := previewSize + 2*previewPadY + 4
-		if pw > w {
+	preview, notice := hasSubtitle(s), hasNotice(s)
+	if preview {
+		if pw := previewStripWidth(f, s); pw > w {
 			w = pw
 		}
-		h += previewGap + ph
+	}
+	if notice {
+		if nw := noticeStripWidth(f, s); nw > w {
+			w = nw
+		}
+	}
+	// The notice is drawn in the second slot, so a scene that shows one is
+	// tall enough for both, preview or no preview.
+	switch {
+	case notice:
+		h += 2 * (previewGap + stripHeight())
+	case preview:
+		h += previewGap + stripHeight()
 	}
 	return w, h, nil
 }
@@ -626,10 +676,15 @@ func SceneBounds(s Scene) (image.Rectangle, error) {
 
 	if hasSubtitle(s) {
 		pw := previewStripWidth(f, s)
-		ph := previewSize + 2*previewPadY + 4
 		px := (w - pw) / 2
-		py := pillH + previewGap
-		r = r.Union(image.Rect(px, py, px+pw, py+ph))
+		py := stripY(pillH, 1)
+		r = r.Union(image.Rect(px, py, px+pw, py+stripHeight()))
+	}
+	if hasNotice(s) {
+		nw := noticeStripWidth(f, s)
+		nx := (w - nw) / 2
+		ny := stripY(pillH, 2)
+		r = r.Union(image.Rect(nx, ny, nx+nw, ny+stripHeight()))
 	}
 	return r, nil
 }
@@ -746,11 +801,18 @@ func RenderInto(img *image.RGBA, s Scene) error {
 
 	if hasSubtitle(s) {
 		pw := previewStripWidth(f, s)
-		ph := previewSize + 2*previewPadY + 4
 		px := (w - pw) / 2
-		py := pillH + previewGap
-		strip := cache.strip(f, s, pw, ph)
-		draw.Draw(img, image.Rect(px, py, px+pw, py+ph), strip, image.Point{}, draw.Over)
+		py := stripY(pillH, 1)
+		strip := previewStripCache.strip(f, s.Preview, previewText(f, s), pw, stripHeight())
+		draw.Draw(img, image.Rect(px, py, px+pw, py+stripHeight()), strip, image.Point{}, draw.Over)
+	}
+
+	if hasNotice(s) {
+		nw := noticeStripWidth(f, s)
+		nx := (w - nw) / 2
+		ny := stripY(pillH, 2)
+		strip := noticeStripCache.strip(f, s.Notice, noticeText(f, s), nw, stripHeight())
+		draw.Draw(img, image.Rect(nx, ny, nx+nw, ny+stripHeight()), strip, image.Point{}, draw.Over)
 	}
 
 	return nil
@@ -799,7 +861,7 @@ func drawWarning(img *image.RGBA, x, cy float64, size int, c color.NRGBA) {
 	})
 }
 
-// stripCache keeps the last rendered preview strip.
+// stripCache keeps the last rendered subtitle strip.
 //
 // Drawing it is by far the most expensive thing in a frame: the rounded
 // background is rasterised and then every glyph is drawn one at a time. With
@@ -817,20 +879,19 @@ type stripCache struct {
 	raw    string
 }
 
-// strip returns the rendered preview strip, drawing it only when something
-// about it has actually changed.
-func (c *stripCache) strip(f *faces, s Scene, pw, ph int) *image.RGBA {
-	// Keyed on the RAW preview text, not the fitted tail.
+// strip returns the rendered strip, drawing it only when something about it
+// has actually changed.
+func (c *stripCache) strip(f *faces, raw, text string, pw, ph int) *image.RGBA {
+	// Keyed on the RAW strip text, not the fitted tail.
 	//
 	// The tail is a pure function of the raw text and the strip size, so
 	// comparing it would mean computing it — and fitting the tail walks the
 	// string measuring glyphs. Keying on the input instead means a frame
 	// whose text has not changed does no work at all. Comparing the fields
 	// rather than a formatted key string keeps it allocation-free too.
-	if c.img != nil && c.pw == pw && c.ph == ph && c.raw == s.Preview {
+	if c.img != nil && c.pw == pw && c.ph == ph && c.raw == raw {
 		return c.img
 	}
-	text := previewText(f, s)
 
 	img := image.NewRGBA(image.Rect(0, 0, pw, ph))
 	rect := img.Bounds()
@@ -845,18 +906,28 @@ func (c *stripCache) strip(f *faces, s Scene, pw, ph int) *image.RGBA {
 	baseline := float64(ph)/2 + float64(pm.Ascent-pm.Descent)/128.0
 	drawText(img, f.preview, text, float64(previewPadX), baseline, previewInk, 0.03*previewSize)
 
-	c.img, c.pw, c.ph, c.raw = img, pw, ph, s.Preview
+	c.img, c.pw, c.ph, c.raw = img, pw, ph, raw
 	return img
 }
 
-// cache is process-wide, which is right for what it holds: one overlay is on
-// screen at a time, and the storybook renders scenes one after another. A
-// second overlay would only ever cost the two of them a redraw each.
-var cache stripCache
+// The caches are process-wide, which is right for what they hold: one overlay
+// is on screen at a time, and the storybook renders scenes one after another. A
+// second overlay would only ever cost the two of them a redraw each. There are
+// two because both strips can be on screen in the same frame, and they change
+// at unrelated times — the preview per partial, the notice when the model's
+// residency does.
+var previewStripCache, noticeStripCache stripCache
 
 // Diagnostics share the existing subtitle strip; they are not live transcripts.
 func hasSubtitle(s Scene) bool {
 	return s.Preview != "" && (s.Visual == Recording || s.Visual == Initializing || s.Visual == Error || s.Visual == Degraded)
+}
+
+// hasNotice is true while there is a notice to draw. Recording only: a
+// residency fact is context for the dictation in front of you, and must not
+// paint over the transcribing or error pill.
+func hasNotice(s Scene) bool {
+	return s.Notice != "" && s.Visual == Recording
 }
 func activityLabel(v Visual) string {
 	if v == Initializing {

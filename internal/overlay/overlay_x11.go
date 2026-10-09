@@ -61,6 +61,7 @@ func (o *X11) Show(v Visual) error {
 	err := o.mutate(func(d *desired) {
 		if v != d.visual {
 			d.preview = ""
+			d.notice = ""
 			d.levels = nil
 		}
 		d.visual = v
@@ -78,6 +79,11 @@ func (o *X11) SetText(text string) error {
 		if d.visual == Recording || d.visual == Initializing || d.visual == Error || d.visual == Degraded {
 			d.preview = text
 		}
+	})
+}
+func (o *X11) SetNotice(text string) error {
+	return o.mutate(func(d *desired) {
+		d.notice = text
 	})
 }
 func (o *X11) SetLevel(level float64) error {
@@ -212,6 +218,7 @@ func (o *X11) run(t *xTransport) {
 			}
 			scene.Visual = d.visual
 			scene.Preview = d.preview
+			scene.Notice = d.notice
 			if n := len(d.levels); n > 0 {
 				level = d.levels[n-1]
 				for _, v := range d.levels {

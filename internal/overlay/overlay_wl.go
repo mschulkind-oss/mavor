@@ -65,6 +65,11 @@ type WL struct {
 type desired struct {
 	visual  Visual
 	preview string
+	// notice is the second strip's text — a fact about the model rather than
+	// about this utterance. Stored whatever the state; which states may paint
+	// it is a paint-time decision (hasNotice), so a notice set out of order
+	// cannot land on the wrong pill and clearing it always works.
+	notice string
 	// levels are every sample that arrived since the last frame, oldest
 	// first — not just the newest.
 	//
@@ -354,6 +359,7 @@ func (o *WL) run(st *wlState) {
 		st.revision = seen
 		st.scene.Visual = d.visual
 		st.scene.Preview = d.preview
+		st.scene.Notice = d.notice
 		// EXACTLY ONE column per frame, whatever arrived.
 		//
 		// The recorder samples every 30 ms and this loop paints every
@@ -711,6 +717,7 @@ func (o *WL) Show(v Visual) error {
 		// A state change starts the preview over: the text belonged to the
 		// state being left.
 		o.want.preview = ""
+		o.want.notice = ""
 	}
 	o.want.visual = v
 	o.want.setAt = time.Now()
@@ -758,6 +765,23 @@ func (o *WL) SetText(text string) error {
 	}
 	o.mu.Lock()
 	o.want.preview = text
+	o.want.setAt = time.Now()
+	o.wantSeq++
+	o.mu.Unlock()
+	return nil
+}
+
+// SetNotice sets the notice strip under the pill. Like SetText it is not gated
+// on the visual state here: whether a notice may paint is decided by the
+// painter, and a guard in the producer would silently swallow the clear.
+func (o *WL) SetNotice(text string) error {
+	select {
+	case <-o.done:
+		return errors.New("overlay: closed")
+	default:
+	}
+	o.mu.Lock()
+	o.want.notice = text
 	o.want.setAt = time.Now()
 	o.wantSeq++
 	o.mu.Unlock()

@@ -76,6 +76,22 @@ type Daemon struct {
 	levelMu      sync.Mutex
 	streamCancel context.CancelFunc
 
+	// residencyProbe answers where the main model's GPU allocations live. It is
+	// nil when there is nothing GPU-resident to ask about — a sherpa model runs
+	// in-process on the CPU, a subprocess reloads per utterance, and a remote
+	// server's model is on another machine — and it is never called from the
+	// dictation path. Guarded by residencyMu, with the last reading it gave.
+	residencyProbe func() (speech.Residency, speech.GPUMemory)
+	residencyMu    sync.Mutex
+	residency      speech.Residency
+	residencyMem   speech.GPUMemory
+	// residencyNote is the last string handed to the overlay, so a poll that
+	// found no change does not repaint the strip.
+	residencyNote string
+	// residencyKick asks the sampler for a reading now. Buffered and written
+	// without blocking: a reading already pending is the same reading.
+	residencyKick chan struct{}
+
 	// streamMu guards every field below it AND the overlay's text. The
 	// overlay has one writer — the preview driver, between start and stop
 	// (§10.3 of docs/design/configuration-surface.md) — and streamGen is how
@@ -102,6 +118,11 @@ type Initialized struct {
 	PreviewMode               speech.PreviewMode
 	PreviewCompanion          speech.StreamTranscriber
 	MainModel, CompanionModel string
+	// Residency reports where the main model's GPU allocations currently live,
+	// or nil when there is nothing GPU-resident to track. The daemon samples it
+	// on a timer while recording and reports the same fact in its status reply;
+	// see speech.Residency.
+	Residency func() (speech.Residency, speech.GPUMemory)
 }
 
 type Config struct {
@@ -203,6 +224,7 @@ func New(c Config) *Daemon {
 		minPhraseDuration:     minPhrase,
 		binaryPath:            c.BinaryPath,
 		upgradeInterval:       upgradeInterval,
+		residencyKick:         make(chan struct{}, 1),
 	}
 }
 
@@ -218,6 +240,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if d.binaryPath != "" {
 		go d.watchBinary(ctx, &replaced, stop)
 	}
+
+	// One residency sampler for the daemon's life, not one per dictation: the
+	// probe reads the child's own /proc entries and the answer changes when the
+	// model loads or when something else takes the card, which is not a
+	// per-utterance fact.
+	go d.watchResidency(ctx)
 
 	// Subscribe the side-effect handler BEFORE the IPC server starts so the
 	// first toggle can't race the listener registration.
@@ -264,8 +292,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 				d.previewMode = loaded.PreviewMode
 				d.mainModel = loaded.MainModel
 				d.companionModel = loaded.CompanionModel
+				d.setResidencyProbe(loaded.Residency)
 				d.machine.Apply(state.EventReady)
 				d.controlMu.Unlock()
+				// The model has just loaded: one reading now, so the status
+				// reply and `mavor doctor` start from the truth rather than
+				// from unknown until the first tick.
+				d.kickResidency()
 				return
 			}
 			closeInitialized(loaded)
@@ -348,6 +381,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 func (d *Daemon) handleRequest(req ipc.Request) (resp ipc.Response) {
 	defer func() {
 		resp.Source, resp.Warning = d.statusProvenance()
+		resp.Residency = d.statusResidency()
 		if resp.State == "failed" {
 			d.provenanceMu.Lock()
 			resp.Error = d.startupError
@@ -435,6 +469,10 @@ func (d *Daemon) onTransition(ctx context.Context, s state.State, wg *sync.WaitG
 	} else {
 		d.logger.Info("overlay: shown", "state", s, "visual", visualFor(s))
 	}
+	// Show starts the strips over on a visual change, and a state change can
+	// change whether a residency note belongs on screen: decide now rather
+	// than up to a poll later.
+	d.kickResidency()
 	switch s {
 	case state.Idle:
 		d.stopLevelMonitoring()
@@ -532,6 +570,109 @@ func (d *Daemon) stopLevelMonitoring() {
 	if d.overlay != nil {
 		_ = d.overlay.SetLevel(0.0)
 	}
+}
+
+// residencyPollInterval is how often the daemon re-checks where the main
+// model's weights live.
+//
+// Residency changes when the model loads or when another process puts the card
+// under pressure, not between frames, so a second is far finer than the fact
+// requires. Each sample is a bounded read of the child's own fdinfo entries: it
+// never touches the GPU and it never waits on the child.
+const residencyPollInterval = time.Second
+
+// residencyGTTNotice is the overlay's one line for an evicted model. It says
+// what changed rather than what to do about it: the strip is one short line
+// under the pill and a remedy would neither fit nor be read at a glance.
+const residencyGTTNotice = "GPU memory full — model in system RAM"
+
+// watchResidency keeps the daemon's picture of the main model's GPU residency
+// current for as long as it runs. It is ONE goroutine with a ticker rather than
+// one per dictation, and it is the only writer of the overlay's residency note.
+func (d *Daemon) watchResidency(ctx context.Context) {
+	ticker := time.NewTicker(residencyPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-d.residencyKick:
+		case <-ticker.C:
+		}
+		d.sampleResidency()
+	}
+}
+
+// kickResidency asks for a reading now rather than at the next tick, so the
+// note is decided with the change that made it relevant. It never blocks: a
+// reading already pending is the same reading.
+func (d *Daemon) kickResidency() {
+	select {
+	case d.residencyKick <- struct{}{}:
+	default:
+	}
+}
+
+// setResidencyProbe publishes the model's probe once, when initialization hands
+// over the transcriber it belongs to.
+func (d *Daemon) setResidencyProbe(p func() (speech.Residency, speech.GPUMemory)) {
+	d.residencyMu.Lock()
+	d.residencyProbe = p
+	d.residencyMu.Unlock()
+}
+
+// sampleResidency takes one reading and paints it if it says something new.
+// Every failure mode of the probe arrives here as ResidencyUnknown, which
+// clears the note; nothing in this path returns an error, blocks, or holds a
+// lock the FSM or the audio path needs.
+func (d *Daemon) sampleResidency() {
+	d.residencyMu.Lock()
+	probe := d.residencyProbe
+	d.residencyMu.Unlock()
+	if probe == nil {
+		return
+	}
+	res, mem := probe()
+	note := residencyNotice(d.machine.State() == state.Recording, res)
+
+	d.residencyMu.Lock()
+	residencyChanged := res != d.residency
+	noteChanged := note != d.residencyNote
+	d.residency, d.residencyMem, d.residencyNote = res, mem, note
+	d.residencyMu.Unlock()
+
+	if residencyChanged {
+		// Once per change, not per poll: the numbers are here for the one
+		// question a mismatch would raise — what did the probe actually see.
+		d.logger.Info("residency: main model GPU residency changed",
+			"residency", res, "vram_bytes", mem.VRAM, "gtt_bytes", mem.GTT,
+			"evicted_vram_bytes", mem.Evicted, "device", mem.Device)
+	}
+	if noteChanged && d.overlay != nil {
+		_ = d.overlay.SetNotice(note)
+	}
+}
+
+// residencyNotice is the overlay's line for a residency, or "" when there is
+// nothing to say: nothing is recording, or the weights are where they belong
+// (or where the probe cannot tell).
+func residencyNotice(recording bool, r speech.Residency) string {
+	if recording && r == speech.ResidencyGTT {
+		return residencyGTTNotice
+	}
+	return ""
+}
+
+// statusResidency names where the main model's weights live, for the daemon's
+// status reply and the `mavor doctor` line built from it. Unknown is reported
+// as absent: there is nothing a caller can do with it.
+func (d *Daemon) statusResidency() string {
+	d.residencyMu.Lock()
+	defer d.residencyMu.Unlock()
+	if d.residency == speech.ResidencyUnknown {
+		return ""
+	}
+	return d.residency.String()
 }
 
 // startStreamingMonitoring drives the overlay's live text preview while the

@@ -73,5 +73,15 @@ func initializeModels(ctx context.Context, cfg config.Config, logger *slog.Logge
 		return daemon.Initialized{}, ctx.Err()
 	}
 	logger.Info("models: inference verified", "main", cfg.Model, "companion", preview.Model)
-	return daemon.Initialized{Transcriber: main.t, PreviewMode: preview.Mode, PreviewCompanion: preview.Companion, MainModel: cfg.Model, CompanionModel: preview.Model}, nil
+	return daemon.Initialized{
+		Transcriber:      main.t,
+		PreviewMode:      preview.Mode,
+		PreviewCompanion: preview.Companion,
+		MainModel:        cfg.Model,
+		CompanionModel:   preview.Model,
+		// The probe is built here, where the resolved model and its supervised
+		// child are both in hand. nil for every placement with no warm
+		// GPU-resident process of its own.
+		Residency: speech.ResidencyProbe(main.t),
+	}, nil
 }

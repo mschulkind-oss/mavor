@@ -327,6 +327,50 @@ func TestInspectKittyConfig(t *testing.T) {
 	}
 }
 
+func TestResidencyVerdict(t *testing.T) {
+	tests := []struct {
+		name      string
+		residency string
+		wantMsg   []string
+	}{
+		{
+			name:      "a model on the card",
+			residency: "vram",
+			wantMsg:   []string{"VRAM"},
+		},
+		{
+			// The fact the overlay shows while recording, in the line a user reads
+			// afterwards: degraded, and still working.
+			name:      "an evicted model is reported, not failed",
+			residency: "gtt",
+			wantMsg:   []string{"system RAM", "GTT", "overlay", "degraded"},
+		},
+		{
+			name:      "a model with no GPU footprint has nothing to report",
+			residency: "",
+			wantMsg:   []string{"unknown", "no amdgpu"},
+		},
+		{
+			name:      "a value from a newer daemon is unknown, not a crash",
+			residency: "somewhere-else",
+			wantMsg:   []string{"unknown"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ok, msg := residencyVerdict(tc.residency)
+			if !ok {
+				t.Errorf("residencyVerdict(%q) failed the run: %q — a residency fact is never something the config can fix", tc.residency, msg)
+			}
+			for _, want := range tc.wantMsg {
+				if !strings.Contains(msg, want) {
+					t.Errorf("residencyVerdict(%q) = %q, want it to mention %q", tc.residency, msg, want)
+				}
+			}
+		})
+	}
+}
+
 func TestCheckPasteOnceSupport(t *testing.T) {
 	if !checkPasteOnceSupport("Options:\n  -o, --paste-once  Only serve one paste\n") {
 		t.Error("expected true when --paste-once is in help text")

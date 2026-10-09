@@ -24,6 +24,18 @@ func TestSceneBoundsContainsEveryPixelDrawn(t *testing.T) {
 		"error":                  {Visual: Error, SurfaceW: 1280, SurfaceH: 91},
 		"hidden":                 {Visual: Hidden, SurfaceW: 1280, SurfaceH: 91},
 	}
+	// The notice is a second strip under the preview, and the 91px canvas above
+	// predates it: this scene is given the canvas the overlay actually
+	// allocates, so the damage rectangle is proven to cover both strips.
+	_, fixedH, err := FixedSurfaceSize(640)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scenes["recording, preview and notice"] = Scene{
+		Visual: Recording, Preview: "the quick brown fox jumps over the lazy dog",
+		Notice: "GPU memory full — model in system RAM", MaxPreviewWidth: 640,
+		SurfaceW: 1280, SurfaceH: fixedH, Levels: ramp(),
+	}
 
 	for name, s := range scenes {
 		t.Run(name, func(t *testing.T) {

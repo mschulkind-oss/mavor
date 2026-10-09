@@ -6,16 +6,18 @@ import "sync"
 // what unit tests of the daemon use, and it's also the safe fallback when the
 // real one cannot be built — no compositor, or one without layer-shell —
 // since dictation works fine without a visual indicator and refusing to start
-// over a missing HUD would be the worse trade. Show, SetLevel, and SetText are
-// goroutine-safe so daemon tests (which call them from background listeners)
-// don't trip the race detector.
+// over a missing HUD would be the worse trade. Show, SetLevel, SetText and
+// SetNotice are goroutine-safe so daemon tests (which call them from background
+// listeners) don't trip the race detector.
 type Noop struct {
-	mu        sync.Mutex
-	calls     []Visual
-	levels    []float64
-	texts     []string
-	lastLevel float64
-	lastText  string
+	mu         sync.Mutex
+	calls      []Visual
+	levels     []float64
+	texts      []string
+	notices    []string
+	lastLevel  float64
+	lastText   string
+	lastNotice string
 }
 
 func (n *Noop) Show(v Visual) error {
@@ -37,6 +39,14 @@ func (n *Noop) SetText(text string) error {
 	n.mu.Lock()
 	n.texts = append(n.texts, text)
 	n.lastText = text
+	n.mu.Unlock()
+	return nil
+}
+
+func (n *Noop) SetNotice(text string) error {
+	n.mu.Lock()
+	n.notices = append(n.notices, text)
+	n.lastNotice = text
 	n.mu.Unlock()
 	return nil
 }
@@ -82,4 +92,20 @@ func (n *Noop) LastText() string {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return n.lastText
+}
+
+// Notices returns a snapshot of all notice updates passed to SetNotice.
+func (n *Noop) Notices() []string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	out := make([]string, len(n.notices))
+	copy(out, n.notices)
+	return out
+}
+
+// LastNotice returns the most recent notice value passed to SetNotice.
+func (n *Noop) LastNotice() string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.lastNotice
 }

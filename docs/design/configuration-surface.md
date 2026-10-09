@@ -678,6 +678,10 @@ a plausible wrong answer that would compile.
 
 - **The overlay text has one writer**: the preview driver, and only between
   start and stop. The final transcript never reaches the overlay as text.
+- **The residency note has one writer**: the daemon's residency sampler — one
+  goroutine for the life of the daemon, not one per dictation — which writes the
+  separate `SetNotice` strip and never preview text. See
+  [the residency note](../reference/how-mavor-works.md#the-residency-note).
 - **The output emitter has one writer**: the final transcription. **The preview
   must never emit text**, and the companion model must never influence the final
   transcript.

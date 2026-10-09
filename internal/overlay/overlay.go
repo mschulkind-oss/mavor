@@ -53,6 +53,9 @@ type Overlay interface {
 	SetLevel(level float64) error
 	// SetText updates a recording preview or a lifecycle diagnostic subtitle.
 	SetText(text string) error
+	// SetNotice updates the notice strip drawn under the pill while recording —
+	// a fact about the model rather than about this utterance. Empty clears it.
+	SetNotice(text string) error
 	// Close releases resources. Idempotent.
 	Close() error
 }
