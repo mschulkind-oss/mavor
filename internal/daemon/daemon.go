@@ -134,7 +134,9 @@ type Daemon struct {
 	// lastStack dedups overlay ShowStack calls. The derived stack can move
 	// Transcribing -> Recording -> Transcribing across stacked cycles, and a
 	// repaint of the same rows would restart the pill's strips for no reason.
-	// Guarded by visualMu: control requests and the decode worker both paint.
+	// Guarded by visualMu, which is held across the paint: the dedup decision
+	// and the ShowStack it authorizes are one critical section, or two painters
+	// could record their stacks in one order and paint in the other.
 	visualMu  sync.Mutex
 	lastStack []overlay.Visual
 }
@@ -373,6 +375,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 	d.warningWG.Wait()
 	d.stopLevelMonitoring()
 	d.stopStreamingMonitoring(nil)
+	// Join the preview drain before closing the recognizer. stopStreamingMonitoring
+	// schedules src.StopStream on its own goroutine; with the preview on, src is
+	// the transcriber itself, so closing it without this wait races Close against
+	// a StopStream still decoding the tail. context.Background() is deliberate:
+	// the run context is already cancelled and must not cut the join short.
+	d.awaitStreamDrain(context.Background())
 	d.cancelBackup()
 	// Cycles the worker never picked up are abandoned; drop their capture files
 	// rather than leaking them in the recording directory.
@@ -497,18 +505,25 @@ func overlayStack(snap state.Snapshot) []overlay.Visual {
 // showStack paints an ordered pill stack unless it is already the visible one.
 // It is the one funnel for derived repaints, so it also clears a diagnostic
 // subtitle when the last error or backup row leaves the stack.
+//
+// visualMu is held across the paint. The dedup and the ShowStack it authorizes
+// must be one critical section: if two painters each recorded their stack and
+// then painted in the other order, the on-screen rows would disagree with
+// lastStack, and the repaint that would fix it is the one the dedup skips — a
+// stale ERROR or BACKUP pill outliving errorDuration. Both backends' ShowStack
+// only take their own lock and post a frame, so holding this across it never
+// blocks on the compositor.
 func (d *Daemon) showStack(pills []overlay.Visual) {
 	if d.overlay == nil {
 		return
 	}
 	d.visualMu.Lock()
+	defer d.visualMu.Unlock()
 	if sameStack(d.lastStack, pills) {
-		d.visualMu.Unlock()
 		return
 	}
 	diagnosticCleared := hasDiagnosticRow(d.lastStack) && !hasDiagnosticRow(pills)
 	d.lastStack = append([]overlay.Visual(nil), pills...)
-	d.visualMu.Unlock()
 	if err := d.overlay.ShowStack(pills); err != nil {
 		d.logger.Warn("overlay show failed", "pills", pills, "err", err)
 		return
@@ -521,14 +536,16 @@ func (d *Daemon) showStack(pills []overlay.Visual) {
 }
 
 // showStackAndSetText repaints a stack with a subtitle regardless of the
-// dedup, for the states where the text is the message.
+// dedup, for the states where the text is the message. It shares visualMu with
+// showStack so the stack and its subtitle are painted as one step, never
+// interleaved with another painter.
 func (d *Daemon) showStackAndSetText(pills []overlay.Visual, text string) {
 	if d.overlay == nil {
 		return
 	}
 	d.visualMu.Lock()
+	defer d.visualMu.Unlock()
 	d.lastStack = append([]overlay.Visual(nil), pills...)
-	d.visualMu.Unlock()
 	_ = d.overlay.ShowStack(pills)
 	_ = d.overlay.SetText(text)
 	d.kickResidency()
@@ -718,6 +735,7 @@ func (d *Daemon) stopRecording() state.State {
 func (d *Daemon) abortCycle(ctx context.Context, cycle *dictationCycle, reason string, err error) {
 	d.reportCycleError(ctx, cycle, reason, err)
 	d.machine.AbortRecording()
+	d.recording = nil
 	if rerr := d.ducker.Restore(); rerr != nil {
 		d.logger.Warn("ducking: restore failed", "err", rerr)
 	}

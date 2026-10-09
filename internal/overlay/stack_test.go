@@ -31,9 +31,13 @@ func TestFixedCanvasReservesThreeStackedRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, pillH := pillSize(f, Scene{Visual: Recording})
-	wantH := rowsHeight(pillH, maxStackRows) + 2*(previewGap+stripHeight())
+	// An independent literal, not rowsHeight(...): a bug in the production
+	// formula must fail this test rather than be copied into it. Three 56px
+	// rows with two 6px gaps (180) plus preview and notice strips of 39px each
+	// with a 6px gap above (90).
+	const wantH = 270
 	if h != wantH {
-		t.Fatalf("fixed canvas height = %d, want %d (%d rows plus both strips)", h, wantH, maxStackRows)
+		t.Fatalf("fixed canvas height = %d, want %d (three rows plus both strips)", h, wantH)
 	}
 
 	// An unpinned three-row scene must fit inside the allocated canvas, or the

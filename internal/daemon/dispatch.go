@@ -32,8 +32,10 @@ func newDispatcher() *dispatcher {
 	return &dispatcher{parked: make(map[uint64]*dispatchOutcome), wake: make(chan struct{}, 1)}
 }
 
-// register pins the frontier to the first cycle id the daemon creates. Later
-// ids cannot move it backwards.
+// register pins the frontier to the smallest cycle id registered — the first
+// dictation the daemon starts. Ids arrive in increasing order, so a later id
+// leaves the frontier alone; a lower id moves it backwards rather than letting
+// a cycle be skipped.
 func (q *dispatcher) register(id uint64) {
 	q.mu.Lock()
 	if q.next == 0 || id < q.next {

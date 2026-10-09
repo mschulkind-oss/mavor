@@ -275,6 +275,14 @@ A third monitor, the residency sampler below, is not tied to a recording: it
 runs for the life of the daemon, because residency changes when the model loads
 or when something else takes the card, not when you speak.
 
+A recording that starts while an earlier cycle is still awaiting output — the
+stacked case — **skips its live preview** (ruling
+[OQ-6](../design/stacked-dictations.md#55-the-preview-companion)). Capture is
+never delayed for a preview, and the one recognizer behind it is still finishing
+the earlier cycle's final decode, so no new stream is started for the second
+recording. Its transcript is unaffected: the earlier cycle types on its own
+schedule, and the skipped recording is transcribed normally when it stops.
+
 Two mechanisms can produce that text, and which one runs is decided **once, at
 daemon start**, by `speech.ResolvePreview` — not per recording and not by a type
 assertion on the main transcriber:
@@ -529,7 +537,7 @@ Every row was traced through the code.
 | The companion is missing under `source = "auto"` | Warn, fall back to phrase mode, daemon starts | A worse preview, and a **failing** `doctor` check naming the model and the `mavor setup` that downloads it |
 | The companion fails to load for any other reason | Warn, fall back to phrase mode, daemon starts | A worse preview; dictation is unaffected |
 | A second daemon starts | The live socket is detected, `Serve` errors, the process exits non-zero | An error on stderr |
-| Shutdown while recording | The context goroutine SIGINTs `parec` so the WAV is flushed, but `Stop` never runs | An orphaned recording, never transcribed |
+| Shutdown while recording | `Run` calls `Recorder.Stop` and `removeCapture` on the shutdown path, so the partial WAV is stopped and deleted rather than left behind | Nothing typed for that recording; no audio left on disk |
 | Shutdown while transcribing | The root context kills the transcriber mid-run | **The transcript is lost** — it is written to history only after a successful `Transcribe` |
 
 > [!WARNING]
