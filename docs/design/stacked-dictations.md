@@ -1,7 +1,7 @@
 ---
 status: in-review
 stage: DESIGN
-next: "Ruling on OQ-1 through OQ-9, then the plan sketch becomes buildable"
+next: "Ruling on the narrowed OQ-4, then the plan sketch becomes buildable"
 depends-on: [visible-model-initialization.md, incremental-final-transcription.md]
 ---
 
@@ -29,11 +29,11 @@ capture-stop. Live-final modes do not stack.
 **Start at [§4](#4-proposed-fsm-shape-and-invariants)** — every other section
 falls out of the FSM shape.
 
-**Needs your ruling:** [OQ-1](#OQ-1) through [OQ-9](#OQ-9) — all nine block the
-build.
+**Needs your ruling:** [OQ-4](#OQ-4) — the only question left open; the other
+eight were ruled on 2026-10-09.
 
 **Reads with:** [`stacked-dictations-plan.md`](./stacked-dictations-plan.md) (the
-implementation sketch — incomplete while the questions are open), [how mavor
+implementation sketch — incomplete while [OQ-4](#OQ-4) is open), [how mavor
 works](../reference/how-mavor-works.md) (the FSM and its invariants), [the
 overlay resize design](./overlay-geometry.md) (the fixed surface this leans on),
 [the config surface](./configuration-surface.md) (the one-writer overlay rule).
@@ -360,7 +360,7 @@ keep their meaning for the single-dictation case.
 
 ## 5. Output ordering, ducking, preview, recorder, third dictation
 
-### 5.1 Ordering rule (decide and justify)
+### 5.1 Ordering rule
 
 **Rule: finished transcripts are emitted in spoken order — strictly increasing
 cycle id — never in completion order.** Justification: `output.Emit` types
@@ -403,6 +403,10 @@ Today: `Duck` on `Recording` (`daemon.go:453`), `Restore` on `Transcribing`
 exactly while a capture is active; restore when capture stops.** That is
 already what the `Transcribing` restore does; the `Idle` restore is a safety net
 for cycles that skip `Transcribing` (e.g. capture-start failure).
+
+The ruling confirmed that this is the intended feel: the volume comes back the
+moment the key is released, so media is audible during a transcribing-only gap,
+and it ducks again the instant the next capture starts.
 
 With stacking, `Idle` no longer means "capture stopped" — it means "everything
 finished". Keeping the `Idle` restore would re-call `Restore` long after the
@@ -499,13 +503,13 @@ Bound it explicitly:
   behind a single decode worker rather than running N decodes. "N in-flight
   transcriptions" is satisfied by the pending list; only one is *decoding* at a
   time. This also makes completion order equal spoken order trivially, so the
-  dispatcher in [§5.1](#51-ordering-rule-decide-and-justify) mostly faces the live-final/failure reordering cases.
-- **Pending cap: a small constant (proposed 8).** Each pending cycle holds one
-  WAV on disk in `$TMPDIR/mavor-recordings` (`docs/reference/how-mavor-works.md`
+  dispatcher in [§5.1](#51-ordering-rule) mostly faces the live-final/failure reordering cases.
+- **Pending cap: 8, a named constant.** Each pending cycle holds one WAV on
+  disk in `$TMPDIR/mavor-recordings` (`docs/reference/how-mavor-works.md`
   recording directory). Beyond the cap, `RecordStart` is refused (no-op,
-  logged, and surfaced) rather than silently growing disk usage. The overlay can
-  only show a bounded number of rows anyway ([§7](#7-overlay-n-stacked-pill-rows)). The human may prefer a
-  different number; see open questions.
+  logged, and surfaced) rather than silently growing disk usage. The overlay
+  shows three rows anyway ([§7](#7-overlay-n-stacked-pill-rows)) and collapses
+  the rest to a count. It is not a config key.
 
 ---
 
@@ -516,15 +520,20 @@ Bound it explicitly:
 and `source:`/`warning:` to stderr (`:292-308`), asserted by
 `cmd/mavor/status_policy_test.go:10-17`.
 
-**Decision: keep stdout as the coarse derived state; add machine-readable counts
-to the diagnostics, and a `--json` flag for scripts.** Minimal, non-breaking:
+**Settled: nothing parses the stdout word.** The only consumers are two sway
+binds — `bindsym $mod+v exec mavor toggle` and `bindsym Control+$alt+v exec
+mavor history --pick` — and neither reads `mavor status`, so stdout
+compatibility is not a constraint.
+
+**Leaning, still open ([OQ-4](#OQ-4)):** keep stdout as the coarse derived
+state; add machine-readable counts to the diagnostics, and a `--json` flag.
 
 - Extend `ipc.Response` (`internal/ipc/ipc.go:27-32`) with optional fields:
   `Recording bool`, `Transcribing int` (`omitempty`), and optionally
   `Cycles []string`. Existing decoders ignore unknown JSON fields.
 - `writeStatus` keeps `idle\n` / `recording\n` / `transcribing\n` on stdout
-  (so `status_policy_test.go` and shell keybinds are untouched) and prints
-  `transcribing: 2` / `recording: true` to the diagnostic stream.
+  (leaving `status_policy_test.go` untouched) and prints `transcribing: 2` /
+  `recording: true` to the diagnostic stream.
 - Add `mavor status --json` that serializes the whole `Response`. This is where
   a script asks "is anything stacked?".
 
@@ -601,7 +610,8 @@ waveform and is the live one.
   damage region, and underestimating it leaves stale pixels. `scenebounds_test.go:17-53`
   proves every drawn pixel is inside the reported bounds and must gain stacked
   cases.
-- `FixedSurfaceSize` (`:100-118`): `h = maxStackRows*(pillH+rowGap) + previewGap + previewSize + 2*previewPadY + 4`. `maxStackRows` is a new constant (proposed 3: one recording + two visible transcribing rows). Rows beyond it are collapsed into a final "…" row or the count is shown on the last pill; see open questions.
+- `FixedSurfaceSize` (`:100-118`): `h = maxStackRows*(pillH+rowGap) + previewGap + previewSize + 2*previewPadY + 4`. `maxStackRows` is a new constant (three: one recording plus two visible
+transcribing rows). Rows beyond it are collapsed into a final "…" row or the count is shown on the last pill; see open questions.
 - `render` width: the widest pill already fits (`:107-114`), and each pill is centred independently, so no width change is needed.
 
 `pillSize` (`:571-588`) stays per-visual; `rowGap` is a new small constant
@@ -648,6 +658,14 @@ existing `Show` call sites and tests (`overlay_test.go`, `paint_test.go`) valid.
   `internal/overlay/preview_fit_test.go` pin scene geometry. All need updated
   numbers or new stacked cases.
 
+### 7.6 A failed cycle inside the stack
+
+A cycle that fails shows its error pill **alongside** the other rows rather than
+instead of them, for the standard `errorDuration`; when that expires the stack
+re-renders. History records the failure as it does today, and a failed cycle
+still advances the ordered dispatcher's `next` ([§5.1](#51-ordering-rule)), so
+one silent dictation cannot wedge the queue.
+
 ---
 
 ## 8. Risks
@@ -655,7 +673,7 @@ existing `Show` call sites and tests (`overlay_test.go`, `paint_test.go`) valid.
 **Risks**
 
 1. **Output out-of-order (recoverable only via history).** Mitigated by the
-   ordered dispatcher ([§5.1](#51-ordering-rule-decide-and-justify)), but only if *every* completion path goes through
+   ordered dispatcher ([§5.1](#51-ordering-rule)), but only if *every* completion path goes through
    it. A missed `EventTranscribeDone` site (`daemon.go:1009, 1114, 1146`) types
    out of order. Highest-severity risk.
 2. **Recorder start/stop interleave.** `ParecRecorder` errors on double start
@@ -679,113 +697,38 @@ existing `Show` call sites and tests (`overlay_test.go`, `paint_test.go`) valid.
 7. **Status/CLI compatibility.** Changing `ipc.Response.State` or stdout breaks
    keybinds and scripts; the design deliberately keeps the coarse strings.
 8. **Live-final modes.** `streaming`/`segments` already contend for the main
-   recognizer during capture; stacking interacts badly. Recommend shipping
-   stacking for `after-stop` only at first (open question 3).
+   recognizer during capture; stacking interacts badly. Ruled: stacking ships
+   for `after-stop` only, and the live-final modes keep today's behavior.
 
 ## Open questions for the human
 
 Every question carries a stable id. A ruling folds into the body it governs and
 then compacts into the [Decision Ledger](#decision-ledger); until it is ruled the
-question is open and the build waits. Every leaning below is a recommendation,
-not a decision.
+question is open and the build waits. One question remains open.
 
-1. 💬 **OQ-1: Are transcripts typed in spoken order, or as each finishes?**
-
-   <!-- vantage: question id=OQ-1 leaning="Strict spoken order — type-as-finished jumbles sentences and is recoverable only from history." -->
-
-   _Leaning:_ Strict spoken order, even when a later, faster dictation has to wait
-   its turn.
-
-   **Answer:**
-   > _(empty — fill in when decided)_
-
-2. 💬 **OQ-2: How many rows are visible, and how many dictations may queue?**
-
-   <!-- vantage: question id=OQ-2 leaning="Three visible rows — one recording plus two transcribing — and a pending cap of 8." -->
-
-   _Leaning:_ Three visible rows (one recording, two transcribing), a pending cap
-   of 8, and a collapsed count beyond that — named constants, not config keys.
-
-   **Answer:**
-   > _(empty — fill in when decided)_
-
-3. 💬 **OQ-3: Do the live-final modes stack too?**
-
-   <!-- vantage: question id=OQ-3 leaning="No — ship stacking for after-stop only and leave the live modes as they are." -->
-
-   _Leaning:_ No. Ship stacking for `after-stop` only; `streaming` and `segments`
-   already serialize on the main recognizer during capture, so leave them as they
-   are until separately designed.
-
-   **Answer:**
-   > _(empty — fill in when decided)_
-
-4. 💬 **OQ-4: What does `mavor status` print while dictations are stacked?**
+1. 💬 **OQ-4: Where do the stacked counts go, now that nothing parses stdout?**
 
    <!-- vantage: question id=OQ-4 leaning="Keep stdout exactly idle|recording|transcribing, put the counts on stderr, and add --json." -->
 
-   _Leaning:_ Keep stdout exactly `idle|recording|transcribing` so keybinds and
-   scripts keep working, put the counts on stderr, and add `--json`.
-
-   **Answer:**
-   > _(empty — fill in when decided)_
-
-5. 💬 **OQ-5: When does ducked background audio come back?**
-
-   <!-- vantage: question id=OQ-5 leaning="When capture stops — the moment the key is released, even if typing is still queued." -->
-
-   _Leaning:_ When capture stops, not when everything finishes: background media
-   returns the moment the key is released.
-
-   **Answer:**
-   > _(empty — fill in when decided)_
-
-6. 💬 **OQ-6: Can the second recording show a live preview?**
-
-   <!-- vantage: question id=OQ-6 leaning="Only if the previous stream has drained; never delay capture for a preview." -->
-
-   _Leaning:_ It may start late or not at all. Capture is never delayed for a
-   preview.
-
-   **Answer:**
-   > _(empty — fill in when decided)_
-
-7. 💬 **OQ-7: What happens when one stacked cycle fails and another succeeds?**
-
-   <!-- vantage: question id=OQ-7 leaning="Failure is per-cycle: its error pill shows alongside the other rows for errorDuration, then the stack re-renders." -->
-
-   _Leaning:_ Failure is per-cycle. The error pill shows alongside the recording
-   and transcribing rows for the standard `errorDuration`, then the stack
-   re-renders, and history records the failure as it does today.
-
-   **Answer:**
-   > _(empty — fill in when decided)_
-
-8. 💬 **OQ-8: Does this design add a cancel verb?**
-
-   <!-- vantage: question id=OQ-8 leaning="No — leave it out of scope and track it separately." -->
-
-   _Leaning:_ No. Leave it out of scope and track it separately, even though
-   stacking makes a mistaken second press more consequential.
-
-   **Answer:**
-   > _(empty — fill in when decided)_
-
-9. 💬 **OQ-9: Are the push-to-talk bindings unchanged?**
-
-   <!-- vantage: question id=OQ-9 leaning="Unchanged — key-down starts, key-up stops, and stop while transcribing stays a no-op." -->
-
-   _Leaning:_ Unchanged: key-down `start`, key-up `stop`, with `stop` in
-   `Transcribing` still a no-op. That is what makes stacking feel natural under
-   push-to-talk.
+   _Leaning:_ Keep stdout exactly `idle|recording|transcribing` and put the
+   counts on stderr, plus `--json`.
 
    **Answer:**
    > _(empty — fill in when decided)_
 
 ### Decision Ledger
 
-No question has been ruled yet. Each answer becomes a row here and folds into the
-body section it governs.
+Eight of the nine questions were ruled on 2026-10-09 by taking the stated
+leaning. Each ruling is folded into the section named below. **None of it is
+built** — a ruling is not evidence of implementation.
 
 | ID | Ruling / Decision | Date | Settled in | Built |
 | :--- | :--- | :--- | :--- | :--- |
+| OQ-1 | Finished transcripts are typed in spoken order — strictly increasing cycle id — never in completion order | 2026-10-09 | [§5.1](#51-ordering-rule) | no |
+| OQ-2 | Three visible rows (one recording, two transcribing); pending cap of 8, collapsed to a count beyond that; named constants, not config keys | 2026-10-09 | [§5.6](#56-third-dictation-while-two-are-transcribing) | no |
+| OQ-3 | Stacking ships for `after-stop` only; `streaming` and `segments` keep today's behavior | 2026-10-09 | [§8](#8-risks) | no |
+| OQ-5 | Duck while a capture is active and restore when it stops, so media returns on key release even while typing is still queued | 2026-10-09 | [§5.2](#52-background-audio-ducking) | no |
+| OQ-6 | The second recording's live preview may start late or not at all; capture is never delayed for it | 2026-10-09 | [§5.5](#55-the-preview-companion) | no |
+| OQ-7 | Failure is per-cycle: its error pill shows alongside the recording and transcribing rows for `errorDuration`, then the stack re-renders, and history records the failure | 2026-10-09 | [§7.6](#76-a-failed-cycle-inside-the-stack) | no |
+| OQ-8 | No cancel verb; out of scope, tracked separately | 2026-10-09 | [§8](#8-risks) | no |
+| OQ-9 | Push-to-talk unchanged: key-down starts, key-up stops, and `stop` while transcribing stays a no-op | 2026-10-09 | [§6](#6-cli--ipc-surface) | no |
