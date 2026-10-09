@@ -6,18 +6,21 @@ depends-on: [stacked-dictations.md#OQ-1, stacked-dictations.md#OQ-2, stacked-dic
 
 # Stacked dictations — implementation sketch
 
-**Status:** 2026-10-09 — incomplete, and unstable while the questions are open.
+**Status:** 2026-10-09 — incomplete. The design is ruled (all nine questions
+settled), but this is still a parking lot, not a plan: it has to be completed
+against the tree before anyone builds from it.
 
 > [!IMPORTANT]
 > This is a **sketch**, not a plan. It parks material that surfaced while
 > designing [stacked dictations](./stacked-dictations.md) and that the design
 > does not need to carry: the build order, the test-inversion list, and the traps
-> worth keeping. An agent must not build from it while it is stamped `SKETCH`.
+> worth keeping. The design is ruled, but that does not make this a plan — an
+> agent must not build from it while it is stamped `SKETCH`.
 > [The design](./stacked-dictations.md) wins on behavior wherever the two
 > disagree.
 
 **Reads with:** [`stacked-dictations.md`](./stacked-dictations.md) — the design
-this serves, and the only place its open questions are asked and answered.
+this serves, now ruled in full.
 
 ---
 

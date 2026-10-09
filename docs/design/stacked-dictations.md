@@ -1,7 +1,7 @@
 ---
-status: in-review
-stage: DESIGN
-next: "Ruling on the narrowed OQ-4, then the plan sketch becomes buildable"
+next: "Build it — the sketch becomes a real implementation plan first"
+status: accepted
+stage: DECIDED
 depends-on: [visible-model-initialization.md, incremental-final-transcription.md]
 ---
 
@@ -29,11 +29,11 @@ capture-stop. Live-final modes do not stack.
 **Start at [§4](#4-proposed-fsm-shape-and-invariants)** — every other section
 falls out of the FSM shape.
 
-**Needs your ruling:** [OQ-4](#OQ-4) — the only question left open; the other
-eight were ruled on 2026-10-09.
+**Needs your ruling:** None. All nine questions are ruled and compacted into
+the [Decision Ledger](#decision-ledger).
 
 **Reads with:** [`stacked-dictations-plan.md`](./stacked-dictations-plan.md) (the
-implementation sketch — incomplete while [OQ-4](#OQ-4) is open), [how mavor
+implementation sketch — ruled, but still to be turned into a real plan), [how mavor
 works](../reference/how-mavor-works.md) (the FSM and its invariants), [the
 overlay resize design](./overlay-geometry.md) (the fixed surface this leans on),
 [the config surface](./configuration-surface.md) (the one-writer overlay rule).
@@ -525,17 +525,21 @@ binds — `bindsym $mod+v exec mavor toggle` and `bindsym Control+$alt+v exec
 mavor history --pick` — and neither reads `mavor status`, so stdout
 compatibility is not a constraint.
 
-**Leaning, still open ([OQ-4](#OQ-4)):** keep stdout as the coarse derived
-state; add machine-readable counts to the diagnostics, and a `--json` flag.
+**Ruled: report the stack in `mavor status` itself.** There is no stdout
+compatibility constraint to preserve — the only consumers are two sway binds,
+`bindsym $mod+v exec mavor toggle` and `bindsym Control+$alt+v exec mavor
+history --pick`, and neither reads `mavor status`. The output is shaped for the
+human, so the stack appears alongside the derived state rather than being hidden
+behind a flag. What the design fixes:
 
-- Extend `ipc.Response` (`internal/ipc/ipc.go:27-32`) with optional fields:
-  `Recording bool`, `Transcribing int` (`omitempty`), and optionally
-  `Cycles []string`. Existing decoders ignore unknown JSON fields.
-- `writeStatus` keeps `idle\n` / `recording\n` / `transcribing\n` on stdout
-  (leaving `status_policy_test.go` untouched) and prints `transcribing: 2` /
-  `recording: true` to the diagnostic stream.
-- Add `mavor status --json` that serializes the whole `Response`. This is where
-  a script asks "is anything stacked?".
+- Extend `ipc.Response` (`internal/ipc/ipc.go:27-32`) with `Recording bool` and
+  `Transcribing int` (`omitempty`), and optionally `Cycles []string`. Existing
+  decoders ignore unknown JSON fields.
+- `writeStatus` renders the derived state and then the stack — the recording row
+  first if there is one. The exact wording is the implementer's.
+- Add `mavor status --json` serializing the whole `Response`.
+- `cmd/mavor/status_policy_test.go:10-17` asserts stdout is exactly the state
+  word and must be updated to the new contract.
 
 **Toggle/start/stop semantics with a recording already in flight:**
 
@@ -702,31 +706,18 @@ one silent dictation cannot wedge the queue.
 
 ## Open questions for the human
 
-Every question carries a stable id. A ruling folds into the body it governs and
-then compacts into the [Decision Ledger](#decision-ledger); until it is ruled the
-question is open and the build waits. One question remains open.
-
-1. 💬 **OQ-4: Where do the stacked counts go, now that nothing parses stdout?**
-
-   <!-- vantage: question id=OQ-4 leaning="Keep stdout exactly idle|recording|transcribing, put the counts on stderr, and add --json." -->
-
-   _Leaning:_ Keep stdout exactly `idle|recording|transcribing` and put the
-   counts on stderr, plus `--json`.
-
-   **Answer:**
-   > _(empty — fill in when decided)_
+None. Every question has been ruled and compacted into the
+[Decision Ledger](#decision-ledger) below. Nothing here is built yet — a ruling
+is not evidence of implementation, and the `Built` column says so.
 
 ### Decision Ledger
-
-Eight of the nine questions were ruled on 2026-10-09 by taking the stated
-leaning. Each ruling is folded into the section named below. **None of it is
-built** — a ruling is not evidence of implementation.
 
 | ID | Ruling / Decision | Date | Settled in | Built |
 | :--- | :--- | :--- | :--- | :--- |
 | OQ-1 | Finished transcripts are typed in spoken order — strictly increasing cycle id — never in completion order | 2026-10-09 | [§5.1](#51-ordering-rule) | no |
 | OQ-2 | Three visible rows (one recording, two transcribing); pending cap of 8, collapsed to a count beyond that; named constants, not config keys | 2026-10-09 | [§5.6](#56-third-dictation-while-two-are-transcribing) | no |
 | OQ-3 | Stacking ships for `after-stop` only; `streaming` and `segments` keep today's behavior | 2026-10-09 | [§8](#8-risks) | no |
+| OQ-4 | `mavor status` reports the stack itself, alongside the derived state; there is no stdout compatibility constraint to preserve | 2026-10-09 | [§6](#6-cli--ipc-surface) | no |
 | OQ-5 | Duck while a capture is active and restore when it stops, so media returns on key release even while typing is still queued | 2026-10-09 | [§5.2](#52-background-audio-ducking) | no |
 | OQ-6 | The second recording's live preview may start late or not at all; capture is never delayed for it | 2026-10-09 | [§5.5](#55-the-preview-companion) | no |
 | OQ-7 | Failure is per-cycle: its error pill shows alongside the recording and transcribing rows for `errorDuration`, then the stack re-renders, and history records the failure | 2026-10-09 | [§7.6](#76-a-failed-cycle-inside-the-stack) | no |
