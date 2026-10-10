@@ -43,6 +43,15 @@ type fakeMixer struct {
 	// refused are addresses it ignores queries for, the way a device does for
 	// a parameter it does not have.
 	refused map[string]bool
+	// applyDelay is how long a set takes to become visible to a query. X Air
+	// firmware answers a read issued too soon after a write with the value
+	// from before it, which is indistinguishable from a failed write unless
+	// the reader waits; zero makes every write visible immediately.
+	applyDelay time.Duration
+	// pending and applyAt are the sets that have arrived but are not visible
+	// to queries yet, see settleLocked.
+	pending map[string]int32
+	applyAt map[string]time.Time
 }
 
 type mixerSet struct {
@@ -58,7 +67,7 @@ func startFakeMixer(t *testing.T, channels map[int]int32) *fakeMixer {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	m := &fakeMixer{conn: c, values: map[string]int32{}}
+	m := &fakeMixer{conn: c, values: map[string]int32{}, pending: map[string]int32{}, applyAt: map[string]time.Time{}}
 	for ch, v := range channels {
 		m.values[fmt.Sprintf("/ch/%02d/mix/on", ch)] = v
 	}
@@ -83,6 +92,7 @@ func (m *fakeMixer) serve() {
 		}
 		m.mu.Lock()
 		if len(rest) == 0 { // a query
+			m.settleLocked()
 			silent, val := m.silent || m.refused[addr], m.values[addr]
 			m.mu.Unlock()
 			if !silent {
@@ -92,11 +102,20 @@ func (m *fakeMixer) serve() {
 		}
 		if a, v, ok := decodeIntReply(pkt); ok {
 			m.sets = append(m.sets, mixerSet{addr: a, val: v})
+			// Promote anything already due before recording the new set, or a
+			// second write would overwrite a pending first one and the read
+			// would never look stale at all.
+			m.settleLocked()
 			swallow := m.swallowing || m.swallowRemaining > 0
 			if m.swallowRemaining > 0 {
 				m.swallowRemaining--
 			}
-			if !swallow {
+			switch {
+			case swallow:
+			case m.applyDelay > 0:
+				m.pending[a] = v
+				m.applyAt[a] = time.Now().Add(m.applyDelay)
+			default:
 				m.values[a] = v
 			}
 		}
@@ -165,9 +184,31 @@ func (m *fakeMixer) setRaw(addr string, v int32) {
 	m.values[addr] = v
 }
 
+// withApplyDelay makes every set take d to become visible to a query.
+func (m *fakeMixer) withApplyDelay(d time.Duration) *fakeMixer {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.applyDelay = d
+	return m
+}
+
+// settleLocked promotes sets whose apply delay has elapsed. It runs under the
+// mixer's lock, before any read or write of m.values.
+func (m *fakeMixer) settleLocked() {
+	now := time.Now()
+	for addr, at := range m.applyAt {
+		if !now.Before(at) {
+			m.values[addr] = m.pending[addr]
+			delete(m.applyAt, addr)
+			delete(m.pending, addr)
+		}
+	}
+}
+
 func (m *fakeMixer) rawValue(addr string) int32 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.settleLocked()
 	return m.values[addr]
 }
 
@@ -355,18 +396,91 @@ func TestOSCDuckIsIdempotentAndRestoreWithoutDuckIsANoop(t *testing.T) {
 	if err := d.Duck(); err != nil {
 		t.Fatalf("second Duck: %v", err)
 	}
-	// A second Duck must not re-query and overwrite the saved value with the
-	// muted one it just wrote, which would leave the channel muted forever.
-	time.Sleep(50 * time.Millisecond)
-	if got := len(m.setsSoFar()); got != 1 {
-		t.Errorf("two Ducks sent %d sets, want 1", got)
-	}
+	// A second Duck re-sends the mute — the write is idempotent and skipping it
+	// is how a stale "still ducked" leaves a channel audible, see
+	// TestOSCDuckStillMutesAfterAnUnconfirmedRestore. What it must NOT do is
+	// re-query and overwrite the saved value with the muted one it just wrote,
+	// which is what could leave the channel muted forever.
+	m.waitForSets(t, 2)
 	if err := d.Restore(); err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
-	m.waitForSets(t, 2)
+	m.waitForSets(t, 3)
 	if got := m.value(15); got != 1 {
-		t.Errorf("channel 15 = %d after restore, want 1", got)
+		t.Errorf("channel 15 = %d after restore, want 1 — a repeated Duck laundered the saved value", got)
+	}
+}
+
+// A restore that cannot be confirmed must not disarm the next mute.
+//
+// This is the failure a user actually sees, and it is silent. The ducker
+// records itself as still ducked, Duck used to return early on that flag
+// without writing anything, and the daemon logged "volume ducked" while the
+// interface stayed audible for the whole dictation — and then for the next one,
+// because the flag is only cleared by a Restore that confirms. The device here
+// models the XR18 the way the incident did: the restore write lands, and the
+// read-back for one channel is never answered, so the restore genuinely cannot
+// be confirmed.
+func TestOSCDuckStillMutesAfterAnUnconfirmedRestore(t *testing.T) {
+	m := startFakeMixer(t, map[int]int32{15: 1, 16: 1})
+	d := newTestDucker(t, m, []int{15, 16}, 100*time.Millisecond)
+
+	if err := d.Duck(); err != nil {
+		t.Fatalf("Duck: %v", err)
+	}
+	m.waitForSets(t, 2)
+	if got := m.value(16); got != 0 {
+		t.Fatalf("channel 16 = %d after Duck, want 0", got)
+	}
+
+	// The device stops reporting one parameter, so its restore can never be
+	// confirmed even though the write lands.
+	m.refuse("/ch/16/mix/on")
+	if err := d.Restore(); err == nil {
+		t.Fatal("Restore confirmed a value the device never reported")
+	}
+	if !d.IsDucked() {
+		t.Fatal("an unconfirmed restore must leave the ducker ducked")
+	}
+	if got := m.value(16); got != 1 {
+		t.Fatalf("channel 16 = %d after the restore write, want 1 — this test assumes the write landed", got)
+	}
+
+	// The next dictation has to mute it again.
+	before := len(m.setsSoFar())
+	if err := d.Duck(); err != nil {
+		t.Fatalf("second Duck: %v", err)
+	}
+	m.waitForSets(t, before+2)
+	if got := m.value(16); got != 0 {
+		t.Errorf("channel 16 = %d after the second Duck, want 0 — a stale 'still ducked' left the interface audible", got)
+	}
+}
+
+// A read issued immediately after a write can be answered with the value from
+// before it. That is a slow device, not a failed restore, and Restore must wait
+// it out rather than report a failure that does not exist.
+func TestOSCRestoreConfirmsWhenAReadRacesTheWrite(t *testing.T) {
+	m := startFakeMixer(t, map[int]int32{15: 1, 16: 1}).withApplyDelay(50 * time.Millisecond)
+	d := newTestDucker(t, m, []int{15, 16}, 200*time.Millisecond)
+
+	if err := d.Duck(); err != nil {
+		t.Fatalf("Duck: %v", err)
+	}
+	// Let the mute land before the restore, so this measures the restore's own
+	// read-after-write, not the duck's.
+	time.Sleep(80 * time.Millisecond)
+
+	if err := d.Restore(); err != nil {
+		t.Errorf("Restore reported a failure against a device that restored: %v", err)
+	}
+	if d.IsDucked() {
+		t.Error("ducker still considers itself ducked after a restore the device made")
+	}
+	for _, ch := range []int{15, 16} {
+		if got := m.value(ch); got != 1 {
+			t.Errorf("channel %d = %d, want 1", ch, got)
+		}
 	}
 }
 

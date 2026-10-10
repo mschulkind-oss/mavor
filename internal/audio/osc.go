@@ -30,14 +30,38 @@ const DefaultOSCPort = 10024
 // second before recording starts.
 const DefaultOSCTimeoutMS = 200
 
-// restoreAttempts is how many send-and-confirm cycles Restore runs before
-// giving up and reporting the parameters still ducked. Against a device
-// that answers queries but disagrees, a cycle costs one round trip; against
-// a device that is silent, one timeout each — three of the default 200 ms,
-// paid twice per dictation cycle, and only in the window where a device was
-// alive at Duck and dead by Restore. A restore that confirmed nothing would
-// be cheaper, and that is the bug this constant exists to prevent.
-const restoreAttempts = 3
+// restoreSettles is how long Restore waits before it believes a read-back, one
+// entry per attempt, growing.
+//
+// A device can answer a query issued microseconds after a write with the value
+// from before it. Measured against an XR18 with two linked channels, an
+// immediate read-back reports the pre-write value often enough to fail roughly
+// one restore in ten — and that is not a failed restore, it is a read that
+// arrived too early. Reporting it as a failure is not free even though the
+// write landed: the ducker records itself as still ducked, and its next Duck
+// would then have skipped the mute entirely (see Duck).
+//
+// The wait is a ladder rather than one number because the honest value depends
+// on firmware nobody documents, and a read that arrives too early is only one
+// of the ways a confirmation can miss. The last rung is set from the one
+// measured fact available: the opt-in live test settles 400 ms between a write
+// and a read-back and has never failed, while no settle at all failed 2 of 10.
+// The true window is somewhere in between and is not pinned down here.
+//
+// This is not on the dictation hot path — a restore is one write-and-confirm at
+// the end of a dictation, with the audio already captured — so the cost of
+// being generous is paid once, by the rare restore that has to climb.
+//
+// Its length is also how many send-and-confirm cycles Restore runs before it
+// gives up and reports the parameters still ducked. Against a device that
+// answers queries but disagrees, a cycle costs one round trip; against a silent
+// device it costs one timeout. A restore that confirmed nothing would be
+// cheaper, and that is the bug this exists to prevent.
+var restoreSettles = []time.Duration{
+	5 * time.Millisecond,
+	50 * time.Millisecond,
+	300 * time.Millisecond,
+}
 
 // OSCDucker mutes parameters on a network audio device while mavor is
 // recording, and puts them back afterwards.
@@ -67,9 +91,15 @@ const restoreAttempts = 3
 // switched on by a dictation ending.
 //
 // Restore confirms what it sends: it reads each parameter back and retries
-// the send-and-confirm cycle restoreAttempts times, and if the device still
+// the send-and-confirm cycle len(restoreSettles) times, and if the device still
 // disagrees it reports an error and stays ducked with the original values
-// saved, so the next cycle retries them. UDP acknowledges nothing, and a
+// saved, so the next cycle retries them.
+//
+// Staying ducked is bookkeeping, not a claim about the device. Duck sends the
+// mute on the next cycle either way, so a restore that could not be confirmed
+// cannot leave a channel audible; what the saved values protect is the other
+// direction — that a channel which really is still muted gets its own value
+// back rather than the muted one being adopted as its baseline. UDP acknowledges nothing, and a
 // restore that only fired and forgot could lose one datagram and leave the
 // parameter muted forever — invisibly, because the log would still say
 // "restored", and permanently, because the next Duck would read the muted
@@ -170,15 +200,25 @@ func (x *OSCDucker) IsDucked() bool {
 }
 
 // Duck records what each parameter is set to and mutes it.
+//
+// Being already ducked does not make this a no-op. The values to put back are
+// still the ones read before the first Duck — re-reading now would read the
+// muted value and adopt it as the baseline, which is the one way this can
+// orphan a channel permanently — but the mute itself always goes out. A ducker
+// that skipped the write because it believed it was already muted leaves the
+// device audible for a whole dictation whenever a previous Restore failed to
+// confirm, while still logging that it ducked: the mute silently stops working
+// and keeps not working, which is a far worse failure than the unconfirmed
+// restore it was trying to be careful about.
 func (x *OSCDucker) Duck() error {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 
-	if x.ducked {
-		return nil // already muted; keep the values saved the first time
-	}
 	if err := x.dial(); err != nil {
 		return err
+	}
+	if x.ducked {
+		return x.muteSaved()
 	}
 
 	// Ask about every path before muting any, and mute only what answered.
@@ -215,18 +255,31 @@ func (x *OSCDucker) Duck() error {
 	}
 
 	var errs []error
+	// Ducked even on a partial failure: some parameters are muted now, and
+	// Restore is the only thing that will put them back.
+	x.saved = saved
+	x.ducked = true
+	if err := x.muteSaved(); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+// muteSaved writes the muted value to every path whose original value is known.
+//
+// A path whose value was never read is skipped: there is nothing to put back,
+// and a mute that cannot be undone is worse than one that did not happen. That
+// is why this is driven by the saved map rather than by the configured paths.
+func (x *OSCDucker) muteSaved() error {
+	var errs []error
 	for _, p := range x.paths {
-		if _, ok := saved[p]; !ok {
+		if _, ok := x.saved[p]; !ok {
 			continue
 		}
 		if err := x.send(p, x.muted); err != nil {
 			errs = append(errs, err)
 		}
 	}
-	// Ducked even on a partial failure: some parameters are muted now, and
-	// Restore is the only thing that will put them back.
-	x.saved = saved
-	x.ducked = true
 	return errors.Join(errs...)
 }
 
@@ -238,7 +291,6 @@ func (x *OSCDucker) Duck() error {
 // lose exactly one datagram and leave the parameter muted forever. Restore
 // therefore reads every parameter back after sending, and retries the whole
 // send-and-confirm cycle restoreAttempts times.
-//
 // If the device still disagrees after the last attempt, Restore returns an
 // error and remains ducked with the original values saved. That is the state
 // the next cycle needs: Duck on a ducked ducker is a no-op that keeps the
@@ -273,7 +325,7 @@ func (x *OSCDucker) Restore() error {
 	}
 
 	var unconfirmed []string
-	for attempt := 1; attempt <= restoreAttempts; attempt++ {
+	for attempt, settle := range restoreSettles {
 		var errs []error
 		for _, p := range savedPaths {
 			if err := x.send(p, x.saved[p]); err != nil {
@@ -285,6 +337,9 @@ func (x *OSCDucker) Restore() error {
 			// Still ducked, still saved.
 			return errors.Join(errs...)
 		}
+		// Let the device have applied the writes before asking it to confirm
+		// them. See restoreSettles.
+		time.Sleep(settle)
 		got, _ := x.queryPaths(savedPaths)
 		unconfirmed = unconfirmed[:0]
 		for _, p := range savedPaths {
@@ -298,10 +353,10 @@ func (x *OSCDucker) Restore() error {
 			return nil
 		}
 		x.log.Debug("osc: restore not confirmed yet",
-			"attempt", attempt, "of", restoreAttempts, "paths", unconfirmed, "addr", x.addr)
+			"attempt", attempt+1, "of", len(restoreSettles), "paths", unconfirmed, "addr", x.addr)
 	}
 	return fmt.Errorf("osc: %s at %s never confirmed the restore after %d attempts — still considered ducked; the original values will be retried on the next restore",
-		strings.Join(unconfirmed, ", "), x.addr, restoreAttempts)
+		strings.Join(unconfirmed, ", "), x.addr, len(restoreSettles))
 }
 
 // Probe asks the device for the current value of each configured parameter,
