@@ -30,7 +30,7 @@ implementation constraints, not a replacement design.
 | :--- | :--- |
 | [wallpaper](../../test/desktop/wallpaper.png), [consumer](../../test/gnome/client/consumer.c) | New shared original background; opt-in readable editor |
 | [Sway staging](../../test/integration/desktop_staging_test.go), [Sway report](../../test/integration/ui_storybook_test.go) | New tracked staging helpers; preserve nine states and crops |
-| [GNOME worker](../../test/gnome/x11_harness.py), [report module](../../test/gnome/storybook.py) | Real Shell captures and exact copy/Paste assertions; new escaped HTML |
+| [GNOME worker](../../test/gnome/x11_harness.py), [capture harness](../../test/gnome/hud_storybook_harness.py), [report builder](../../test/desktop/report.go) | Real Shell captures and exact copy/Paste assertions; escaped HTML |
 | [GNOME entry point](../../test/gnome/ui_storybook_test.go), [Python regressions](../../test/gnome/test_storybook.py) | New tagged entry point, report/error and prerequisite tests |
 | [Nix environment](../../test/gnome/environment.nix), [recipes](../../Justfile), [README](../../README.md#desktop-storybooks) | Pinned staging dependencies, regeneration, usage and limits |
 
