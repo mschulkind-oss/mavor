@@ -28,7 +28,10 @@ summary: "As-built reference for the mavor daemon: the per-cycle state machine a
 GNOME/output statements reconciled 2026-10-02 against `f8c9f02`-based
 work, with [measured HUD QA](../qa/gnome-hud-qa.md); stacked-dictation lifecycle
 reconciled 2026-10-09 against `4877cfa`/`1208a3b` plus the changes in this
-landing commit. No new whole-system stamp is claimed.
+landing commit. The `stacked-dictations` design doc was retired into this
+reference on 2026-10-10, having reached `BUILT` with no open questions; the
+rulings behind it that a maintainer would otherwise undo are in
+[Why it's this way](#why-its-this-way). No new whole-system stamp is claimed.
 
 `mavor` is one long-lived daemon whose shared mutable state is a lifecycle phase
 plus a per-cycle snapshot: one recording slot and an ordered queue of stopped
@@ -114,8 +117,8 @@ Capture is single-instance by the recording slot (`RecordingID` is one id or
 none) and, as a backstop, by `ParecRecorder`'s own mutex. Decode is
 single-instance because one `decodeWorker` goroutine drains the `decodeQueue`.
 Any number of stopped cycles may await output (`Pending`, capped at
-`state.MaxPending` = 8); `Idle` is reached only when the last one has been typed.
-The `WaitGroup` covers the decode worker and the dispatcher, so shutdown waits
+`state.MaxPending`); `Idle` is reached only when the last one has been typed —
+Idle means typed, not merely decoded. The `WaitGroup` covers the decode worker and the dispatcher, so shutdown waits
 for in-flight output before exiting.
 
 **I5. Shutdown order is `Serve` → `wg.Wait` → stop monitors → restore ducking →
@@ -188,8 +191,8 @@ is what makes a duplicate `mavor stop` harmless.
 transcription is in flight opens a new recording; at most one recording exists,
 but any number of stopped cycles may be queued for output. This is the "stacked
 dictations" behavior: a follow-up thought is captured immediately and typed after
-the earlier one. The queue is bounded at `state.MaxPending` (eight cycles); a
-start beyond it is refused and logged rather than growing disk use without limit.
+the earlier one. The queue is bounded at `state.MaxPending`; a start beyond it is
+refused and logged rather than growing disk use without limit.
 
 **The toggle and the push-to-talk pair are separate vocabularies over the same
 slot.** `Toggle` means "advance"; `RecordStart` and `RecordStop` name a direction
@@ -277,7 +280,7 @@ or when something else takes the card, not when you speak.
 
 A recording that starts while an earlier cycle is still awaiting output — the
 stacked case — **skips its live preview** (ruling
-[OQ-6](../design/stacked-dictations.md#55-the-preview-companion)). Capture is
+[OQ-SD6](#why-its-this-way)). Capture is
 never delayed for a preview, and the one recognizer behind it is still finishing
 the earlier cycle's final decode, so no new stream is started for the second
 recording. Its transcript is unaffected: the earlier cycle types on its own
@@ -673,6 +676,8 @@ is for; this table is the only place the values themselves are stated.
 | Recording directory | `$TMPDIR/mavor-recordings` | `cmd/mavor.runDaemon` |
 | History log | `$XDG_STATE_HOME/mavor/history.jsonl` | `history.DefaultPath` |
 | History retention | 500 entries | `history.DefaultMax` |
+| Pending dictations | 8 | `state.MaxPending` |
+| Visible pill rows | 3 (a longer stack shows `+N` on its last row) | `overlay.maxStackRows` |
 | Default model | `whisper-base.en` | `config.DefaultModel` |
 | Default preview | enabled, `source = "auto"` | `config.Default` |
 | Default preview companion | `zipformer-streaming` | `speech.DefaultCompanionModel` |
@@ -700,8 +705,9 @@ value.
 
 ## Why it's this way
 
-Rulings a maintainer would otherwise undo. The IDs are the ones the design doc
-this replaces used.
+Rulings a maintainer would otherwise undo. The bare `OQ-` ids are the ones the
+design doc this reference replaced used; the `OQ-SD*` ids are the
+stacked-dictations ones, prefixed so the two numbering runs cannot collide.
 
 | ID | Ruling | Why it stays |
 | :--- | :--- | :--- |
@@ -711,3 +717,9 @@ this replaces used.
 | OQ-4 | The FSM grew `Recording × TranscribeFailed → Idle`, and nothing else | That edge was a real bug — a failed capture start left the overlay claiming RECORDING until two more keypresses cleared it. A cancel event is still deliberately absent |
 | OQ-5 | No implementation registry. The model name selects the implementation, by way of the catalog | A plugin architecture for a single-user tool is the wrong trade. The `engine` key this ruling originally referred to is itself gone: it welded *which model* to *where its runtime runs*, and those are now derived separately |
 | OQ-6 | Side effects stay synchronous on the handler goroutine | The response then reports the state after side effects were attempted, which is what makes the integration tests deterministic. The cost is a fork/exec inside the client's 2s budget — revisit if a recorder ever grows a slow start |
+| OQ-SD1 | Finished transcripts are typed in spoken order — strictly increasing cycle id — never in completion order | Typing is sequential and the user is composing prose. A later, faster dictation that overtakes an earlier one drops a sentence in the wrong place, silently and unrecoverably except from history, so out-of-turn completions park instead |
+| OQ-SD2 | The pill stack is bounded at a fixed row count, and the canvas reserved for it is never resized | The surface is allocated once at startup; resizing re-centres it, blocks the render loop on a compositor round-trip, and can race a stale configure. A longer stack collapses to a `+N` count instead of growing |
+| OQ-SD3 | Stacking applies to the default `after-stop` final mode only; the opt-in live-final modes do not stack | Those modes already serialize on the main recognizer during capture, so stacking there would let a second recording capture while its live feeding silently waited. Keeping them out is the honest boundary until that is designed |
+| OQ-SD5 | Ducking is tied to capture, not to the pipeline: background audio returns the moment capture stops, even while typing is still queued | The restore used to run on `Idle`, which with stacking means "everything finished" — media would stay muted through the whole transcription tail, and the restore could race a new capture's duck |
+| OQ-SD6 | A recording that starts while an earlier cycle awaits output skips its live preview | There is one companion recognizer and it is still finishing the earlier cycle, so delaying capture for a preview inverts the priority. The transcript is unaffected: it is transcribed normally when it stops |
+| OQ-SD7 | A failed cycle's error pill joins the live stack rather than replacing it | Replacing the scene hides a recording that is still running, so the user loses the evidence that dictation is live. The failed cycle is retired, and history still records it |

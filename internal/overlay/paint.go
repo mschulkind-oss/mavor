@@ -62,7 +62,7 @@ const (
 
 	// maxStackRows is how many pill rows the fixed surface reserves height for:
 	// one recording plus two visible transcribing rows (the stacked-dictations
-	// OQ-2 ruling). The surface is allocated once and never resized, so this is
+	// OQ-SD2 ruling). The surface is allocated once and never resized, so this is
 	// a hard budget, not a hint. A longer stack collapses into a "+N" count on
 	// the last visible row rather than growing the canvas.
 	maxStackRows = 3
@@ -95,7 +95,7 @@ type Scene struct {
 	// carry no waveform and no subtitle. Empty for every single-dictation
 	// scene, so existing callers are unaffected. At most maxStackRows rows are
 	// drawn in total; a longer stack shows a "+N" count on its last row. See
-	// docs/design/stacked-dictations.md §7.
+	// docs/reference/how-mavor-works.md (the overlay section).
 	Stack []Visual
 	// MaxPreviewWidth caps the preview strip in pixels, including its
 	// padding. Zero means uncapped, which is what a scene built by hand in a
