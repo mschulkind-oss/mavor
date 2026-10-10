@@ -142,7 +142,16 @@ class Session:
         self.evaluate('globalThis.hudFocusEvents=[];global.display.connect("notify::focus-window",()=>hudFocusEvents.push(global.display.focus_window?.title??"NONE"));true')
         self.evaluate('globalThis.hudPointer=global.stage.context.get_backend().get_default_seat().create_virtual_device(0);true')
         for _ in range(4):
-            self.evaluate('if (Main.messageTray._banner) Main.messageTray._hideNotification(true);true')
+            # Dismiss any banner that would sit over the HUD or steal focus. The
+            # guard has to test the notification, not just the banner: `_banner`
+            # can be set while its `notification` is already null (dismissed or
+            # expired in between, or a transient Shell state), and
+            # `_hideNotification` dereferences it and throws -- which surfaces as
+            # a bare "can't access property \"isTransient\", notification is
+            # null" from this startup probe. The try/catch keeps a future Shell
+            # internal from taking the whole harness down with it; dismissing a
+            # banner is best-effort, never a reason to fail the run.
+            self.evaluate('try { if (Main.messageTray._banner && Main.messageTray._banner.notification) Main.messageTray._hideNotification(true); } catch (e) {} true')
             time.sleep(.3)
         self.checkpoint_focus()
 
