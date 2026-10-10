@@ -133,15 +133,63 @@ func TestInitializationCancellationJoinsAndClosesTransfer(t *testing.T) {
 		}
 	}
 }
-func TestExplicitInitializationDeadlineIsPreserved(t *testing.T) {
-	d, _ := newTestDaemon(t, func(c *Config) {
-		c.InitializationTimeout = 20 * time.Millisecond
-		c.Initialize = func(ctx context.Context) (Initialized, error) { <-ctx.Done(); return Initialized{}, ctx.Err() }
+
+// Initialization has no deadline of its own, and this is the test that says so.
+//
+// It used to have a 180-second budget, and the supervisor under it a 120-second
+// one. Both turned a slow model load into a failed start; systemd's
+// Restart=on-failure then restarted the daemon, which re-read the model from the
+// very resource that had been too slow — a loop that made its own cause worse.
+// What ends initialization now is the initialization returning, or the caller's
+// context, and nothing else.
+//
+// Testing the real 180 seconds is impractical, so this asserts the shape rather
+// than the number: a loader that never returns must leave the daemon starting up
+// rather than failed, for longer than any deadline it used to have would have
+// taken to fire *and* shorter ones would have to.
+func TestInitializationHasNoDeadlineOfItsOwn(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan struct{})
+	d, sock := newTestDaemon(t, func(c *Config) {
+		c.Initialize = func(ctx context.Context) (Initialized, error) {
+			close(entered)
+			select {
+			case <-release:
+				return Initialized{Transcriber: &speech.Mock{Text: "ready"}}, nil
+			case <-ctx.Done():
+				return Initialized{}, ctx.Err()
+			}
+		}
 	})
-	began := time.Now()
-	err := d.Run(t.Context())
-	if !errors.Is(err, context.DeadlineExceeded) || time.Since(began) > time.Second {
-		t.Fatalf("%v took %s", err, time.Since(began))
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	<-entered
+
+	// Still initializing, not failed and not exited.
+	if got := sendWithRetry(t, sock, "status"); got.State != "initializing" {
+		t.Fatalf("state = %q while the loader is still running, want initializing", got.State)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("initialization ended by itself after no time at all: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	// A loader that finishes late is a working daemon, still up.
+	close(release)
+	select {
+	case err := <-done:
+		t.Fatalf("daemon exited after a slow but successful initialization: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	// Only a shutdown ends it.
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutdown hung")
 	}
 }
 

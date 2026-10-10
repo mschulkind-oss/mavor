@@ -96,7 +96,7 @@ func RunBackup(o overlay.Overlay) (result BackupEvidence, close func() error, er
 	}
 	main := speech.NewServerTranscriber("")
 	main.Logger = logger
-	main.Supervisor = speech.NewSupervisor(speech.SupervisorConfig{Logger: logger, ReadyTimeout: time.Second, PollInterval: time.Millisecond, CommandFunc: func(ctx context.Context, c speech.SupervisorConfig) *exec.Cmd {
+	main.Supervisor = speech.NewSupervisor(speech.SupervisorConfig{PollInterval: time.Millisecond, CommandFunc: func(ctx context.Context, c speech.SupervisorConfig) *exec.Cmd {
 		u, _ := url.Parse(c.ServerSocket)
 		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestDesktopGPUFailureChild$")
 		cmd.Env = append(os.Environ(), "MAVOR_DESKTOP_FAILURE_CHILD=1", "MAVOR_DESKTOP_FAILURE_ADDRESS="+u.Host)

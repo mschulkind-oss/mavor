@@ -51,7 +51,6 @@ type Daemon struct {
 	warningUntil              time.Time
 	warningGen                uint64
 	initialize                func(context.Context) (Initialized, error)
-	initializationTimeout     time.Duration
 	mainModel, companionModel string
 	finalMode                 models.FinalMode
 	finalCycle                *incrementalCycle
@@ -154,9 +153,8 @@ type Initialized struct {
 }
 
 type Config struct {
-	Initialize            func(context.Context) (Initialized, error)
-	InitializationTimeout time.Duration
-	FinalMode             models.FinalMode
+	Initialize func(context.Context) (Initialized, error)
+	FinalMode  models.FinalMode
 
 	Socket        string
 	Recorder      audio.Recorder
@@ -231,30 +229,29 @@ func New(c Config) *Daemon {
 		upgradeInterval = defaultUpgradeInterval
 	}
 	return &Daemon{
-		initialize:            c.Initialize,
-		initializationTimeout: c.InitializationTimeout,
-		socket:                c.Socket,
-		finalMode:             c.FinalMode,
-		machine:               state.New(),
-		decodeQueue:           make(chan *dictationCycle, state.MaxPending),
-		dispatcher:            newDispatcher(),
-		recorder:              c.Recorder,
-		transcriber:           c.Transcriber,
-		output:                c.Output,
-		overlay:               c.Overlay,
-		ducker:                ducker,
-		logger:                c.Logger,
-		errorDuration:         errDur,
-		previewEnabled:        c.PreviewEnabled,
-		previewMode:           c.PreviewMode,
-		companion:             c.PreviewCompanion,
-		history:               c.History,
-		silenceFilter:         c.SilenceFilter,
-		silenceThreshold:      silenceThresh,
-		minPhraseDuration:     minPhrase,
-		binaryPath:            c.BinaryPath,
-		upgradeInterval:       upgradeInterval,
-		residencyKick:         make(chan struct{}, 1),
+		initialize:        c.Initialize,
+		socket:            c.Socket,
+		finalMode:         c.FinalMode,
+		machine:           state.New(),
+		decodeQueue:       make(chan *dictationCycle, state.MaxPending),
+		dispatcher:        newDispatcher(),
+		recorder:          c.Recorder,
+		transcriber:       c.Transcriber,
+		output:            c.Output,
+		overlay:           c.Overlay,
+		ducker:            ducker,
+		logger:            c.Logger,
+		errorDuration:     errDur,
+		previewEnabled:    c.PreviewEnabled,
+		previewMode:       c.PreviewMode,
+		companion:         c.PreviewCompanion,
+		history:           c.History,
+		silenceFilter:     c.SilenceFilter,
+		silenceThreshold:  silenceThresh,
+		minPhraseDuration: minPhrase,
+		binaryPath:        c.BinaryPath,
+		upgradeInterval:   upgradeInterval,
+		residencyKick:     make(chan struct{}, 1),
 	}
 }
 
@@ -299,19 +296,24 @@ func (d *Daemon) Run(ctx context.Context) error {
 		initWG.Add(1)
 		go func() {
 			defer initWG.Done()
-			budget := d.initializationTimeout
-			if budget <= 0 {
-				budget = 180 * time.Second
-			}
-			initCtx, cancel := context.WithTimeout(ctx, budget)
-			defer cancel()
-			d.syncHUD(initCtx)
-			loaded, e := d.initialize(initCtx)
+			// No budget on initialization. A model load is bounded by the disk and
+			// the device it lands on, not by a number this code can pick: a 3 GB
+			// read that takes 14 seconds on an idle machine takes minutes on a
+			// saturated one, and the same model on the same machine does both. A
+			// deadline here converts a slow load into a failed startup, and the
+			// restart that follows re-reads the model from the resource that was
+			// too slow — the failure feeds itself. See
+			// Supervisor.waitForReady, which carries the same reasoning.
+			//
+			// Waiting is not unbounded in practice. A child that dies is a real
+			// failure and still fails the daemon; a shutdown still cancels this
+			// through ctx; and a user whose models are still loading sees the
+			// initializing state and can restart the service themselves. That is
+			// the escape hatch, and it does not fire by itself.
+			d.syncHUD(ctx)
+			loaded, e := d.initialize(ctx)
 			if e == nil && loaded.Transcriber == nil {
 				e = errors.New("initialization returned no main transcriber")
-			}
-			if e == nil {
-				e = initCtx.Err()
 			}
 			d.controlMu.Lock()
 			if e == nil {

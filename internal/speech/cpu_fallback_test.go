@@ -108,7 +108,6 @@ func recoverySupervisor(t *testing.T, gpuMode, cpuMode string, noGPU, allowCPUFa
 	sup := NewSupervisor(SupervisorConfig{
 		NoGPU:            noGPU,
 		AllowCPUFallback: allowCPUFallback,
-		ReadyTimeout:     500 * time.Millisecond,
 		PollInterval:     5 * time.Millisecond,
 		Logger:           slog.New(slog.NewTextHandler(&logs, nil)),
 		CommandFunc: func(ctx context.Context, cfg SupervisorConfig) *exec.Cmd {
@@ -137,7 +136,10 @@ func recoveryWAV(t *testing.T) string {
 }
 
 func TestGPUStartupFailureRetriesCPUWithOriginalRecording(t *testing.T) {
-	for _, mode := range []string{"startup-exit", "startup-timeout"} {
+	// Only a child that exits is a GPU startup failure now. One that stays alive
+	// and never listens is waited for, not retried — see
+	// TestCPURecoveryWaitsForAChildThatNeverListens.
+	for _, mode := range []string{"startup-exit"} {
 		t.Run(mode, func(t *testing.T) {
 			sup, launches, logs := recoverySupervisor(t, mode, "success", false, true)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -323,8 +325,6 @@ func TestChunkingPreservesEngineStartupAndShutdown(t *testing.T) {
 
 func TestGPURecoveryAllowsSlowerCPULoad(t *testing.T) {
 	sup, launches, _ := recoverySupervisor(t, "startup-exit", "success", false, true)
-	sup.cfg.ReadyTimeout = 100 * time.Millisecond
-	sup.cfg.CPUReadyTimeout = time.Second
 	command := sup.cfg.CommandFunc
 	sup.cfg.CommandFunc = func(ctx context.Context, cfg SupervisorConfig) *exec.Cmd {
 		cmd := command(ctx, cfg)
@@ -336,28 +336,37 @@ func TestGPURecoveryAllowsSlowerCPULoad(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if err := sup.Start(ctx); err != nil {
-		t.Fatalf("CPU inherited overly short GPU startup deadline: %v", err)
+		t.Fatalf("CPU recovery failed on a load that was merely slow: %v", err)
 	}
 	if len(*launches) != 2 || sup.GPUEnabled() {
 		t.Fatalf("CPU recovery missing: %+v", *launches)
 	}
 }
 
-func TestCPURecoveryStartupTimeoutIsBounded(t *testing.T) {
+// A CPU recovery child that never becomes ready is waited for, not failed.
+//
+// It used to be capped by its own shorter startup deadline, and the GPU child by
+// a longer one. Both turned a slow load into a failed start, and with systemd's
+// Restart=on-failure behind the daemon that became a loop which re-read the
+// model from the very resource that was too slow. What actually ends the wait
+// now is the caller's context — a shutdown — and nothing else.
+func TestCPURecoveryWaitsForAChildThatNeverListens(t *testing.T) {
 	sup, launches, _ := recoverySupervisor(t, "startup-exit", "startup-timeout", false, true)
-	sup.cfg.CPUReadyTimeout = 100 * time.Millisecond
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 1200*time.Millisecond)
 	defer cancel()
 	started := time.Now()
 	err := sup.Start(ctx)
-	if err == nil || !strings.Contains(err.Error(), "CPU recovery failed") || !strings.Contains(err.Error(), "timed out") {
-		t.Fatalf("missing bounded CPU startup failure: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "CPU recovery failed") {
+		t.Fatalf("want the recovery to end with the caller's context, got: %v", err)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("want the context to be what ended the wait, got: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed < 900*time.Millisecond {
+		t.Fatalf("startup gave up after %s — a startup deadline is back", elapsed)
 	}
 	if len(*launches) != 2 || sup.IsRunning() {
 		t.Fatalf("extra retry or leaked process: %+v", *launches)
-	}
-	if time.Since(started) > time.Second {
-		t.Fatal("CPU ignored its readiness timeout")
 	}
 }
 
@@ -372,14 +381,6 @@ func TestCPURecoveryDoesNotRetryMissingServerBinary(t *testing.T) {
 	}
 	if launches != 1 {
 		t.Fatalf("missing binary incorrectly treated as GPU failure: launches=%d", launches)
-	}
-}
-
-func TestCPURecoveryDefaultStartupDeadlines(t *testing.T) {
-	gpu := NewSupervisor(SupervisorConfig{})
-	cpu := NewSupervisor(SupervisorConfig{NoGPU: true})
-	if gpu.cfg.ReadyTimeout != 120*time.Second || cpu.cfg.ReadyTimeout != 60*time.Second || gpu.cfg.CPUReadyTimeout != 60*time.Second {
-		t.Fatal("unexpected startup deadlines")
 	}
 }
 
@@ -406,10 +407,12 @@ func TestChunkingLifecycleIsSafeForEnginesWithoutLifecycle(t *testing.T) {
 }
 
 func TestDefaultDisabledCPURecoveryPreservesStartupFailure(t *testing.T) {
-	for _, mode := range []string{"startup-exit", "startup-timeout"} {
+	// Only a child that exits is a startup failure now. A child that stays alive
+	// and never listens is waited for, which is a different test
+	// (TestCPURecoveryWaitsForAChildThatNeverListens).
+	for _, mode := range []string{"startup-exit"} {
 		t.Run(mode, func(t *testing.T) {
 			sup, launches, logs := recoverySupervisor(t, mode, "success", false, false)
-			sup.cfg.ReadyTimeout = 100 * time.Millisecond
 			st := NewServerTranscriber("")
 			st.Supervisor = sup
 			text, err := st.Transcribe(context.Background(), recoveryWAV(t))

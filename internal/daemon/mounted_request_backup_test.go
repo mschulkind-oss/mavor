@@ -74,7 +74,7 @@ func TestMountedCompanionRequestBackupEndToEnd(t *testing.T) {
 	}
 	st := speech.NewServerTranscriber("")
 	st.Logger = logger
-	st.Supervisor = speech.NewSupervisor(speech.SupervisorConfig{Logger: logger, ReadyTimeout: time.Second, PollInterval: time.Millisecond, CommandFunc: func(ctx context.Context, c speech.SupervisorConfig) *exec.Cmd {
+	st.Supervisor = speech.NewSupervisor(speech.SupervisorConfig{PollInterval: time.Millisecond, CommandFunc: func(ctx context.Context, c speech.SupervisorConfig) *exec.Cmd {
 		u, _ := url.Parse(c.ServerSocket)
 		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestDaemonGPUHelperProcess$")
 		cmd.Env = append(os.Environ(), "MAVOR_DAEMON_GPU_HELPER=1", "MAVOR_DAEMON_GPU_ADDRESS="+u.Host)

@@ -54,15 +54,6 @@ type SupervisorConfig struct {
 	// CommandFunc allows injecting a custom command generator (useful for unit tests).
 	CommandFunc func(ctx context.Context, cfg SupervisorConfig) *exec.Cmd
 
-	// ReadyTimeout is the maximum duration to wait for the server to accept connections.
-	// Defaults to 120 seconds with GPU enabled, or CPUReadyTimeout with NoGPU.
-	ReadyTimeout time.Duration
-
-	// CPUReadyTimeout allows a slower CPU model load after GPU recovery.
-	// Defaults to 60 seconds. Recovery is attempted only once, then the child
-	// remains on CPU until the daemon creates a new Supervisor.
-	CPUReadyTimeout time.Duration
-
 	// PollInterval is the polling interval for readiness checks.
 	// Defaults to 50 milliseconds.
 	PollInterval time.Duration
@@ -95,15 +86,6 @@ func (s *Supervisor) Endpoint() string {
 
 // NewSupervisor creates a Supervisor with the given configuration.
 func NewSupervisor(cfg SupervisorConfig) *Supervisor {
-	if cfg.CPUReadyTimeout <= 0 {
-		cfg.CPUReadyTimeout = 60 * time.Second
-	}
-	if cfg.ReadyTimeout <= 0 {
-		cfg.ReadyTimeout = 120 * time.Second
-		if cfg.NoGPU {
-			cfg.ReadyTimeout = cfg.CPUReadyTimeout
-		}
-	}
 	if cfg.PollInterval <= 0 {
 		cfg.PollInterval = 50 * time.Millisecond
 	}
@@ -244,12 +226,11 @@ func (s *Supervisor) FallbackToCPU(ctx context.Context, cause error) error {
 
 func (s *Supervisor) fallbackLocked(ctx context.Context, cause error) error {
 	s.logger.Warn("speech: GPU-enabled whisper-server failed; retrying on CPU (transcription may be slower)",
-		"err", cause, "until", "daemon restart", "cpu_ready_timeout", s.cfg.CPUReadyTimeout)
+		"err", cause, "until", "daemon restart")
 	if err := s.stopLocked(); err != nil {
 		return fmt.Errorf("speech: stop GPU-enabled server before CPU recovery: %w", err)
 	}
 	s.cfg.NoGPU = true
-	s.cfg.ReadyTimeout = s.cfg.CPUReadyTimeout
 	if err := s.startLocked(ctx); err != nil {
 		return fmt.Errorf("speech: CPU recovery failed: %w", err)
 	}
@@ -370,14 +351,23 @@ func (s *Supervisor) startLocked(ctx context.Context) error {
 	return nil
 }
 
+// waitForReady blocks until the child accepts connections, the child exits, or
+// ctx is cancelled — and it has no third outcome.
+//
+// It deliberately has no deadline. A server that is slow to become ready is a
+// server that is loading a model, and the time that takes is a property of the
+// machine and the moment, not of the code: a 3 GB model read on a busy disk is
+// tens of seconds, and on a saturated one it is minutes. A deadline here does
+// not detect a broken child — it detects a slow one, converts that into a
+// failed startup, and the supervisor's restart then re-reads the model from the
+// very resource that was too slow, which makes the next attempt slower still.
+//
+// Nothing is lost by waiting. A child that has actually died is reported by
+// doneCh (and by the exit watcher, which needs no deadline at all), a wedged
+// one is visible through the daemon's initializing state and answers neither,
+// and a shutdown is reported through ctx. A caller that must give up can pass a
+// context with a deadline, which is the one place the policy belongs.
 func (s *Supervisor) waitForReady(ctx context.Context, doneCh chan struct{}, stderr *childStderr) error {
-	timeout := s.cfg.ReadyTimeout
-	if timeout <= 0 {
-		timeout = 120 * time.Second
-	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
 	ticker := time.NewTicker(s.cfg.PollInterval)
 	defer ticker.Stop()
 
@@ -385,12 +375,6 @@ func (s *Supervisor) waitForReady(ctx context.Context, doneCh chan struct{}, std
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-timer.C:
-			errMsg := strings.TrimSpace(stderr.String())
-			if errMsg != "" {
-				return fmt.Errorf("timed out after %v waiting for server readiness (stderr: %s)", timeout, errMsg)
-			}
-			return fmt.Errorf("timed out after %v waiting for server readiness", timeout)
 		case <-doneCh:
 			errMsg := strings.TrimSpace(stderr.String())
 			if errMsg != "" {

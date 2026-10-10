@@ -203,7 +203,6 @@ func TestServerTranscriberSupervisorLifecycle(t *testing.T) {
 	sup := NewSupervisor(SupervisorConfig{
 		ServerSocket: sockPath,
 		PollInterval: 10 * time.Millisecond,
-		ReadyTimeout: 5 * time.Second,
 		CommandFunc:  whisperServerCommand,
 	})
 

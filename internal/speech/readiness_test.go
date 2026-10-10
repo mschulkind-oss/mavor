@@ -52,15 +52,6 @@ func TestVerifyReadinessDecodesAndCleans(t *testing.T) {
 		}
 	}
 }
-func TestDefaultGPUStartupBudgetAndExplicitDeadline(t *testing.T) {
-	if got := NewSupervisor(SupervisorConfig{}).cfg.ReadyTimeout; got < 120000000000 {
-		t.Fatalf("GPU budget %s", got)
-	}
-	if got := NewSupervisor(SupervisorConfig{ReadyTimeout: 123}).cfg.ReadyTimeout; got != 123 {
-		t.Fatal(got)
-	}
-}
-
 func TestReadinessStreamingResetAndCancellation(t *testing.T) {
 	st := NewMockStreamTranscriber("discarded", "provisional")
 	if e := VerifyReadiness(t.Context(), st); e != nil || st.IsStreaming() {
@@ -77,8 +68,12 @@ func TestReadinessStreamingResetAndCancellation(t *testing.T) {
 	}
 }
 
-// Model loads that cross the old ten-second connection deadline remain bounded
-// by the new default. This uses a real local child and no model/GPU allocation.
+// The regression this whole policy exists for: the first version gave the
+// connection ten seconds, a 3 GB model load blew it on a busy machine, and the
+// fix then was to raise the number — which only moved the threshold until a
+// saturated disk outran the new one. There is no budget to outrun now; this
+// stays as the check that a load taking longer than those budgets used to allow
+// still comes up.
 func TestDefaultGPUAllowsLoadPastOldTenSecondDeadline(t *testing.T) {
 	sup := NewSupervisor(SupervisorConfig{PollInterval: 5 * time.Millisecond, CommandFunc: func(ctx context.Context, cfg SupervisorConfig) *exec.Cmd {
 		host, port := hostPort(cfg.ServerSocket)

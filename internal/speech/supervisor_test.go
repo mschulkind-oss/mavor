@@ -45,6 +45,14 @@ func TestHelperServerProcess(t *testing.T) {
 		os.Exit(2)
 	}
 
+	// A slow model load, for tests that need one. The listener is not created
+	// until this returns, which is what makes the supervisor wait.
+	if d := os.Getenv("TEST_SUPERVISOR_HELPER_DELAY"); d != "" {
+		if pd, err := time.ParseDuration(d); err == nil {
+			time.Sleep(pd)
+		}
+	}
+
 	listener, err := net.Listen("tcp", net.JoinHostPort(host, port))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error: listen:", err)
@@ -95,7 +103,6 @@ func TestSupervisorConfiguredWithASocketPathListensOnLoopback(t *testing.T) {
 	sup := NewSupervisor(SupervisorConfig{
 		ServerSocket: sockPath,
 		PollInterval: 10 * time.Millisecond,
-		ReadyTimeout: 5 * time.Second,
 		CommandFunc:  whisperServerCommand,
 	})
 
@@ -148,7 +155,6 @@ func TestTranscriberFollowsTheServerAcrossARestart(t *testing.T) {
 	sup := NewSupervisor(SupervisorConfig{
 		ServerSocket: filepath.Join(t.TempDir(), "restart-follow.sock"),
 		PollInterval: 10 * time.Millisecond,
-		ReadyTimeout: 5 * time.Second,
 		CommandFunc:  whisperServerCommand,
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -178,28 +184,34 @@ func TestTranscriberFollowsTheServerAcrossARestart(t *testing.T) {
 	}
 }
 
-func TestSupervisorReadinessTimeout(t *testing.T) {
-	sockPath := filepath.Join(t.TempDir(), "timeout-test.sock")
+// A server that is slow to listen is waited for. There is no startup deadline:
+// elapsed time alone is never a failure, because the only thing it can measure
+// is how busy the machine is. See Supervisor.waitForReady.
+func TestSupervisorWaitsForASlowChildToListen(t *testing.T) {
+	sockPath := filepath.Join(t.TempDir(), "slow-start.sock")
 	sup := NewSupervisor(SupervisorConfig{
 		ServerSocket: sockPath,
-		NoGPU:        true, // Test the terminal CPU failure, not GPU recovery.
 		PollInterval: 10 * time.Millisecond,
-		ReadyTimeout: 100 * time.Millisecond,
-		CommandFunc: func(ctx context.Context, cfg SupervisorConfig) *exec.Cmd {
-			// Runs sleep so it never listens on socket
-			return exec.Command("sleep", "10")
+		CommandFunc: func(_ context.Context, cfg SupervisorConfig) *exec.Cmd {
+			host, port := hostPort(cfg.ServerSocket)
+			cmd := exec.Command(os.Args[0], "-test.run=TestHelperServerProcess", "--", "--host", host, "--port", port)
+			cmd.Env = append(os.Environ(), "TEST_SUPERVISOR_HELPER=1", "TEST_SUPERVISOR_HELPER_DELAY=400ms")
+			return cmd
 		},
 	})
 
-	err := sup.Start(context.Background())
-	if err == nil {
-		t.Fatal("expected error on readiness timeout")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	started := time.Now()
+	if err := sup.Start(ctx); err != nil {
+		t.Fatalf("Start failed on a child that was merely slow: %v", err)
 	}
-	if !strings.Contains(err.Error(), "timed out") {
-		t.Fatalf("error %q should mention timed out", err)
+	defer sup.Stop()
+	if elapsed := time.Since(started); elapsed < 350*time.Millisecond {
+		t.Fatalf("Start returned in %s, before the child could have listened", elapsed)
 	}
-	if sup.IsRunning() {
-		t.Fatal("supervisor should not be running after failed start")
+	if !sup.IsRunning() {
+		t.Fatal("supervisor should be running after a slow start")
 	}
 }
 
@@ -209,7 +221,6 @@ func TestSupervisorPrematureExit(t *testing.T) {
 		ServerSocket: sockPath,
 		NoGPU:        true, // Test the terminal CPU failure, not GPU recovery.
 		PollInterval: 10 * time.Millisecond,
-		ReadyTimeout: 2 * time.Second,
 		CommandFunc: func(ctx context.Context, cfg SupervisorConfig) *exec.Cmd {
 			return exec.Command("sh", "-c", "echo simulated crash >&2; exit 3")
 		},
@@ -232,7 +243,6 @@ func TestSupervisorRestart(t *testing.T) {
 	sup := NewSupervisor(SupervisorConfig{
 		ServerSocket: sockPath,
 		PollInterval: 10 * time.Millisecond,
-		ReadyTimeout: 3 * time.Second,
 		CommandFunc:  whisperServerCommand,
 	})
 
@@ -262,7 +272,6 @@ func TestSupervisorIdempotent(t *testing.T) {
 	sup := NewSupervisor(SupervisorConfig{
 		ServerSocket: sockPath,
 		PollInterval: 10 * time.Millisecond,
-		ReadyTimeout: 3 * time.Second,
 		CommandFunc:  whisperServerCommand,
 	})
 
@@ -396,7 +405,6 @@ func TestSupervisorWithNoConfiguredEndpointPicksALoopbackPort(t *testing.T) {
 	sup := NewSupervisor(SupervisorConfig{
 		CommandFunc:  whisperServerCommand,
 		PollInterval: 10 * time.Millisecond,
-		ReadyTimeout: 5 * time.Second,
 	})
 	if err := sup.Start(context.Background()); err != nil {
 		t.Fatalf("Start with no configured endpoint: %v", err)
