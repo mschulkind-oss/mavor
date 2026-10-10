@@ -60,6 +60,42 @@ type ReportData struct {
 	Captures      []StateCapture
 }
 
+// The inline crop is a full-width band from the top of the screenshot: the
+// region the HUD's surface occupies below the panel. Its height is derived per
+// capture from what the scene actually painted rather than fixed, because a
+// constant tuned to one pill row slices the third row of a stacked scene.
+const (
+	// cropMargin pads the painted bounds so a pill's rounded edge and drop
+	// shadow, which SceneBounds does not include, are not cut off.
+	cropMargin = 12
+	// minCropHeight keeps a scene that paints little — the hidden baseline, a
+	// lone pill — from cropping to a sliver of the desktop panel.
+	minCropHeight = 180
+)
+
+// cropHeightFor returns the height of the top band that contains everything the
+// scene painted, as the compositor actually placed it. canvas is that placement
+// in screenshot space (the receipt's measured scene rectangle), and
+// overlay.SceneBounds gives the painted rectangle inside the scene's own
+// canvas. Deriving from the painter keeps the crop correct when rows or padding
+// change; the constants only pad and floor it.
+func cropHeightFor(scene overlay.Scene, canvas image.Rectangle, img image.Image) (int, error) {
+	painted, err := overlay.SceneBounds(scene)
+	if err != nil {
+		return 0, err
+	}
+	h := minCropHeight
+	if !canvas.Empty() && !painted.Empty() {
+		if got := canvas.Min.Y + painted.Max.Y + cropMargin; got > h {
+			h = got
+		}
+	}
+	if max := img.Bounds().Dy(); h > max {
+		h = max
+	}
+	return h, nil
+}
+
 func cropTop(img image.Image, h int) image.Image {
 	rect := image.Rect(0, 0, img.Bounds().Dx(), h)
 	type subImager interface {
@@ -1096,13 +1132,15 @@ const storybookHTMLTemplate = `<!DOCTYPE html>
 </html>
 `
 
-// SaveCapture writes only genuine compositor PNG bytes and a lossless top crop.
-func SaveCapture(dir, prefix string, s StoryState, raw []byte) (StateCapture, error) {
+// SaveCapture writes only genuine compositor PNG bytes and a lossless top crop
+// of cropHeight, which the caller derives from the scene's painted bounds so a
+// stacked scene's rows are not clipped.
+func SaveCapture(dir, prefix string, s StoryState, raw []byte, cropHeight int) (StateCapture, error) {
 	img, err := png.Decode(bytes.NewReader(raw))
 	if err != nil {
 		return StateCapture{}, err
 	}
-	crop, err := encodePNG(cropTop(img, 180))
+	crop, err := encodePNG(cropTop(img, cropHeight))
 	if err != nil {
 		return StateCapture{}, err
 	}
@@ -1117,5 +1155,5 @@ func SaveCapture(dir, prefix string, s StoryState, raw []byte) (StateCapture, er
 			return StateCapture{}, err
 		}
 	}
-	return StateCapture{State: s, FullB64: base64.StdEncoding.EncodeToString(raw), CropB64: base64.StdEncoding.EncodeToString(crop), FullFileName: full, CropFileName: cropped, FullRelPath: filepath.Join(sub, full), CropRelPath: filepath.Join(sub, cropped), Width: img.Bounds().Dx(), Height: img.Bounds().Dy(), CropHeight: 180, SizeBytes: len(raw), SizeKB: fmt.Sprintf("%.1f KB", float64(len(raw))/1024)}, nil
+	return StateCapture{State: s, FullB64: base64.StdEncoding.EncodeToString(raw), CropB64: base64.StdEncoding.EncodeToString(crop), FullFileName: full, CropFileName: cropped, FullRelPath: filepath.Join(sub, full), CropRelPath: filepath.Join(sub, cropped), Width: img.Bounds().Dx(), Height: img.Bounds().Dy(), CropHeight: cropHeight, SizeBytes: len(raw), SizeKB: fmt.Sprintf("%.1f KB", float64(len(raw))/1024)}, nil
 }

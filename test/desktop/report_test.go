@@ -47,6 +47,63 @@ func TestSharedCatalogAndTemplate(t *testing.T) {
 	}
 }
 
+// The inline crop follows what the scene painted, not a fixed band. A stacked
+// scene reserves three pill rows and is taller than the floor, so its crop has
+// to grow; a scene that paints nothing has to fall back to the floor rather
+// than cropping to a sliver.
+func TestCropHeightFollowsPaintedRows(t *testing.T) {
+	shot := image.NewRGBA(image.Rect(0, 0, 1920, 1080))
+	byID := map[string]StoryState{}
+	for _, s := range Scenes() {
+		byID[s.ID] = s
+	}
+	// placed reconstructs what the compositor drew: the scene centred under the
+	// panel (32px per the report layout) plus the production 8px margin.
+	placed := func(id string) (overlay.Scene, image.Rectangle) {
+		s := byID[id]
+		sc := overlay.Scene{Visual: s.Visual, Stack: s.Stack, Preview: s.Preview, Levels: make([]float64, 46)}
+		w, h, err := overlay.SceneSize(sc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		const canvasTop = 40
+		return sc, image.Rect((1920-w)/2, canvasTop, (1920-w)/2+w, canvasTop+h)
+	}
+
+	for _, id := range []string{"recording-55", "stacked", "stacked-error", "preview-long"} {
+		sc, canvas := placed(id)
+		got, err := cropHeightFor(sc, canvas, shot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := overlay.SceneBounds(sc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := canvas.Min.Y + b.Max.Y + cropMargin; got < want {
+			t.Fatalf("%s crop %d clips painted rows (need at least %d)", id, got, want)
+		}
+	}
+
+	stackedScene, stackedCanvas := placed("stacked")
+	got, err := cropHeightFor(stackedScene, stackedCanvas, shot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got <= minCropHeight {
+		t.Fatalf("stacked crop %d did not grow past the minimum %d", got, minCropHeight)
+	}
+
+	hiddenScene, hiddenCanvas := placed("hidden")
+	got, err = cropHeightFor(hiddenScene, hiddenCanvas, shot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != minCropHeight {
+		t.Fatalf("hidden crop %d != floor %d", got, minCropHeight)
+	}
+}
+
 // A submitted receipt is not proof that a compositor presented the frame.
 // One-shot capture must fail closed, not publish an absent HUD as a report.
 func TestReportRejectsUnpresentedSubmission(t *testing.T) {

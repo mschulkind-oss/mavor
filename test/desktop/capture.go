@@ -180,7 +180,11 @@ func BuildReport(dir, prefix, compositor, method, layout string, evidence []Evid
 			s.Specs["Capture started"] = e.CaptureStarted.Format(time.RFC3339Nano)
 			s.Specs["Capture ended"] = e.CaptureEnded.Format(time.RFC3339Nano)
 		}
-		c, err := SaveCapture(dir, prefix, s, raw)
+		cropHeight, err := cropHeightFor(e.Receipt.Scene, e.Bounds, img)
+		if err != nil {
+			return err
+		}
+		c, err := SaveCapture(dir, prefix, s, raw, cropHeight)
 		if err != nil {
 			return err
 		}
