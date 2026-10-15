@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -137,4 +138,98 @@ func (l pasteDiagnosticLauncher) Start(ctx context.Context, stdin []byte, name s
 	cmd, err := (output.RealLauncher{}).Start(ctx, stdin, name, args...)
 	l.t.Logf("start name=%s args=%v err=%v", name, args, err)
 	return cmd, err
+}
+
+// TestPasteDispatchWaitsForSlowHoldersRealSway pins the registration handshake
+// against a real compositor. The holders are launched through a 250ms delay, so
+// a dispatch that injected the chord 20ms after Start — before either holder had
+// connected — would read the pre-dispatch selections at that moment and hand
+// them to the reader. mavor must instead wait until a reader would receive the
+// transcript.
+func TestPasteDispatchWaitsForSlowHoldersRealSway(t *testing.T) {
+	h := Start(t, Options{Width: 800, Height: 600})
+
+	t.Setenv("XDG_RUNTIME_DIR", h.XDGRuntime)
+	t.Setenv("WAYLAND_DISPLAY", h.WaylandDisp)
+	t.Setenv("MAVOR_TEST_HOLDER_DELAY", "0.250")
+
+	for _, seed := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"prior clipboard"}, "prior clipboard"},
+		{[]string{"--primary", "prior primary"}, "prior primary"},
+	} {
+		cmd := exec.Command("wl-copy", seed.args...)
+		cmd.Env = append(os.Environ(), h.Env()...)
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("seed %v: %v", seed.args, err)
+		}
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	const transcript = "Delayed holder transcript."
+	p := output.NewPaste(nil)
+	p.Launcher = slowHolderLauncher{t: t, transcript: transcript}
+	p.RestoreSelection = true
+	p.LeaseDuration = 200 * time.Millisecond
+	p.RestoreDelay = 50 * time.Millisecond
+
+	if err := p.Emit(context.Background(), transcript); err != nil {
+		t.Fatalf("Emit failed: %v", err)
+	}
+
+	time.Sleep(150 * time.Millisecond)
+	for _, sel := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"-n"}, "prior clipboard"},
+		{[]string{"-p", "-n"}, "prior primary"},
+	} {
+		cmd := exec.Command("wl-paste", sel.args...)
+		cmd.Env = append(os.Environ(), h.Env()...)
+		got, err := cmd.CombinedOutput()
+		if err != nil || strings.TrimRight(string(got), "\n") != sel.want {
+			t.Errorf("restored %v = %q, err=%v, want %q", sel.args, got, err, sel.want)
+		}
+	}
+}
+
+// slowHolderLauncher starts each selection holder only after
+// $MAVOR_TEST_HOLDER_DELAY seconds, which is what a loaded machine looks like to
+// the dispatch, and asserts while injecting the chord that both selections
+// already serve the transcript.
+type slowHolderLauncher struct {
+	t          *testing.T
+	transcript string
+}
+
+func (l slowHolderLauncher) Run(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+	if name == "wtype" {
+		l.assertSelectionServes("CLIPBOARD", "-n")
+		l.assertSelectionServes("PRIMARY", "-p", "-n")
+	}
+	return output.RealLauncher{}.Run(ctx, stdin, name, args...)
+}
+
+func (l slowHolderLauncher) assertSelectionServes(label string, args ...string) {
+	l.t.Helper()
+	cmd := exec.Command("wl-paste", args...)
+	cmd.Env = os.Environ()
+	got, err := cmd.CombinedOutput()
+	if err != nil {
+		l.t.Errorf("reading %s at chord time: %v: %s", label, err, got)
+		return
+	}
+	if strings.TrimRight(string(got), "\n") != l.transcript {
+		l.t.Errorf("chord injected while %s served %q, not the transcript", label, got)
+	}
+}
+
+func (l slowHolderLauncher) Start(ctx context.Context, stdin []byte, name string, args ...string) (output.ManagedCmd, error) {
+	// "$@" keeps every holder argument (including the transcript) exactly as
+	// the driver passed it; only the exec is delayed.
+	return (output.RealLauncher{}).Start(ctx, stdin, "sh",
+		append([]string{"-c", `sleep "$MAVOR_TEST_HOLDER_DELAY"; exec "$@"`, "sh", name}, args...)...)
 }

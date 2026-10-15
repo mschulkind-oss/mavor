@@ -139,9 +139,25 @@ type mockLauncher struct {
 	runOutputs map[string][]byte
 	runErrors  map[string]error
 
-	// Records of calls
+	// Records of calls, and those records interleaved in call order.
 	runs   [][]string
 	starts [][]string
+	order  []string
+
+	// Live selection state. A holder that has started serves the transcript
+	// its selection, except that the first registerAfter reads of that
+	// selection still return the pre-dispatch owner — which is what a holder
+	// that has not finished starting looks like to a reader.
+	servedClip, servedPrim []byte
+	clipReads, primReads   int
+	registerAfterClip      int
+	registerAfterPrim      int
+
+	// Whether the chord was injected, and whether both selections were
+	// already serving the transcript at that moment.
+	wtypeRan           bool
+	wtypeSawClipServed bool
+	wtypeSawPrimServed bool
 
 	// ManagedCmds returned for Start calls
 	clipCmd *mockCmd
@@ -166,12 +182,47 @@ func (m *mockLauncher) Run(_ context.Context, stdin []byte, name string, args ..
 		call = append(call, "(stdin:"+string(stdin)+")")
 	}
 	m.runs = append(m.runs, call)
+	m.order = append(m.order, "run "+strings.Join(call, " "))
+
+	if name == "wtype" {
+		m.wtypeRan = true
+		m.wtypeSawClipServed = m.servedClip != nil && m.clipReads > m.registerAfterClip
+		m.wtypeSawPrimServed = m.servedPrim != nil && m.primReads > m.registerAfterPrim
+	}
+
+	if served, ok := m.servedSelection(name, args); ok {
+		return served, nil
+	}
 
 	key := name
 	if len(args) > 0 {
 		key += " " + args[0]
 	}
 	return m.runOutputs[key], m.runErrors[key]
+}
+
+// servedSelection answers a wl-paste read from the live holder state, so a test
+// can tell the difference between reading the selection a dispatch replaced and
+// reading the transcript the dispatch put there.
+func (m *mockLauncher) servedSelection(name string, args []string) ([]byte, bool) {
+	if name != "wl-paste" {
+		return nil, false
+	}
+	primary := len(args) > 0 && args[0] == "-p"
+	served, after := m.servedClip, m.registerAfterClip
+	reads := &m.clipReads
+	if primary {
+		served, after, reads = m.servedPrim, m.registerAfterPrim, &m.primReads
+	}
+	if served == nil {
+		return nil, false
+	}
+	index := *reads
+	*reads = index + 1
+	if index < after {
+		return nil, false
+	}
+	return served, true
 }
 
 func (m *mockLauncher) Start(_ context.Context, stdin []byte, name string, args ...string) (ManagedCmd, error) {
@@ -183,12 +234,31 @@ func (m *mockLauncher) Start(_ context.Context, stdin []byte, name string, args 
 		call = append(call, "(stdin:"+string(stdin)+")")
 	}
 	m.starts = append(m.starts, call)
+	m.order = append(m.order, "start "+strings.Join(call, " "))
 
 	// Return clipCmd or primCmd based on whether --primary is in args
+	primary := false
 	for _, a := range args {
 		if a == "--primary" {
-			return m.primCmd, nil
+			primary = true
 		}
+	}
+
+	// A foreground wl-copy takes the selection and serves whatever followed
+	// "--"; from here on a read of that selection returns it.
+	for i, a := range args {
+		if a == "--" && i+1 < len(args) {
+			if primary {
+				m.servedPrim = []byte(args[i+1])
+			} else {
+				m.servedClip = []byte(args[i+1])
+			}
+			break
+		}
+	}
+
+	if primary {
+		return m.primCmd, nil
 	}
 	return m.clipCmd, nil
 }
@@ -300,9 +370,12 @@ func TestPasteEmitNoRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, r := range l.runs {
-		if r[0] == "wl-paste" {
-			t.Errorf("wl-paste was called when RestoreSelection=false: %v", r)
+	for _, c := range l.order {
+		if strings.HasPrefix(c, "start ") {
+			break
+		}
+		if strings.HasPrefix(c, "run wl-paste") {
+			t.Errorf("a selection was read before any holder started with RestoreSelection=false: %v", l.order)
 		}
 	}
 	if !l.clipCmd.isKilled() || !l.primCmd.isKilled() {
@@ -391,6 +464,69 @@ func TestPasteEmitCustomCopyCommand(t *testing.T) {
 	}
 	if !wtypeRun {
 		t.Error("wtype chord was not executed")
+	}
+}
+
+func TestPasteWaitsForHoldersToServeTheTranscript(t *testing.T) {
+	// The holders are separate processes; the chord must not go out while a
+	// reader asking for either selection would still get what owned it before
+	// the dispatch. That is the "wrong thing got pasted" failure.
+	l := newMockLauncher()
+	l.registerAfterClip = 3
+	l.registerAfterPrim = 5
+	l.runOutputs["wl-paste -n"] = []byte("old clipboard")
+	l.runOutputs["wl-paste -p"] = []byte("old primary")
+
+	var logs bytes.Buffer
+	p := NewPaste(slog.New(slog.NewTextHandler(&logs, nil)))
+	p.Launcher = l
+	p.LeaseDuration = 5 * time.Millisecond
+	p.RestoreDelay = time.Millisecond
+	p.RegistrationTimeout = 2 * time.Second
+
+	if err := p.Emit(context.Background(), "transcript"); err != nil {
+		t.Fatal(err)
+	}
+	if !l.wtypeRan {
+		t.Fatalf("no chord injected: %v", l.order)
+	}
+	if !l.wtypeSawClipServed || !l.wtypeSawPrimServed {
+		t.Fatalf("chord injected before both selections served the transcript: clip=%v prim=%v order=%v",
+			l.wtypeSawClipServed, l.wtypeSawPrimServed, l.order)
+	}
+	if strings.Contains(logs.String(), "did not serve the transcript") {
+		t.Fatalf("registration should have succeeded: %s", &logs)
+	}
+}
+
+func TestPasteInjectsChordEvenWhenHoldersNeverRegister(t *testing.T) {
+	// A slow or wedged holder must not cost the user the paste: fall through
+	// after the bounded wait, but leave the reason in the log.
+	l := newMockLauncher()
+	l.registerAfterClip = 1 << 30
+	l.registerAfterPrim = 1 << 30
+	l.runOutputs["wl-paste -n"] = []byte("old clipboard")
+	l.runOutputs["wl-paste -p"] = []byte("old primary")
+
+	var logs bytes.Buffer
+	p := NewPaste(slog.New(slog.NewTextHandler(&logs, nil)))
+	p.Launcher = l
+	p.LeaseDuration = 5 * time.Millisecond
+	p.RestoreDelay = time.Millisecond
+	p.RegistrationTimeout = 40 * time.Millisecond
+
+	start := time.Now()
+	if err := p.Emit(context.Background(), "transcript"); err != nil {
+		t.Fatal(err)
+	}
+	if !l.wtypeRan {
+		t.Fatalf("chord was not injected after the registration wait: %v", l.order)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("registration wait overran its bound: %v", elapsed)
+	}
+	if !strings.Contains(logs.String(), "did not serve the transcript before the chord") {
+		t.Fatalf("missing registration warning: %s", &logs)
 	}
 }
 

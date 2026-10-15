@@ -13,6 +13,27 @@ import (
 
 // Architecture and invariants: docs/reference/paste-based-output-dispatch.md
 
+// SelectionRegistrationTimeout bounds how long a dispatch waits for the two
+// selection holders to actually own CLIPBOARD and PRIMARY before it injects the
+// paste chord.
+//
+// The holders are separate processes. wl-copy has to be exec'd, link, connect to
+// the compositor and call set_selection before a reader asking for the selection
+// is served by it, and how long that takes is not a property of this program: a
+// loaded machine can take longer than any constant. Injecting the chord before
+// that happens hands the reader whoever owned the selection a moment earlier —
+// typically the text the user copied before dictating, which is what "the wrong
+// thing got pasted" looks like from the outside.
+const SelectionRegistrationTimeout = 500 * time.Millisecond
+
+// registrationPollInterval is the pause between read-backs while waiting for a
+// holder to register. It grows up to registrationPollMax so a slow start costs a
+// handful of reads rather than dozens.
+const (
+	registrationPollInterval = 2 * time.Millisecond
+	registrationPollMax      = 16 * time.Millisecond
+)
+
 // CommandLauncher abstracts process execution for the paste supervisor and tests.
 type CommandLauncher interface {
 	Run(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error)
@@ -180,6 +201,11 @@ type Paste struct {
 	// watching clipboard plus Kitty pasting primary). Defaults to 350ms.
 	LeaseDuration time.Duration
 
+	// RegistrationTimeout bounds the wait, after the holders start and before
+	// the chord is injected, for both selections to actually serve the
+	// transcript. Defaults to SelectionRegistrationTimeout.
+	RegistrationTimeout time.Duration
+
 	// RestoreDelay allows the target application to finish consuming in-flight
 	// selection pipes before restoring previous selections.
 	RestoreDelay time.Duration
@@ -194,13 +220,14 @@ func NewPaste(logger *slog.Logger) *Paste {
 		logger = slog.Default()
 	}
 	return &Paste{
-		Logger:           logger,
-		Chord:            "shift+insert",
-		RestoreSelection: true,
-		Clipboard:        false,
-		LeaseDuration:    350 * time.Millisecond,
-		RestoreDelay:     50 * time.Millisecond,
-		Launcher:         RealLauncher{},
+		Logger:              logger,
+		Chord:               "shift+insert",
+		RestoreSelection:    true,
+		Clipboard:           false,
+		LeaseDuration:       350 * time.Millisecond,
+		RestoreDelay:        50 * time.Millisecond,
+		RegistrationTimeout: SelectionRegistrationTimeout,
+		Launcher:            RealLauncher{},
 	}
 }
 
@@ -308,8 +335,23 @@ func (p *Paste) Emit(ctx context.Context, text string) (emitErr error) {
 		return fmt.Errorf("output: failed to start wl-copy --primary: %w", err)
 	}
 
-	// Allow child processes a moment to register Wayland selections before chord injection
-	time.Sleep(20 * time.Millisecond)
+	// Wait until a reader asking for either selection would actually receive the
+	// transcript, rather than sleeping for a guessed interval and hoping the
+	// holders got there first. See SelectionRegistrationTimeout.
+	registrationTimeout := p.RegistrationTimeout
+	if registrationTimeout <= 0 {
+		registrationTimeout = SelectionRegistrationTimeout
+	}
+	registrationStart := time.Now()
+	registrationCtx, cancelRegistration := context.WithTimeout(ctx, registrationTimeout)
+	clipReady, primReady := p.waitForSelections(registrationCtx, text)
+	cancelRegistration()
+	if !clipReady || !primReady {
+		log.Warn("output: selection holders did not serve the transcript before the chord",
+			"clipboard_ready", clipReady,
+			"primary_ready", primReady,
+			"waited_ms", time.Since(registrationStart).Milliseconds())
+	}
 
 	// Synthesize the paste chord into the focused window
 	if _, err := p.Launcher.Run(ctx, nil, "wtype", wtypeArgs...); err != nil {
@@ -338,6 +380,50 @@ func (p *Paste) Emit(ctx context.Context, text string) (emitErr error) {
 	log.Info("output: holders reaped", "errClip", errClip, "errPrim", errPrim)
 
 	return ctx.Err()
+}
+
+// waitForSelections blocks until CLIPBOARD and PRIMARY both serve text, or the
+// context is done, and reports which of the two got there.
+//
+// The selections are polled independently and one that has already answered
+// correctly is not read again, so a dispatch that is not racing anything pays
+// one read per selection. Reading a selection does not take it away from its
+// holder, so the read-back observes what a paste would receive without
+// consuming it; a selection that serves text because some unrelated owner
+// happens to hold the same bytes is also fine, since a reader would get the
+// transcript either way.
+func (p *Paste) waitForSelections(ctx context.Context, text string) (clipReady, primReady bool) {
+	interval := registrationPollInterval
+	for {
+		if !clipReady {
+			clipReady = p.selectionServes(ctx, text, "wl-paste", "-n")
+		}
+		if !primReady {
+			primReady = p.selectionServes(ctx, text, "wl-paste", "-p", "-n")
+		}
+		if (clipReady && primReady) || ctx.Err() != nil {
+			return clipReady, primReady
+		}
+		select {
+		case <-ctx.Done():
+			return clipReady, primReady
+		case <-time.After(interval):
+		}
+		if interval < registrationPollMax {
+			interval *= 2
+		}
+	}
+}
+
+// selectionServes reports whether the named selection currently hands a reader
+// text. wl-paste -n strips the holder's trailing newline, so text that differs
+// only by one still counts as served.
+func (p *Paste) selectionServes(ctx context.Context, text, name string, args ...string) bool {
+	got, err := p.Launcher.Run(ctx, nil, name, args...)
+	if err != nil {
+		return false
+	}
+	return strings.TrimRight(string(got), "\n") == strings.TrimRight(text, "\n")
 }
 
 // CopyOnly copies text directly to the clipboard without synthesizing a paste chord.

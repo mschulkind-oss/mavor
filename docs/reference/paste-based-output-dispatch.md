@@ -1,7 +1,7 @@
 ---
 status: current
-verified: 2026-09-18
-verified_commit: 8b6b929
+verified: 2026-10-15
+verified_commit: 441a839
 covers:
   - internal/output/
   - cmd/mavor/doctor.go
@@ -10,7 +10,9 @@ tags: [output, wayland, paste, clipboard, primary-selection, doctor]
 
 # Paste-based output dispatch and Wayland selection architecture
 
-**Status:** CURRENT as of 2026-09-18, verified against `8b6b929`.
+**Status:** CURRENT as of 2026-10-15, verified against `441a839` plus the
+changes in this landing commit (the registration handshake,
+`SelectionRegistrationTimeout` in `internal/output/paste.go`).
 
 `mavor` delivers completed transcriptions into the focused window either by
 synthesizing keystroke sequences or by injecting a paste chord backed by Wayland
@@ -45,10 +47,26 @@ triggering exactly one redraw in $<15\text{ ms}$.
 **P2. The Timed Lease supervisor eliminates clipboard-manager race conditions.**
 Because Wayland selection transfers are demand-driven and asynchronous, both external clipboard managers (e.g. `cliphist`) and the target window may read selections concurrently. Using `--paste-once` caused single-read race conditions where clipboard managers consumed the selection and terminated the process before the target window could read it. Instead, the Timed Lease supervisor holds persistent foreground selection holders for a deterministic lease window (default 350ms) without `--paste-once`, serving unlimited reads across both buffers, before terminating both child processes and restoring pre-existing user selections.
 
-**P3. User selections are restored without clobbering in-flight transfers.**
-Pre-existing user selections in `CLIPBOARD` and `PRIMARY` are preserved prior to
-paste dispatch. Restoration executes only after the lease window expires and holders are reaped, preventing the race condition where restored contents overwrite
-the transcript before the target window reads it.
+**P3. User selections are restored after the lease, which bounds a reader but is
+not a receipt.** Pre-existing user selections in `CLIPBOARD` and `PRIMARY` are
+captured before paste dispatch and written back once the lease window expires and
+the holders are reaped. The lease is a **time** bound, not evidence that the paste
+was consumed. Wayland selection transfer is demand-driven and asynchronous, so a
+reader scheduled later than the lease reads whatever owns the selection by then —
+the restored previous content. Measured on a real headless Sway: a reader at
+$+50\text{ ms}$ receives the transcript; the same read at $+300\text{ ms}$ past a
+$200\text{ ms}$ lease returns the previous `CLIPBOARD` and `PRIMARY`. Making
+restoration consumption-safe is an open question — see
+[`../design/paste-restoration-safety.md`](../design/paste-restoration-safety.md).
+
+**P4. The chord is only injected once a reader would actually receive the
+transcript.** The holders are separate processes; wl-copy has to be exec'd, link,
+connect and call `set_selection` before it owns anything, and that latency is not
+a property of this program. `Emit` reads both selections back and waits (bounded
+by `SelectionRegistrationTimeout`) rather than sleeping for a guessed interval,
+because injecting the chord first hands the reader whoever owned the selection a
+moment earlier. A registration that never completes is reported and the chord is
+still injected: a slow holder must not cost the user the paste.
 
 ---
 
@@ -80,6 +98,7 @@ sequenceDiagram
 
     M->>M: Capture existing CLIPBOARD & PRIMARY (wl-paste)
     M->>S: Spawn wl-copy --foreground (dual buffers)
+    M->>S: Read both selections back until they serve the transcript
     M->>C: Synthesize paste chord (Shift+Insert via wtype)
     C->>W: Forward keydown/keyup events
     W->>S: Read selection data via pipe (demand-driven)
@@ -111,8 +130,10 @@ applications read `CLIPBOARD` and succeed.
    using `wl-paste`.
 2. Starts two child processes with `--foreground`: one for `CLIPBOARD`
    and one for `PRIMARY` (without `--paste-once` to allow multiple concurrent readers).
-3. Waits 20ms for Wayland compositor registration, then synthesizes the configured
-   `paste_chord` via `wtype`.
+3. Waits until a reader asking for either selection would receive the transcript
+   (bounded by `SelectionRegistrationTimeout`, default 500 ms), then synthesizes
+   the configured `paste_chord` via `wtype`. The wait is a read-back of both
+   selections, not a sleep; see [P4](#principles--invariants).
 4. Awaits the lease window (`LeaseDuration`, default 350ms):
    - Clipboard managers and target applications can read either buffer as needed.
    - If context is cancelled, terminates immediately.
@@ -140,6 +161,32 @@ error, preserving cancellation or any earlier failure. There is no retry loop.
 The existing policy still restores captured values after the lease, without
 checking whether an unrelated application has since changed ownership; it does
 not claim to preserve concurrent selection changes.
+
+### Registration is verified, not slept through
+
+After both holders start, `Emit` polls `wl-paste -n` and `wl-paste -p -n` until
+each selection actually serves the transcript, up to `SelectionRegistrationTimeout`.
+Reading a selection does not take it from its holder, so the read-back observes
+what a paste would receive without consuming it, and a selection that serves the
+same bytes because some unrelated owner still holds them is equally fine — a
+reader would get the transcript either way. A selection that never gets there
+logs `output: selection holders did not serve the transcript before the chord`
+with which selection lagged and how long the wait was, and the chord is injected
+anyway. That warning is the diagnostic: the pre-fix driver could not tell a slow
+holder apart from a reader that read late, because both produce the same visible
+result.
+
+### The lease bounds the reader; it does not observe it
+
+The fixed lease is why the driver cannot tell whether a paste was consumed before
+the restore. `--paste-once` would give that receipt, since a holder exits after
+its first read, and it is safe on `PRIMARY` (no clipboard manager watches it). It
+is not safe on `CLIPBOARD`, where a manager such as cliphist reads every new
+ownership immediately and would consume the single read before the target paste.
+Re-arming the holder does not compose with a watch-based manager either: each
+re-arm is a new ownership event, which triggers another manager read. Options for
+a consumption-safe restore are recorded in
+[`../design/paste-restoration-safety.md`](../design/paste-restoration-safety.md).
 
 #### Focused restoration repair evidence
 
@@ -236,6 +283,7 @@ the single place where numbers and defaults are recorded.
 | Default paste chord | `"shift+insert"` | `internal/config/config.go` (`DefaultPasteChord`) |
 | Default restore selection | `true` | `internal/config/config.go` (`DefaultRestoreSelection`) |
 | Default lease duration | `350ms` | `internal/output/paste.go` (`LeaseDuration`) |
+| Selection registration bound | `500ms` | `internal/output/paste.go` (`SelectionRegistrationTimeout`) |
 | Restore settle delay | `50ms` | `internal/output/paste.go` (`RestoreDelay`) |
 
 
