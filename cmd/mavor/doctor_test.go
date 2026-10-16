@@ -206,7 +206,7 @@ func TestPreviewVerdict(t *testing.T) {
 func TestOutputVerdict(t *testing.T) {
 	defaultCfg := config.Default()
 	typingCfg := config.Default()
-	typingCfg.Output.Driver = "typing"
+	typingCfg.Output.Mode = config.OutputModeTypeOnly
 
 	tests := []struct {
 		name               string
@@ -224,7 +224,7 @@ func TestOutputVerdict(t *testing.T) {
 			cfg:     typingCfg,
 			wtype:   true,
 			wantOK:  true,
-			wantMsg: "typing driver",
+			wantMsg: "typing mode",
 		},
 		{
 			name:    "typing mode missing wtype fails",
@@ -242,7 +242,7 @@ func TestOutputVerdict(t *testing.T) {
 			pasteOnceSupported: true,
 			kittyBinding:       "paste_from_selection",
 			wantOK:             true,
-			wantMsg:            "paste driver (shift+insert, dual-buffer, restore: true) — Kitty: paste_from_selection",
+			wantMsg:            "paste mode paste-leave-transcript (shift+insert, dual-buffer) — Kitty: paste_from_selection",
 		},
 		{
 			name:               "paste mode missing wl-paste fails",
@@ -262,7 +262,7 @@ func TestOutputVerdict(t *testing.T) {
 			wlPaste:            true,
 			pasteOnceSupported: true,
 			wantOK:             false,
-			wantMsg:            "paste driver requires wtype",
+			wantMsg:            "paste modes require wtype",
 		},
 		{
 			name:               "paste mode wl-copy missing paste-once fails",

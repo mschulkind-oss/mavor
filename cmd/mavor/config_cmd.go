@@ -99,31 +99,31 @@ enabled = %t
 verbose = %t
 
 [output]
-# Dispatch strategy: "paste" (default), "typing", or "clipboard".
-# "paste" places text on selection buffers and synthesizes a paste chord,
-# rendering long dictations in a single frame via terminal bracketed paste.
-# "typing" sends keystrokes into the focused window (in-process or via wtype).
-# "clipboard" always copies to CLIPBOARD only; paste manually. No injected keys.
-# driver = %q
+# What happens to a finished transcript, and to what was on the clipboard
+# before it. One key, six outcomes:
+#   "paste-leave-transcript" (default) — paste it in; the transcript stays
+#                        on the clipboard, replacing what was there, so a
+#                        paste that landed wrong is one Ctrl+V from recovery
+#   "paste-restore-previous" — paste it in; your previous clipboard and
+#                        primary selections are put back afterward. Timed:
+#                        a slow application can still read the old text
+#   "paste-clear"        — paste it in; both selections are then cleared.
+#                        Timed like restore, but a slow application pastes
+#                        nothing rather than the previous text
+#   "type-only"          — type keystrokes; the clipboard is never touched
+#   "type-leave-transcript" — type keystrokes; the transcript also stays on
+#                        the clipboard, replacing what was there
+#   "copy-only"          — no typing or pasting; the transcript is copied
+#                        and you paste it manually
+mode = %q
+
 # Copy-only backend: "wayland" (wl-copy, default) or "x11" (xclip/XWayland).
-# x11 requires driver="clipboard", DISPLAY and X11 authorization.
+# x11 requires mode="copy-only", DISPLAY and X11 authorization.
 clipboard_backend = %q
 
-# Keystroke chord synthesized to trigger a paste when driver is "paste".
+# Keystroke chord synthesized to trigger a paste in the paste modes.
 # paste_chord = %q
-
-# paste_chord, restore_selection, and copy_command apply only to "paste".
-# Ignored by "clipboard"; typing_delay_ms is also unused in that mode.
-# Automatically restore previous clipboard and primary selections after paste.
-# restore_selection = %t
-# copy_command = []  # paste-only helper override.
-
-# Additional copying in paste/typing modes, replacing whatever was there.
-# Clipboard mode always copies, even with this false. Off by default: it
-# makes a keystroke that landed in the wrong window recoverable, but it
-# costs you the clipboard on every utterance. `+"`mavor history --copy`"+` recovers
-# a transcript on demand without it.
-clipboard = %t
+# copy_command = []  # paste-modes helper override; ignored by copy-only.
 
 # Pause wtype leaves between keystrokes, in whole milliseconds. Unset is
 # the FASTEST setting — measured at 4.14 ms/char with no delay, 5.17 with
@@ -175,11 +175,9 @@ preview_width = %v
 		d.Ducking.OSC.TimeoutMS,
 		strconv.FormatFloat(float64(d.Vocabulary.Boost), 'f', -1, 32),
 		d.Logging.Verbose,
-		d.Output.Driver,
+		d.Output.Mode,
 		d.Output.ClipboardBackend,
 		d.Output.PasteChord,
-		d.Output.RestoreSelection,
-		d.Output.Clipboard,
 		d.Overlay.TopMargin,
 		d.Overlay.PreviewWidth,
 		d.Advanced.FinalMode,

@@ -84,9 +84,8 @@ func TestTemplateExamplesStateTheDefaults(t *testing.T) {
 		`placement = "auto"`,
 		`gpu = "auto"`,
 		`chunking = "auto"`,
-		`driver = "paste"`,
+		`mode = "paste-leave-transcript"`,
 		`paste_chord = "shift+insert"`,
-		"restore_selection = true",
 		"models = " + quote(d.Paths.Models),
 		"log    = " + quote(d.Paths.Log),
 		"socket = " + quote(d.Paths.Socket),
@@ -99,21 +98,21 @@ func TestTemplateExamplesStateTheDefaults(t *testing.T) {
 
 func quote(s string) string { return `"` + s + `"` }
 
-func TestScaffoldExplainsClipboardMode(t *testing.T) {
+func TestScaffoldExplainsOutputModes(t *testing.T) {
 	text := defaultConfigTemplate()
-	for _, want := range []string{"\"clipboard\"", "paste manually", "always copies", "Ignored", "copy_command", "clipboard_backend", "XWayland", "X11 authorization"} {
+	for _, want := range []string{"paste-leave-transcript", "paste-restore-previous", "paste-clear", "type-only", "type-leave-transcript", "copy-only", "paste it manually", "copy_command", "clipboard_backend", "XWayland", "X11 authorization"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("scaffold missing %q", want)
 		}
 	}
 }
 
-func TestConfigShowClipboard(t *testing.T) {
+func TestConfigShowCopyOnly(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	if err := os.MkdirAll(filepath.Dir(config.Path()), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(config.Path(), []byte("[output]\ndriver = \"clipboard\"\nclipboard_backend = \"x11\"\nclipboard = false\n"), 0600); err != nil {
+	if err := os.WriteFile(config.Path(), []byte("[output]\nmode = \"copy-only\"\nclipboard_backend = \"x11\"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	capture, err := os.CreateTemp(t.TempDir(), "stdout")
@@ -131,7 +130,7 @@ func TestConfigShowClipboard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(body), "driver = 'clipboard'") || !strings.Contains(string(body), "clipboard = false") || !strings.Contains(string(body), "clipboard_backend = 'x11'") {
+	if !strings.Contains(string(body), "mode = 'copy-only'") || !strings.Contains(string(body), "clipboard_backend = 'x11'") {
 		t.Fatalf("show = %s", body)
 	}
 	path := filepath.Join(t.TempDir(), "shown.toml")
@@ -139,7 +138,7 @@ func TestConfigShowClipboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	shown, err := config.Load(path)
-	if err != nil || shown.Output.Driver != "clipboard" || shown.Output.ClipboardBackend != "x11" {
+	if err != nil || shown.Output.Mode != "copy-only" || shown.Output.ClipboardBackend != "x11" {
 		t.Fatalf("shown config: %+v %v", shown.Output, err)
 	}
 }

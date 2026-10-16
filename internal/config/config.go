@@ -49,9 +49,8 @@ const (
 	DefaultOSCTimeoutMS = 200
 	DefaultBoost        = 1.5
 
-	DefaultOutputDriver     = "paste"
-	DefaultPasteChord       = "shift+insert"
-	DefaultRestoreSelection = true
+	DefaultOutputMode = OutputModePasteLeaveTranscript
+	DefaultPasteChord = "shift+insert"
 
 	DefaultChunking = "auto"
 )
@@ -93,29 +92,64 @@ type Logging struct {
 	Verbose bool `toml:"verbose"`
 }
 
+// The six output modes. Each names one outcome for a finished transcript:
+// how it is delivered, and what is on the selections afterward. The names
+// state their object — which text is left, restored, or cleared — because
+// the bare word "clipboard" named a policy about the clipboard without
+// saying which text it acted on, and silently changed meaning when the
+// paste driver made the copy the transport. See
+// docs/design/output-modes.md.
+const (
+	// OutputModePasteLeaveTranscript pastes and leaves the transcript on
+	// CLIPBOARD for re-pasting. This is the default: it performs no second
+	// timed write, so a late reader still gets the transcript.
+	OutputModePasteLeaveTranscript = "paste-leave-transcript"
+	// OutputModePasteRestorePrevious pastes and writes the previous
+	// CLIPBOARD and PRIMARY contents back afterward. Timed, and therefore
+	// imperfect: a reader slower than the lease gets the previous text.
+	OutputModePasteRestorePrevious = "paste-restore-previous"
+	// OutputModePasteClear pastes and clears both selections afterward.
+	// Timed like restore, but it fails toward nothing rather than toward
+	// the previous text.
+	OutputModePasteClear = "paste-clear"
+	// OutputModeTypeOnly types keystrokes and never touches the clipboard.
+	OutputModeTypeOnly = "type-only"
+	// OutputModeTypeLeaveTranscript types keystrokes and leaves the
+	// transcript on CLIPBOARD afterward.
+	OutputModeTypeLeaveTranscript = "type-leave-transcript"
+	// OutputModeCopyOnly copies the transcript to CLIPBOARD and delivers
+	// nothing; the user pastes manually.
+	OutputModeCopyOnly = "copy-only"
+)
+
+// OutputModes lists every valid mode, in scaffold order.
+var OutputModes = []string{
+	OutputModePasteLeaveTranscript,
+	OutputModePasteRestorePrevious,
+	OutputModePasteClear,
+	OutputModeTypeOnly,
+	OutputModeTypeLeaveTranscript,
+	OutputModeCopyOnly,
+}
+
 // Output configures what mavor does with a finished transcript.
 type Output struct {
-	// Driver is "paste" (default), "typing", or "clipboard" (manual paste).
-	// "typing" types characters into the focused window (in-process or via wtype).
-	// "paste" copies text to selection buffers and synthesizes a paste chord.
-	Driver string `toml:"driver"`
+	// Mode is one of the six output modes above. It is the only key that
+	// decides the transcript's fate; the remaining keys tune how a mode is
+	// carried out.
+	Mode string `toml:"mode"`
 
-	// ClipboardBackend selects wayland (default) or x11 for copy-only output.
-	// x11 is explicit and invalid for injection drivers.
+	// ClipboardBackend selects wayland (default) or x11 for copy-only
+	// output. x11 is explicit and invalid for the delivery modes.
 	ClipboardBackend string `toml:"clipboard_backend"`
 
-	// PasteChord is the keystroke chord synthesized to trigger a paste when
-	// Driver is "paste". Defaults to "shift+insert".
+	// PasteChord is the keystroke chord synthesized to trigger a paste in
+	// the paste modes. Defaults to "shift+insert".
 	PasteChord string `toml:"paste_chord"`
 
-	// CopyCommand overrides the paste driver copy utility. Ignored by clipboard.
-	// Empty means default dual-buffer
-	// wl-copy logic.
+	// CopyCommand overrides the paste modes' copy utility. Ignored by
+	// copy-only. Empty means default dual-buffer wl-copy logic.
 	CopyCommand []string `toml:"copy_command"`
-
-	// RestoreSelection restores previous clipboard and primary selections after
-	// paste dispatch. Defaults to true.
-	RestoreSelection bool `toml:"restore_selection"`
 
 	// TypingDelayMS is the pause wtype leaves between keystrokes, in
 	// milliseconds. UNSET by default, and that is the fast setting.
@@ -143,37 +177,62 @@ type Output struct {
 	// synthetic keystrokes drops more of them the faster they arrive, and
 	// this is the knob that slows typing down for one.
 	TypingDelayMS *int `toml:"typing_delay_ms"`
-
-	// Clipboard enables additional copying in injection modes. The clipboard
-	// driver always copies, regardless of this flag. It replaces whatever was on the
-	// clipboard before.
-	//
-	// Off by default. It makes a keystroke that lands in the wrong window
-	// recoverable, which is a real benefit, but it costs the user their
-	// clipboard on every utterance without asking — and someone who
-	// dictates into an editor while holding a URL to paste loses the URL.
-	// A recovery path that destroys unrelated state is opt-in; `mavor
-	// history --copy` recovers a transcript on demand without it.
-	Clipboard bool `toml:"clipboard"`
 }
 
-// ValidateDriver rejects misspellings rather than silently enabling injection.
-func (o Output) ValidateDriver() error {
-	switch o.Driver {
-	case "", "paste", "typing", "clipboard":
+// PasteDelivered reports whether the mode delivers by paste chord.
+func (o Output) PasteDelivered() bool {
+	switch o.Mode {
+	case OutputModePasteLeaveTranscript, OutputModePasteRestorePrevious, OutputModePasteClear:
+		return true
+	}
+	return false
+}
+
+// LeavesTranscript reports whether the transcript remains on CLIPBOARD
+// after dispatch.
+func (o Output) LeavesTranscript() bool {
+	switch o.Mode {
+	case OutputModePasteLeaveTranscript, OutputModeTypeLeaveTranscript, OutputModeCopyOnly:
+		return true
+	}
+	return false
+}
+
+// RestoresPrevious reports whether the mode writes the previous selections
+// back after dispatch.
+func (o Output) RestoresPrevious() bool {
+	return o.Mode == OutputModePasteRestorePrevious
+}
+
+// ClearsSelections reports whether the mode clears both selections after
+// dispatch.
+func (o Output) ClearsSelections() bool {
+	return o.Mode == OutputModePasteClear
+}
+
+// CopyOnly reports whether the mode delivers nothing and leaves the
+// transcript for manual pasting.
+func (o Output) CopyOnly() bool {
+	return o.Mode == OutputModeCopyOnly
+}
+
+// ValidateMode rejects misspellings rather than silently enabling injection.
+func (o Output) ValidateMode() error {
+	switch o.Mode {
+	case "", OutputModePasteLeaveTranscript, OutputModePasteRestorePrevious, OutputModePasteClear, OutputModeTypeOnly, OutputModeTypeLeaveTranscript, OutputModeCopyOnly:
 		switch o.ClipboardBackend {
 		case "", "wayland":
 			return nil
 		case "x11":
-			if o.Driver == "clipboard" {
+			if o.CopyOnly() {
 				return nil
 			}
-			return fmt.Errorf("config: output.clipboard_backend x11 requires output.driver clipboard")
+			return fmt.Errorf("config: output.clipboard_backend x11 requires output.mode copy-only")
 		default:
 			return fmt.Errorf("config: unknown output.clipboard_backend %q (want wayland or x11)", o.ClipboardBackend)
 		}
 	default:
-		return fmt.Errorf("config: unknown output.driver %q (want paste, typing, or clipboard)", o.Driver)
+		return fmt.Errorf("config: unknown output.mode %q (want %s)", o.Mode, strings.Join(OutputModes, ", "))
 	}
 }
 
@@ -386,16 +445,12 @@ func Default() Config {
 			Verbose: false,
 		},
 		Output: Output{
-			Driver:           DefaultOutputDriver,
+			Mode:             DefaultOutputMode,
 			ClipboardBackend: "wayland",
 			PasteChord:       DefaultPasteChord,
-			RestoreSelection: DefaultRestoreSelection,
 			// nil: pass no -d, which is the fastest wtype types. See the
 			// measurements on Output.TypingDelayMS.
 			TypingDelayMS: nil,
-			// Off: see the field's own comment. Typing is the product;
-			// clobbering the clipboard is a side effect nobody asked for.
-			Clipboard: false,
 		},
 		Overlay: Overlay{
 			TopMargin:    DefaultTopMargin,
@@ -474,8 +529,8 @@ func (c *Config) Resolve() {
 		c.Overlay.TopMargin = 0
 	}
 
-	if c.Output.Driver == "" {
-		c.Output.Driver = DefaultOutputDriver
+	if c.Output.Mode == "" {
+		c.Output.Mode = DefaultOutputMode
 	}
 	if c.Output.ClipboardBackend == "" {
 		c.Output.ClipboardBackend = "wayland"
@@ -625,7 +680,7 @@ func LoadFile(path string) (File, error) {
 	if _, err := models.ParseFinalMode(out.Config.Advanced.FinalMode); err != nil {
 		return out, fmt.Errorf("config: advanced.final_mode: %w", err)
 	}
-	if err := out.Config.Output.ValidateDriver(); err != nil {
+	if err := out.Config.Output.ValidateMode(); err != nil {
 		return out, err
 	}
 	return out, nil

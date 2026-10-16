@@ -147,7 +147,7 @@ func runSetup(force bool) error {
 		fmt.Println("✅ All required system runtime tools for the configured output driver are available")
 	}
 
-	if cfg.Output.Driver == "clipboard" && cfg.Output.ClipboardBackend == "x11" {
+	if cfg.Output.CopyOnly() && cfg.Output.ClipboardBackend == "x11" {
 		if ok, msg := checkX11Clipboard(); !ok {
 			return fmt.Errorf("setup output: %s", msg)
 		}
@@ -265,19 +265,19 @@ func getMissingTools(cfg config.Config) []string {
 	if _, err := exec.LookPath("parec"); err != nil {
 		missing = append(missing, "parec")
 	}
-	if cfg.Output.Driver != "clipboard" {
+	if !cfg.Output.CopyOnly() {
 		if _, err := exec.LookPath("wtype"); err != nil {
 			missing = append(missing, "wtype")
 		}
 	}
 	copyTool := "wl-copy"
-	if cfg.Output.Driver == "clipboard" && cfg.Output.ClipboardBackend == "x11" {
+	if cfg.Output.CopyOnly() && cfg.Output.ClipboardBackend == "x11" {
 		copyTool = "xclip"
 	}
 	if _, err := exec.LookPath(copyTool); err != nil {
 		missing = append(missing, copyTool)
 	}
-	if cfg.Output.Driver == "paste" {
+	if cfg.Output.PasteDelivered() {
 		if _, err := exec.LookPath("wl-paste"); err != nil {
 			missing = append(missing, "wl-paste")
 		}
@@ -508,7 +508,7 @@ func checkWtype() (bool, string) {
 	if err != nil {
 		return false, err.Error()
 	}
-	if cfg.Output.Driver == "clipboard" {
+	if cfg.Output.CopyOnly() {
 		return true, "copy-only output: virtual keyboard and wtype are not required"
 	}
 	if p, err := exec.LookPath("wtype"); err == nil {
@@ -522,12 +522,12 @@ func checkClipboard() (bool, string) {
 	if err != nil {
 		return false, err.Error()
 	}
-	if cfg.Output.Driver == "clipboard" {
+	if cfg.Output.CopyOnly() {
 		if cfg.Output.ClipboardBackend == "x11" {
 			return checkX11Clipboard()
 		}
 		if _, err := exec.LookPath("wl-copy"); err != nil {
-			return false, "clipboard driver requires wl-copy (install wl-clipboard)"
+			return false, "copy-only mode requires wl-copy (install wl-clipboard)"
 		}
 		return true, "wl-copy installed; helper availability does not verify a successful clipboard transfer"
 	}
@@ -550,7 +550,7 @@ func checkOutput() (bool, string) {
 	if err != nil {
 		return false, err.Error()
 	}
-	if cfg.Output.Driver == "clipboard" {
+	if cfg.Output.CopyOnly() {
 		if cfg.Output.ClipboardBackend == "x11" {
 			return checkX11Clipboard()
 		}
@@ -572,29 +572,29 @@ func checkOutput() (bool, string) {
 }
 
 func outputVerdict(cfg config.Config, wtypeFound, copyFound, pasteFound bool, pasteOnceSupported bool, kittyBinding string) (bool, string) {
-	if err := cfg.Output.ValidateDriver(); err != nil {
+	if err := cfg.Output.ValidateMode(); err != nil {
 		return false, err.Error()
 	}
-	if cfg.Output.Driver == "clipboard" {
+	if cfg.Output.CopyOnly() {
 		if cfg.Output.ClipboardBackend == "x11" {
 			return checkX11Clipboard()
 		}
 		if !copyFound {
-			return false, "clipboard driver requires wl-copy (install wl-clipboard)"
+			return false, "copy-only mode requires wl-copy (install wl-clipboard)"
 		}
 		return true, "Copy-only output; paste manually. Virtual keyboard and wtype are not required. Helper availability does not verify a successful clipboard transfer."
 	}
-	if cfg.Output.Driver == "paste" {
+	if cfg.Output.PasteDelivered() {
 		if !copyFound || !pasteFound {
-			return false, "paste driver requires wl-copy and wl-paste (wl-clipboard tools missing)"
+			return false, "paste modes require wl-copy and wl-paste (wl-clipboard tools missing)"
 		}
 		if !wtypeFound {
-			return false, "paste driver requires wtype to synthesize paste chord (wtype not found)"
+			return false, "paste modes require wtype to synthesize paste chord (wtype not found)"
 		}
 		if !pasteOnceSupported {
 			return false, "wl-copy does not support --paste-once (upgrade wl-clipboard)"
 		}
-		msg := fmt.Sprintf("paste driver (%s, dual-buffer, restore: %t)", cfg.Output.PasteChord, cfg.Output.RestoreSelection)
+		msg := fmt.Sprintf("paste mode %s (%s, dual-buffer)", cfg.Output.Mode, cfg.Output.PasteChord)
 		if kittyBinding != "" {
 			msg += " — Kitty: " + kittyBinding
 		}
@@ -604,7 +604,7 @@ func outputVerdict(cfg config.Config, wtypeFound, copyFound, pasteFound bool, pa
 	if !wtypeFound {
 		return false, "virtual typing requires wtype (or compositor with zwp_virtual_keyboard_v1)"
 	}
-	return true, "typing driver (in-process zwp_virtual_keyboard_v1 with wtype fallback)"
+	return true, "typing mode (in-process zwp_virtual_keyboard_v1 with wtype fallback)"
 }
 
 func checkPasteOnceSupport(helpText string) bool {
@@ -718,8 +718,18 @@ func checkConfig() (bool, string) {
 			f.Path, len(f.UnknownKeys), strings.Join(f.UnknownKeys, ", "))
 	}
 	if len(f.UnknownKeys) > 0 {
-		return false, fmt.Sprintf("%s has %d key(s) mavor does not know, which are ignored: %s (`mavor config init --force` scaffolds the current file)",
+		msg := fmt.Sprintf("%s has %d key(s) mavor does not know, which are ignored: %s (`mavor config init --force` scaffolds the current file)",
 			f.Path, len(f.UnknownKeys), strings.Join(f.UnknownKeys, ", "))
+		// The output keys deleted in favor of output.mode get named
+		// replacements, so the fix is stated where the problem is reported.
+		for _, legacy := range []string{"output.driver", "output.clipboard", "output.restore_selection"} {
+			for _, k := range f.UnknownKeys {
+				if k == legacy {
+					msg += fmt.Sprintf("; %s was replaced by output.mode (one of %s)", legacy, strings.Join(config.OutputModes, ", "))
+				}
+			}
+		}
+		return false, msg
 	}
 	return true, fmt.Sprintf("valid config (model=%s, preview=%s)", f.Model, previewDescription(f.Config))
 }

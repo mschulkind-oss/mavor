@@ -258,6 +258,13 @@ func (p *Paste) Emit(ctx context.Context, text string) (emitErr error) {
 		oldPrim, primErr = p.Launcher.Run(ctx, nil, "wl-paste", "-p", "-n")
 	}
 
+	// Taken over means a newer external copy replaced a selection while the
+	// transcript was being dispatched. It is recorded before the holders
+	// are killed — afterward a read fails for lack of an owner and takeover
+	// is indistinguishable from vacancy — and the deferred cleanup consults
+	// it: the user's newest act wins over any pending write of ours.
+	var clipTakenOver, primTakenOver bool
+
 	restoreDelay := p.RestoreDelay
 	if restoreDelay <= 0 {
 		restoreDelay = 50 * time.Millisecond
@@ -295,12 +302,24 @@ func (p *Paste) Emit(ctx context.Context, text string) (emitErr error) {
 			write(selection, data, args...)
 		}
 		if p.Clipboard {
-			write("CLIPBOARD", []byte(text), "--type", "text/plain;charset=utf-8")
+			if clipTakenOver {
+				log.Info("output: leaving the transcript skipped; CLIPBOARD was taken over by a newer copy")
+			} else {
+				write("CLIPBOARD", []byte(text), "--type", "text/plain;charset=utf-8")
+			}
 		} else if p.RestoreSelection {
-			restore("CLIPBOARD", oldClip, clipErr)
+			if clipTakenOver {
+				log.Info("output: CLIPBOARD restore canceled by a newer copy")
+			} else {
+				restore("CLIPBOARD", oldClip, clipErr)
+			}
 		}
 		if p.RestoreSelection {
-			restore("PRIMARY", oldPrim, primErr, "--primary")
+			if primTakenOver {
+				log.Info("output: PRIMARY restore canceled by a newer copy")
+			} else {
+				restore("PRIMARY", oldPrim, primErr, "--primary")
+			}
 		}
 	}()
 
@@ -373,6 +392,13 @@ func (p *Paste) Emit(ctx context.Context, text string) (emitErr error) {
 		log.Warn("output: context cancelled during paste lease")
 	}
 
+	if p.Clipboard || p.RestoreSelection {
+		clipTakenOver = p.selectionTakenOver(ctx, text, "wl-paste", "-n")
+	}
+	if p.RestoreSelection {
+		primTakenOver = p.selectionTakenOver(ctx, text, "wl-paste", "-p", "-n")
+	}
+
 	_ = cmdClip.Kill()
 	_ = cmdPrim.Kill()
 	errClip := cmdClip.Wait()
@@ -413,6 +439,19 @@ func (p *Paste) waitForSelections(ctx context.Context, text string) (clipReady, 
 			interval *= 2
 		}
 	}
+}
+
+// selectionTakenOver reports whether the named selection now serves
+// something other than the transcript: a newer external copy has taken it
+// over, and mavor's pending write for it must be canceled. A read error is
+// no evidence — the holder may simply be gone — so cleanup proceeds as
+// before rather than treating vacancy as takeover.
+func (p *Paste) selectionTakenOver(ctx context.Context, text, name string, args ...string) bool {
+	got, err := p.Launcher.Run(ctx, nil, name, args...)
+	if err != nil {
+		return false
+	}
+	return strings.TrimRight(string(got), "\n") != strings.TrimRight(text, "\n")
 }
 
 // selectionServes reports whether the named selection currently hands a reader

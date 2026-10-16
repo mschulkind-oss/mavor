@@ -47,14 +47,11 @@ func TestDefaultsAreTheDocumentedOnes(t *testing.T) {
 	if d.Overlay.TopMargin != 8 {
 		t.Errorf("Overlay.TopMargin = %d, want 8", d.Overlay.TopMargin)
 	}
-	if d.Output.Driver != "paste" {
-		t.Errorf("Output.Driver = %q, want paste", d.Output.Driver)
+	if d.Output.Mode != "paste-leave-transcript" {
+		t.Errorf("Output.Mode = %q, want paste-leave-transcript", d.Output.Mode)
 	}
 	if d.Output.PasteChord != "shift+insert" {
 		t.Errorf("Output.PasteChord = %q, want shift+insert", d.Output.PasteChord)
-	}
-	if !d.Output.RestoreSelection {
-		t.Error("Output.RestoreSelection = false, want true")
 	}
 	if d.Advanced.Placement != "auto" || d.Advanced.GPU != "auto" {
 		t.Errorf("Advanced placement/gpu = %q/%q, want auto/auto", d.Advanced.Placement, d.Advanced.GPU)
@@ -495,33 +492,63 @@ func TestGPUOffIgnoresCaseAndSpacing(t *testing.T) {
 	}
 }
 
+func TestOutputModes(t *testing.T) {
+	tests := []struct {
+		mode                              string
+		paste, leaves, restores, copyOnly bool
+	}{
+		{OutputModePasteLeaveTranscript, true, true, false, false},
+		{OutputModePasteRestorePrevious, true, false, true, false},
+		{OutputModePasteClear, true, false, false, false},
+		{OutputModeTypeOnly, false, false, false, false},
+		{OutputModeTypeLeaveTranscript, false, true, false, false},
+		{OutputModeCopyOnly, false, true, false, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.mode, func(t *testing.T) {
+			cfg, err := Load(writeConfig(t, "[output]\nmode = \""+tc.mode+"\"\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Output.Mode != tc.mode {
+				t.Fatalf("Mode = %q, want %q", cfg.Output.Mode, tc.mode)
+			}
+			if cfg.Output.PasteDelivered() != tc.paste || cfg.Output.LeavesTranscript() != tc.leaves || cfg.Output.RestoresPrevious() != tc.restores || cfg.Output.CopyOnly() != tc.copyOnly {
+				t.Errorf("mode %q: paste=%v leaves=%v restores=%v copyOnly=%v", tc.mode, cfg.Output.PasteDelivered(), cfg.Output.LeavesTranscript(), cfg.Output.RestoresPrevious(), cfg.Output.CopyOnly())
+			}
+		})
+	}
+	if got := Default().Output.Mode; got != OutputModePasteLeaveTranscript {
+		t.Errorf("default mode = %q, want %q", got, OutputModePasteLeaveTranscript)
+	}
+	cfg, err := Load(writeConfig(t, "[output]\n"))
+	if err != nil || cfg.Output.Mode != OutputModePasteLeaveTranscript {
+		t.Errorf("omitted mode: %+v, %v", cfg.Output, err)
+	}
+	if _, err := Load(writeConfig(t, "[output]\nmode = \"paste\"\n")); err == nil || !strings.Contains(err.Error(), "paste-leave-transcript") {
+		t.Errorf("unknown mode error = %v, want it to name the valid modes", err)
+	}
+}
+
 func TestOutputPasteConfiguration(t *testing.T) {
 	body := `
 [output]
-driver = "paste"
+mode = "paste-restore-previous"
 paste_chord = "ctrl+shift+v"
 copy_command = ["wl-copy", "--type", "text/plain"]
-restore_selection = false
-clipboard = true
 `
 	cfg, err := Load(writeConfig(t, body))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Output.Driver != "paste" {
-		t.Errorf("Driver = %q, want paste", cfg.Output.Driver)
+	if cfg.Output.Mode != "paste-restore-previous" {
+		t.Errorf("Mode = %q, want paste-restore-previous", cfg.Output.Mode)
 	}
 	if cfg.Output.PasteChord != "ctrl+shift+v" {
 		t.Errorf("PasteChord = %q, want ctrl+shift+v", cfg.Output.PasteChord)
 	}
 	if len(cfg.Output.CopyCommand) != 3 || cfg.Output.CopyCommand[0] != "wl-copy" {
 		t.Errorf("CopyCommand = %v, want ['wl-copy', '--type', 'text/plain']", cfg.Output.CopyCommand)
-	}
-	if cfg.Output.RestoreSelection {
-		t.Error("RestoreSelection = true, want false")
-	}
-	if !cfg.Output.Clipboard {
-		t.Error("Clipboard = false, want true")
 	}
 }
 
@@ -577,9 +604,9 @@ func TestSilenceFilterConfig(t *testing.T) {
 	}
 }
 
-func TestClipboardDriverRoundTripAndValidation(t *testing.T) {
-	cfg, err := Load(writeConfig(t, "[output]\ndriver = \"clipboard\"\n"))
-	if err != nil || cfg.Output.Driver != "clipboard" || cfg.Output.Clipboard {
+func TestCopyOnlyRoundTripAndValidation(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "[output]\nmode = \"copy-only\"\n"))
+	if err != nil || cfg.Output.Mode != "copy-only" || !cfg.Output.CopyOnly() {
 		t.Fatalf("config = %+v, error = %v", cfg.Output, err)
 	}
 	body, err := toml.Marshal(cfg)
@@ -590,8 +617,16 @@ func TestClipboardDriverRoundTripAndValidation(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(cfg, again) {
 		t.Fatalf("roundtrip failed: %v", err)
 	}
-	if _, err := Load(writeConfig(t, "[output]\ndriver = \"clipbaord\"\n")); err == nil {
-		t.Fatal("unknown driver accepted")
+	if _, err := Load(writeConfig(t, "[output]\nmode = \"clipbaord\"\n")); err == nil {
+		t.Fatal("unknown mode accepted")
+	}
+	// The deleted keys are unknown keys now, not aliases.
+	f, err := LoadFile(writeConfig(t, "[output]\ndriver = \"paste\"\nclipboard = true\nrestore_selection = false\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.UnknownKeys) != 3 {
+		t.Errorf("legacy keys: unknown = %v, want all three reported", f.UnknownKeys)
 	}
 }
 
@@ -600,7 +635,7 @@ func TestClipboardBackend(t *testing.T) {
 		t.Fatal("default changed")
 	}
 	for _, backend := range []string{"wayland", "x11"} {
-		cfg, err := Load(writeConfig(t, "[output]\ndriver = \"clipboard\"\nclipboard_backend = \""+backend+"\"\n"))
+		cfg, err := Load(writeConfig(t, "[output]\nmode = \"copy-only\"\nclipboard_backend = \""+backend+"\"\n"))
 		if err != nil || cfg.Output.ClipboardBackend != backend {
 			t.Fatalf("backend %s: %+v %v", backend, cfg.Output, err)
 		}
@@ -613,7 +648,7 @@ func TestClipboardBackend(t *testing.T) {
 			t.Fatalf("roundtrip %s: %v", backend, err)
 		}
 	}
-	for _, body := range []string{"driver = \"clipboard\"\nclipboard_backend = \"typo\"", "driver = \"paste\"\nclipboard_backend = \"x11\"", "driver = \"typing\"\nclipboard_backend = \"x11\""} {
+	for _, body := range []string{"mode = \"copy-only\"\nclipboard_backend = \"typo\"", "mode = \"paste-leave-transcript\"\nclipboard_backend = \"x11\"", "mode = \"type-only\"\nclipboard_backend = \"x11\""} {
 		if _, err := Load(writeConfig(t, "[output]\n"+body)); err == nil {
 			t.Fatalf("accepted %s", body)
 		}

@@ -363,15 +363,16 @@ func globSorted(pattern string) []string {
 	return matches
 }
 
-// selectOutput keeps clipboard selection ahead of any keyboard constructor.
+// selectOutput keeps copy-only selection ahead of any keyboard constructor.
 func selectOutput(cfg config.Output, logger *slog.Logger) (output.Dispatcher, func() error, error) {
-	if err := cfg.ValidateDriver(); err != nil {
+	if err := cfg.ValidateMode(); err != nil {
 		return nil, nil, err
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	if cfg.Driver == "clipboard" {
+	logger.Info("output: mode selected", "mode", cfg.Mode)
+	if cfg.CopyOnly() {
 		logger.Info("output: copy-only; paste manually", "clipboard_backend", cfg.ClipboardBackend)
 		if cfg.ClipboardBackend == "x11" {
 			c := output.NewX11Clipboard()
@@ -379,20 +380,20 @@ func selectOutput(cfg config.Output, logger *slog.Logger) (output.Dispatcher, fu
 		}
 		return output.NewClipboard(), nil, nil
 	}
-	if cfg.Driver == "paste" || cfg.Driver == "" {
-		logger.Info("output: using paste dispatcher", "chord", cfg.PasteChord, "restore_selection", cfg.RestoreSelection)
+	if cfg.PasteDelivered() {
+		logger.Info("output: using paste dispatcher", "chord", cfg.PasteChord, "mode", cfg.Mode)
 		p := output.NewPaste(logger)
 		p.Chord, p.CopyCommand = cfg.PasteChord, cfg.CopyCommand
-		p.RestoreSelection, p.Clipboard = cfg.RestoreSelection, cfg.Clipboard
+		p.RestoreSelection, p.Clipboard = cfg.RestoresPrevious(), cfg.LeavesTranscript()
 		return p, nil, nil
 	}
 	if native, err := output.NewNative(logger); err == nil {
-		native.Clipboard = cfg.Clipboard
+		native.Clipboard = cfg.LeavesTranscript()
 		return native, native.Close, nil
 	} else {
 		logger.Warn("output: falling back to wtype", "err", err)
 	}
 	w := output.NewWayland()
-	w.Logger, w.Clipboard, w.TypingDelayMS = logger, cfg.Clipboard, cfg.TypingDelayMS
+	w.Logger, w.Clipboard, w.TypingDelayMS = logger, cfg.LeavesTranscript(), cfg.TypingDelayMS
 	return w, nil, nil
 }

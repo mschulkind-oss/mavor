@@ -159,6 +159,12 @@ type mockLauncher struct {
 	wtypeSawClipServed bool
 	wtypeSawPrimServed bool
 
+	// External copies landing mid-dispatch: when the chord is injected,
+	// these replace what the corresponding selection serves, as a user's
+	// own wl-copy would.
+	externalClip []byte
+	externalPrim []byte
+
 	// ManagedCmds returned for Start calls
 	clipCmd *mockCmd
 	primCmd *mockCmd
@@ -188,6 +194,12 @@ func (m *mockLauncher) Run(_ context.Context, stdin []byte, name string, args ..
 		m.wtypeRan = true
 		m.wtypeSawClipServed = m.servedClip != nil && m.clipReads > m.registerAfterClip
 		m.wtypeSawPrimServed = m.servedPrim != nil && m.primReads > m.registerAfterPrim
+		if m.externalClip != nil {
+			m.servedClip = m.externalClip
+		}
+		if m.externalPrim != nil {
+			m.servedPrim = m.externalPrim
+		}
 	}
 
 	if served, ok := m.servedSelection(name, args); ok {
@@ -355,6 +367,64 @@ func TestPasteEmitFallbackTimeout(t *testing.T) {
 	}
 	if !l.primCmd.isKilled() {
 		t.Error("primCmd was not killed on fallback timeout")
+	}
+}
+
+func TestPasteExternalCopyCancelsRestore(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		externalClip bool
+	}{
+		{"clipboard taken over", true},
+		{"primary taken over", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NewPaste(nil)
+			p.LeaseDuration = 10 * time.Millisecond
+			p.RestoreDelay = 1 * time.Millisecond
+			l := newMockLauncher()
+			p.Launcher = l
+			l.runOutputs["wl-paste -n"] = []byte("existing clipboard content")
+			l.runOutputs["wl-paste -p"] = []byte("existing primary content")
+			if tc.externalClip {
+				l.externalClip = []byte("user new copy")
+			} else {
+				l.externalPrim = []byte("user new primary")
+			}
+
+			if err := p.Emit(context.Background(), "hello"); err != nil {
+				t.Fatal(err)
+			}
+
+			restored := map[string]bool{}
+			for _, r := range l.runs {
+				if len(r) > 0 && r[0] == "wl-copy" {
+					for _, a := range r {
+						if a == "(stdin:existing clipboard content)" {
+							restored["clip"] = true
+						}
+						if a == "(stdin:existing primary content)" {
+							restored["prim"] = true
+						}
+					}
+				}
+			}
+			if tc.externalClip {
+				if restored["clip"] {
+					t.Error("CLIPBOARD restored over a newer external copy")
+				}
+				if !restored["prim"] {
+					t.Error("PRIMARY was not restored")
+				}
+			} else {
+				if restored["prim"] {
+					t.Error("PRIMARY restored over a newer external copy")
+				}
+				if !restored["clip"] {
+					t.Error("CLIPBOARD was not restored")
+				}
+			}
+		})
 	}
 }
 

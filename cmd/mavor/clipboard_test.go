@@ -12,7 +12,7 @@ import (
 
 func TestClipboardSelection(t *testing.T) {
 	cfg := config.Default()
-	cfg.Output.Driver = "clipboard"
+	cfg.Output.Mode = config.OutputModeCopyOnly
 	d, close, err := selectOutput(cfg.Output, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -20,11 +20,11 @@ func TestClipboardSelection(t *testing.T) {
 	if _, ok := d.(*output.Clipboard); !ok || close != nil {
 		t.Fatalf("dispatcher = %T, close present = %v", d, close != nil)
 	}
-	cfg.Output.Driver = "typo"
+	cfg.Output.Mode = "typo"
 	if _, _, err := selectOutput(cfg.Output, nil); err == nil {
-		t.Fatal("unknown driver selected")
+		t.Fatal("unknown mode selected")
 	}
-	cfg.Output.Driver = "paste"
+	cfg.Output.Mode = config.OutputModePasteLeaveTranscript
 	d, _, err = selectOutput(cfg.Output, nil)
 	if _, ok := d.(*output.Paste); !ok || err != nil {
 		t.Fatalf("paste changed: %T %v", d, err)
@@ -38,11 +38,11 @@ func TestClipboardToolRequirements(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(config.Path()), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(config.Path(), []byte("[output]\ndriver = \"clipboard\"\n"), 0600); err != nil {
+	if err := os.WriteFile(config.Path(), []byte("[output]\nmode = \"copy-only\"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	cfg := config.Default()
-	cfg.Output.Driver = "clipboard"
+	cfg.Output.Mode = config.OutputModeCopyOnly
 	for _, name := range []string{"parec", "whisper-cli", "wl-copy"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\nexit 99\n"), 0755); err != nil {
 			t.Fatal(err)
@@ -72,15 +72,15 @@ func TestClipboardToolRequirements(t *testing.T) {
 	if missing := getMissingTools(cfg); len(missing) != 1 || missing[0] != "wl-copy" {
 		t.Fatalf("missing = %v", missing)
 	}
-	cfg.Output.Driver = "typo"
+	cfg.Output.Mode = "typo"
 	if ok, _ := outputVerdict(cfg, true, true, true, true, ""); ok {
-		t.Fatal("unknown driver accepted")
+		t.Fatal("unknown mode accepted")
 	}
 }
 
 func TestX11ClipboardSelectionAndRequirements(t *testing.T) {
 	cfg := config.Default()
-	cfg.Output.Driver = "clipboard"
+	cfg.Output.Mode = config.OutputModeCopyOnly
 	cfg.Output.ClipboardBackend = "x11"
 	d, close, err := selectOutput(cfg.Output, nil)
 	if _, ok := d.(*output.X11Clipboard); !ok || err != nil || close == nil {
@@ -95,7 +95,7 @@ func TestX11ClipboardSelectionAndRequirements(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(config.Path()), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(config.Path(), []byte("[output]\ndriver = \"clipboard\"\nclipboard_backend = \"x11\"\n"), 0600); err != nil {
+	if err := os.WriteFile(config.Path(), []byte("[output]\nmode = \"copy-only\"\nclipboard_backend = \"x11\"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"parec", "whisper-cli", "xclip"} {
@@ -141,7 +141,7 @@ func TestX11SetupRequiresSessionEnvironment(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(config.Path()), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(config.Path(), []byte("[output]\ndriver = \"clipboard\"\nclipboard_backend = \"x11\"\n"), 0600); err != nil {
+	if err := os.WriteFile(config.Path(), []byte("[output]\nmode = \"copy-only\"\nclipboard_backend = \"x11\"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"parec", "whisper-cli", "xclip"} {
