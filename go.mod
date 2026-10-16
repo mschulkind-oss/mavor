@@ -3,7 +3,7 @@ module github.com/mschulkind-oss/mavor
 go 1.26.3
 
 require (
-	github.com/godbus/dbus/v5 v5.2.2
+	github.com/godbus/dbus/v5 v5.2.4
 	github.com/jezek/xgb v1.3.1
 	github.com/k2-fsa/sherpa-onnx-go v1.13.7
 	github.com/pelletier/go-toml/v2 v2.4.3
