@@ -1,12 +1,15 @@
 ---
 status: accepted
-stage: DECIDED
-next: "Task 1 — the mode type and config plumbing"
+stage: BUILT
+next: "Retained with the design doc as the build record"
 ---
 
 # Plan: six output modes
 
-**Status:** 2026-10-16. Written against `8ec7bd4`.
+**Status:** 2026-10-16. Written against `8ec7bd4`; built and landed on main (`6eab774`, `7711473`).
+What the plan got wrong: its per-task commits assumed a compiling tree at
+each step, but the pre-commit gate requires one, so Tasks 1 and 3 landed as
+a single commit. Nothing else had to be rediscovered.
 **Design:** [`output-modes.md`](./output-modes.md).
 Precedence: the design wins on behavior, the tree wins on fact, this file
 is advice and is the first thing to be wrong.

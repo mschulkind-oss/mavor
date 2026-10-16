@@ -1,7 +1,7 @@
 ---
 status: accepted
 stage: BUILT
-next: "Graduate into the dispatch reference and delete this doc"
+next: "Retained as the decision record at the author's request; the dispatch reference carries current behavior"
 ---
 
 # One output key, six named outcomes
