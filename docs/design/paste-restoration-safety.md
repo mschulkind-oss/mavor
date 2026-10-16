@@ -92,6 +92,26 @@ reads every new ownership immediately, so the manager's read ends the holder
 before the target pastes. Re-arming the holder does not fix that: taking the
 selection again is another ownership event, which triggers another manager read.
 
+## A count is not a mechanism
+
+An earlier draft of [OQ-PRS1](#OQ-PRS1)'s option A said mavor would "count the
+`send` events". That is the same class of guess as the lease it replaces: it
+presumes a known number of readers, and there is none. A target pastes once,
+`cliphist` reads once per new ownership, a manager may be absent entirely, and
+some applications read a selection more than once. A threshold wrong in either
+direction either restores while a paste is still pending or holds a selection
+nobody is reading.
+
+What a `send` event supplies is not a count but a fact about one particular read:
+that it happened, and which MIME type was requested. It is a receipt only where
+the readers of that buffer are knowable. So the rule this document argues for is:
+**restore a selection only where its reader is knowable; where the reader is not
+knowable, stop replacing the selection rather than pick a number.** `PRIMARY`
+qualifies today — nothing else reads it, so the first `send` is the paste.
+`CLIPBOARD` qualifies only while nothing else watches it; with a watch-based
+manager its readers are anonymous, and the non-timer answer there is that the
+manager, not mavor, is what preserves the previous content.
+
 ## Options
 
 See [OQ-PRS1](#OQ-PRS1).
@@ -103,13 +123,18 @@ See [OQ-PRS1](#OQ-PRS1).
    This decides whether `restore_selection = true` can be honored without ever
    handing a late reader the previous selection.
 
-   - **A — Own the selection in-process and count reads.** mavor serves
-     `CLIPBOARD`/`PRIMARY` from its own Wayland data source (`internal/wayland`
-     already speaks the wire protocol), counts `send` events per buffer, discounts
-     the read that arrives within a few milliseconds of the write as the manager's,
-     and restores when the later read arrives or at a generous ceiling. The only
-     option with no residual window; the largest change, and it needs seat and
-     data-device code plus compositor-level acceptance.
+   - **A — Own the selection in-process and treat the read as a receipt.** mavor
+     serves `CLIPBOARD`/`PRIMARY` from its own `zwlr_data_control_manager_v1`
+     source (`internal/wayland` already speaks the wire protocol), writes the
+     transcript to each `send` fd, and restores once the read its own chord caused
+     has arrived. Deliberately **not** a count: what makes it sound is a claim
+     about readers, not a number. On `PRIMARY` nothing else reads the selection,
+     so the first `send` is the paste and no threshold is involved. On `CLIPBOARD`
+     a watch-based manager adds a second, anonymous read and `send` carries no
+     requester identity, so no count separates them; there the option reduces to
+     naming the manager's read (an unmeasured MIME-type difference) or not
+     restoring `CLIPBOARD` at all. Largest change; needs data-control code and
+     compositor-level acceptance.
    - **B — `--paste-once` on `PRIMARY`, longer configurable floor on
      `CLIPBOARD`.** `PRIMARY` gets an exact receipt (nothing watches it), so the
      terminal path is correct and restores promptly; `CLIPBOARD` keeps the timed
@@ -118,17 +143,19 @@ See [OQ-PRS1](#OQ-PRS1).
    - **C — Stop restoring; the transcript becomes the clipboard.** No race and no
      new machinery, but this is the behavior `output.clipboard = true` already
      offers and the default deliberately declines: it costs the user their
-     clipboard on every utterance.
+     clipboard on every utterance. Narrowed to `CLIPBOARD` alone — restore
+     `PRIMARY` by receipt, leave `CLIPBOARD` to the manager that already keeps the
+     previous content — it is the resolution the section above argues for.
    - **D — Restore on the next signal instead of a timer.** Leave the transcript
      on both selections and write the previous contents back when the next
      dictation starts or on an explicit request. No race, but the previous
      selection stays replaced for the whole interval, which is most of C's cost.
 
-   <!-- vantage: question id=OQ-PRS1 leaning="B now, A as the end state — B fixes the path mavor's own chord uses and is small enough to test on real compositors; A is the only option with no residual window, and is what to do if any late reader still loses." -->
+   <!-- vantage: question id=OQ-PRS1 leaning="B now, A as the end state — B makes the path mavor's own chord uses exact with no new protocol code; A is the same receipt held in-process, plus the visibility to prove CLIPBOARD's readers rather than assume them." -->
 
-   _Leaning:_ B now, A as the end state — B fixes the path mavor's own chord uses
-   and is small enough to test on real compositors; A is the only option with no
-   residual window, and is what to do if any late reader still loses.
+   _Leaning:_ B now, A as the end state — B makes the path mavor's own chord uses
+   exact with no new protocol code; A is the same receipt held in-process, plus the
+   visibility to prove `CLIPBOARD`'s readers rather than assume them.
 
    **Answer:**
    > _(empty — fill in when decided)_
