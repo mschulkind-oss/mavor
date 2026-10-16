@@ -1,14 +1,16 @@
 ---
 status: accepted
-stage: DECIDED
-next: "Build it — see the companion plan"
+stage: BUILT
+next: "Graduate into the dispatch reference and delete this doc"
 ---
 
 # One output key, six named outcomes
 
 **Status:** 2026-10-16. Every decision below was ruled in conversation on
-2026-10-16 and is recorded in the [Decision Ledger](#decision-ledger). Evidence
-verified against the tree at `8ec7bd4`.
+2026-10-16 and is recorded in the [Decision Ledger](#decision-ledger).
+MEASURED: unit tests across `internal/config`, `internal/output` and
+`cmd/mavor`, plus the real headless Sway integration suite (`just test-int`),
+against the implementation at `9ea161e`.
 
 > **In short:** `[output]` asks one question — what happens to the transcript,
 > and to what was on the selections before it — and today three keys answer it
@@ -222,9 +224,9 @@ serve files that one edit fixes. Concretely:
 
 | ID | Ruling / Decision | Date | Settled in | Built |
 | :--- | :--- | :--- | :--- | :--- |
-| D1 | Six modes under one `output.mode` key replace `driver`, `clipboard` and `restore_selection` | 2026-10-16 | [The six modes](#the-six-modes) | No |
-| D2 | Default is `paste-leave-transcript`, unconditionally — no clipboard-manager detection | 2026-10-16 | [The six modes](#the-six-modes) | No |
-| D3 | `paste-clear` is offered although timed, because a missed paste beats a wrong one | 2026-10-16 | [The race, stated precisely](#the-race-stated-precisely) | No |
-| D4 | A new external copy cancels a pending restore or clear | 2026-10-16 | [The race, stated precisely](#the-race-stated-precisely) | No |
-| D5 | Each emission settles its own baseline; the next emission never starts unsettled; next-dictation start has no selection meaning | 2026-10-16 | [Settlement and stacked dictations](#settlement-and-stacked-dictations) | No |
-| D6 | Old keys are deleted with no aliases; doctor names the replacement mode | 2026-10-16 | [Existing configs](#existing-configs) | No |
+| D1 | Six modes under one `output.mode` key replace `driver`, `clipboard` and `restore_selection` | 2026-10-16 | [The six modes](#the-six-modes) | Yes |
+| D2 | Default is `paste-leave-transcript`, unconditionally — no clipboard-manager detection | 2026-10-16 | [The six modes](#the-six-modes) | Yes |
+| D3 | `paste-clear` is offered although timed, because a missed paste beats a wrong one | 2026-10-16 | [The race, stated precisely](#the-race-stated-precisely) | Yes |
+| D4 | A new external copy cancels a pending restore or clear | 2026-10-16 | [The race, stated precisely](#the-race-stated-precisely) | Yes |
+| D5 | Each emission settles its own baseline; the next emission never starts unsettled; next-dictation start has no selection meaning | 2026-10-16 | [Settlement and stacked dictations](#settlement-and-stacked-dictations) | Yes |
+| D6 | Old keys are deleted with no aliases; doctor names the replacement mode | 2026-10-16 | [Existing configs](#existing-configs) | Yes |

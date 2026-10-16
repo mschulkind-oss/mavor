@@ -89,8 +89,8 @@ production package, not in `_test.go` files, so any package can drive the
 daemon.
 
 **P5. Degrade, don't die.** An unavailable selected HUD backend → the
-logged `Noop` overlay; output still depends on the selected driver. Typing can copy
-when `output.clipboard` is enabled; it is off by default. Copy-only output never
+logged `Noop` overlay; output still depends on the selected driver. Typing copies only
+in `type-leave-transcript` mode. Copy-only output never
 attempts injection. Output errors → the cycle still completes and the transcript is
 already in the history log.
 
@@ -533,7 +533,7 @@ Every row was traced through the code.
 | A dictation longer than ~30s | whisper-cli writes one line per window; `output.CleanText` joins them before the transcript is recorded or typed | One flowing line, and `mavor history` recovers the same string that was typed |
 | Empty transcript | Logged at Warn, `Emit` never called | Pill vanishes, nothing typed |
 | Output dispatch fails (paste supervisor times out or chord synthesis fails) | Error is logged at Warn and the cycle completes | Nothing pasted — **but the transcript is preserved in the history log** (recover with `mavor history --pick`) |
-| Typing driver fails (`wtype` / virtual keyboard fails under `driver = "typing"`) | Error is logged at Warn and the cycle completes | Nothing typed — text is in history; clipboard copying is opt-in |
+| Typing fails (`wtype` / virtual keyboard fails in a type mode) | Error is logged at Warn and the cycle completes | Nothing typed — text is in history; `type-leave-transcript` also leaves it on the clipboard |
 | No whisper server on `$PATH` under a derived `local-server` placement | `AdjustForEnvironment` downgrades to `subprocess` and warns | The model reloads per utterance — slower, otherwise identical |
 | The model named in the config is not installed | `speech.Resolve` fails; the daemon never starts | An error naming the model, the directory searched, and the `models pull` to run |
 | `preview.source` names a model that is not installed | `speech.ResolvePreview` fails; the daemon never starts | The same shape of error. A *named* model is a request, never a hint |

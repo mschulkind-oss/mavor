@@ -67,7 +67,7 @@ For high-level architecture see [`how-mavor-works.md`](./reference/how-mavor-wor
 2. **Audio Capture & Ducking:** Audio capture initializes via PipeWire (`parec`). If `[ducking]` is enabled, background media streams (Spotify, Firefox) are automatically ducked.
 3. **Live HUD Waveform and preview:** The HUD appears below the usable-area reservation with the configured margin (8px by default). Layer-shell desktops and GNOME XWayland use the same painter and decibel-mapped live volume waveform. If the preview is on, provisional text appears there too — see [§7.2](#72-preview--text-in-the-overlay-while-you-speak). **The preview is never typed.**
 4. **Final Transcription:** On release (`mavor stop` / second `toggle`), captured audio goes to the model named by `model`, including quiet, short, or silent recordings. Optional `advanced.silence_filter = true` rejects recordings lacking both sufficient energy and recognized preview words; it is off by default. This choice affects rejection before transcription, not preview pauses, long-audio chunking, or removal of non-speech annotations from final text.
-5. **Output Emission:** The default paste driver copies selections and injects a paste chord. Typing sends keystrokes; clipboard output copies only for manual paste. Additional copying in injection modes is off by default. Temporary recording files in `/tmp/mavor-recordings/` are immediately purged.
+5. **Output Emission:** The default mode, `paste-leave-transcript`, places the transcript on the selections, injects a paste chord, and leaves the transcript on the clipboard. `output.mode` chooses the alternatives: `paste-restore-previous`, `paste-clear`, `type-only`, `type-leave-transcript`, and `copy-only`. Temporary recording files in `/tmp/mavor-recordings/` are immediately purged.
 
 ---
 
@@ -955,11 +955,11 @@ choice. Choose copy-only output explicitly; it is never a silent fallback:
 
 ```toml
 [output]
-driver = "clipboard"
+mode = "copy-only"
 clipboard_backend = "x11"
 ```
 
-1. Install `xclip`, set the driver/backend, run `mavor setup` and `mavor doctor`,
+1. Install `xclip`, set the mode/backend, run `mavor setup` and `mavor doctor`,
    then restart the daemon. Supply the desktop session's DISPLAY and XAUTHORITY
    to the daemon, including its user service environment when applicable; do not
    hard-code another session's authorization path. Other audio/model requirements
@@ -975,10 +975,10 @@ Custom shortcuts have no release-triggered action, so this is not hold-to-speak.
 Separate shortcuts running the same absolute path with `start` and `stop` are
 also viable, but stopping still requires a second shortcut press.
 
-Copy-only output always overwrites CLIPBOARD, even when `output.clipboard` is
-false. It leaves PRIMARY unchanged: middle-click is not promised. The paste-only
-`paste_chord`, `restore_selection`, and `copy_command` settings are ignored,
-as is `typing_delay_ms`. Whitespace is normalized, like the injection drivers.
+Copy-only output always overwrites CLIPBOARD. It leaves PRIMARY unchanged:
+middle-click is not promised. The paste-only
+`paste_chord` and `copy_command` settings are ignored,
+as is `typing_delay_ms`. Whitespace is normalized, like the delivery modes.
 The selection remains available for delayed and repeated manual paste until
 another application replaces it or the session/selection holder ends.
 

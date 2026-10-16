@@ -16,9 +16,22 @@ changes in this landing commit (the registration handshake,
 
 `mavor` delivers completed transcriptions into the focused window either by
 synthesizing keystroke sequences or by injecting a paste chord backed by Wayland
-selection buffers. Paste dispatch is the default driver because synthetic
+selection buffers. Paste dispatch is the default delivery because synthetic
 keystroke injection incurs heavy terminal redraw latencies on long utterances
 ($1,000+$ characters).
+
+What happens to the transcript, and to what was on the selections before it,
+is one choice — `[output] mode`, decided in
+[`output-modes.md`](../design/output-modes.md):
+
+| Mode | Delivery | Selections afterward |
+| :--- | :--- | :--- |
+| `paste-leave-transcript` *(default)* | Paste chord | Transcript remains on CLIPBOARD |
+| `paste-restore-previous` | Paste chord | Previous selections restored |
+| `paste-clear` | Paste chord | Both selections cleared |
+| `type-only` | Keystrokes | Untouched |
+| `type-leave-transcript` | Keystrokes | Transcript remains on CLIPBOARD |
+| `copy-only` | None — manual paste | Transcript remains on CLIPBOARD |
 
 | Component | Lives in | Key symbols |
 | :--- | :--- | :--- |
@@ -79,15 +92,15 @@ still injected: a slow holder must not cost the user the paste.
 1. **`output.Paste` (Default):** Writes transcript data to Wayland selection
    buffers, synthesizes a paste chord (default `Shift+Insert`), and manages
    selection lifecycle.
-2. **`output.Wayland` (`driver = "typing"`):** Translates characters directly into
+2. **`output.Wayland` (the type modes):** Translates characters directly into
    virtual keycodes via `zwp_virtual_keyboard_v1` using `wtype` (or native typing).
-3. **`output.Clipboard` (`driver = "clipboard"`):** Copies CLIPBOARD only, for
+3. **`output.Clipboard` (`copy-only`):** Copies CLIPBOARD only, for
    manual paste. No chord, PRIMARY writes, selection reads, or restoration.
    Default `clipboard_backend = "wayland"` uses backgrounding `wl-copy`, bounded
    to three seconds for launch;
    successfully forked ownership survives that deadline. It does not use the
    paste driver's 350 ms ownership window or `--paste-once`. Paste-only knobs
-   are ignored and copying occurs regardless of `output.clipboard`.
+   are ignored.
 
 ```mermaid
 sequenceDiagram
@@ -126,7 +139,7 @@ applications read `CLIPBOARD` and succeed.
 
 `output.Paste.Emit` coordinates emission:
 
-1. If `restore_selection` is true, reads current `CLIPBOARD` and `PRIMARY` contents
+1. In `paste-restore-previous`, reads current `CLIPBOARD` and `PRIMARY` contents
    using `wl-paste`.
 2. Starts two child processes with `--foreground`: one for `CLIPBOARD`
    and one for `PRIMARY` (without `--paste-once` to allow multiple concurrent readers).
@@ -138,7 +151,7 @@ applications read `CLIPBOARD` and succeed.
    - Clipboard managers and target applications can read either buffer as needed.
    - If context is cancelled, terminates immediately.
 5. Kills and reaps both selection holder processes.
-6. If `restore_selection` is true, settles for `RestoreDelay` (50ms) and restores
+6. In `paste-restore-previous`, settles for `RestoreDelay` (50ms) and restores
    original contents to both buffers.
 
 ### Bounded restoration and failure reporting
@@ -158,9 +171,13 @@ instead skips restoration and logs the selection and snapshot error: it must not
 clear a selection whose prior contents are unknown. Cleanup launch errors are
 logged with the selection and elapsed time and joined into the returned dispatch
 error, preserving cancellation or any earlier failure. There is no retry loop.
-The existing policy still restores captured values after the lease, without
-checking whether an unrelated application has since changed ownership; it does
-not claim to preserve concurrent selection changes.
+Before any cleanup write, the driver checks whether each selection still
+serves the transcript. One that no longer does has been taken over by a
+newer external copy, and its pending write — restore, or the
+leave-transcript copy — is canceled and logged: the user's newest act wins.
+The check runs before the holders are killed (afterward a read fails for
+lack of an owner) and narrows the window rather than eliminating it; a copy
+landing between the check and the write can still be overwritten.
 
 ### Registration is verified, not slept through
 
@@ -259,13 +276,16 @@ The boundary of this subsystem:
 
 Rulings preserved from design deliberation:
 
-- **OQ-PST1: `driver = "paste"` is default.** Synthetic keystroke injection causes
+- **OQ-PST1: paste dispatch is the default delivery.** Synthetic keystroke injection causes
   unacceptable 10–16 second redraw inching in terminal TUIs. Paste dispatch is the
-  out-of-the-box default; `driver = "typing"` remains available for environments
+  out-of-the-box default; the type modes remain available for environments
   where pasting is undesirable.
-- **OQ-PST2: `restore_selection = true` is default.** User clipboard data must not be
-  silently clobbered by dictation. Capturing selections before paste and restoring
-  them upon supervisor exit preserves user context without race conditions.
+- **OQ-PST2: restoring the previous selections is the default. SUPERSEDED**
+  by [`output-modes.md`](../design/output-modes.md) (D1–D2, 2026-10-16): the
+  default is now `paste-leave-transcript`, restore is the explicit
+  `paste-restore-previous` mode, and the claim that timed restoration
+  preserves user context "without race conditions" is withdrawn — see
+  [`paste-restoration-safety.md`](../design/paste-restoration-safety.md).
 - **OQ-PST3: Dual-buffer population is unconditional for paste dispatch.** Emitting to
   both `CLIPBOARD` and `PRIMARY` simultaneously avoids requiring users to manually
   edit `kitty.conf` to remap `Shift+Insert`.
@@ -279,9 +299,8 @@ the single place where numbers and defaults are recorded.
 
 | Value | Setting | Defined in |
 | :--- | :--- | :--- |
-| Default output driver | `"paste"` | `internal/config/config.go` (`DefaultOutputDriver`) |
+| Default output mode | `"paste-leave-transcript"` | `internal/config/config.go` (`DefaultOutputMode`) |
 | Default paste chord | `"shift+insert"` | `internal/config/config.go` (`DefaultPasteChord`) |
-| Default restore selection | `true` | `internal/config/config.go` (`DefaultRestoreSelection`) |
 | Default lease duration | `350ms` | `internal/output/paste.go` (`LeaseDuration`) |
 | Selection registration bound | `500ms` | `internal/output/paste.go` (`SelectionRegistrationTimeout`) |
 | Restore settle delay | `50ms` | `internal/output/paste.go` (`RestoreDelay`) |
@@ -289,13 +308,13 @@ the single place where numbers and defaults are recorded.
 
 ## Explicit X11 copy-only ownership
 
-`[output] driver = "clipboard", clipboard_backend = "x11"` selects foreground
+`[output] mode = "copy-only", clipboard_backend = "x11"` selects foreground
 xclip with CLIPBOARD/UTF8_STRING and unlimited requests. The three-second launch
 deadline does not expire successful ownership. Replacement/Close kill and wait
 for tracked owners; connection loss and Linux parent-death signaling also end
 ownership. Startup acknowledgment is not successful native transfer. Neither
 PRIMARY nor any keys are touched. Paste/typing retain their previous behavior;
-X11 with either injection driver is a validation error.
+X11 with any delivery mode is a validation error.
 
 XWayland is the X server inside a Wayland compositor; its selection bridge
 supplies native Wayland offers. This explicit backend passed isolated GNOME

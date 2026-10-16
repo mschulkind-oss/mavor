@@ -120,7 +120,7 @@ See [OQ-PRS1](#OQ-PRS1).
 
 1. 💬 **OQ-PRS1: How should restoration learn that the paste was consumed?**
 
-   This decides whether `restore_selection = true` can be honored without ever
+   This decides whether `paste-restore-previous` can be honored without ever
    handing a late reader the previous selection.
 
    - **A — Own the selection in-process and treat the read as a receipt.** mavor
@@ -141,7 +141,7 @@ See [OQ-PRS1](#OQ-PRS1).
      hold because cliphist reads it. Small and testable, and leaves a
      `CLIPBOARD` reader slower than the floor reading the previous text.
    - **C — Stop restoring; the transcript becomes the clipboard.** No race and no
-     new machinery, but this is the behavior `output.clipboard = true` already
+     new machinery, but this is the behavior `paste-leave-transcript` already
      offers and the default deliberately declines: it costs the user their
      clipboard on every utterance. Narrowed to `CLIPBOARD` alone — restore
      `PRIMARY` by receipt, leave `CLIPBOARD` to the manager that already keeps the

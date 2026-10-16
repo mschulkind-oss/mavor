@@ -2,8 +2,7 @@
 
 Tap a hotkey, talk, tap again: the words are transcribed on your own machine
 and typed into whatever window has focus. Your voice never leaves the box —
-no cloud API, no account, nothing to sign up for. Optional additional copying
-is controlled by `output.clipboard` (off by default), and a small "● Recording" pill sits at the top of the screen,
+no cloud API, no account, nothing to sign up for. What happens to the transcript afterward is controlled by `output.mode` (default `paste-leave-transcript`), and a small "● Recording" pill sits at the top of the screen,
 clear of your bar, showing a live waveform and a running preview of the words
 while you speak. The preview is never what gets typed — the text you keep is
 transcribed once, when you let go.
@@ -48,13 +47,13 @@ Set this in your config and restart the daemon:
 
 ```toml
 [output]
-driver = "clipboard"
+mode = "copy-only"
 clipboard_backend = "x11"
 ```
 
-This always replaces CLIPBOARD, even with `output.clipboard = false`, and never
+This always replaces CLIPBOARD and never
 injects keys or modifies PRIMARY. Install `xclip` and supply the desktop session's DISPLAY/XAUTHORITY environment;
-`wtype`, `wl-copy`, and `wl-paste` are not required for this backend. The default remains `paste`.
+`wtype`, `wl-copy`, and `wl-paste` are not required for this backend. The default mode remains `paste-leave-transcript`.
 In GNOME Settings → Keyboard → Custom Shortcuts (labels vary), bind the absolute
 installed path followed by `toggle`, for example `/home/you/.local/bin/mavor toggle`.
 Press once to record, again to transcribe; then paste normally (Ctrl+V in editors,

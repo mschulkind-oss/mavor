@@ -44,7 +44,7 @@ the failure-mode table this doc extends).
 **The HUD is implemented independently. Copy-only output is explicit; injection
 remains a separate, unimplemented proposal.**
 
-Set `[output] driver = "clipboard", clipboard_backend = "x11"` for manual
+Set `[output] mode = "copy-only", clipboard_backend = "x11"` for manual
 paste on measured GNOME. Default output is still
 `"paste"`; `"typing"` remains opt-in. No desktop auto-selection or permission
 mechanism is added. Read the [GNOME instructions](../user-guide.md#gnome-wayland-manual-paste)
@@ -112,7 +112,7 @@ interaction is the one part of the port that improves.
 > [!IMPORTANT]
 > Output failures still only reach the log, and Idle does not establish success.
 > History is recorded before dispatch. Injection modes copy additionally only
-> when `output.clipboard` is enabled (off by default); clipboard mode always
+> in `type-leave-transcript` mode; copy-only mode always
 > copies. Helper availability is not proof of a successful clipboard transfer.
 
 ---
@@ -482,7 +482,7 @@ flowchart TD
     probe --> hud{"zwlr_layer_shell_v1 advertised?"}
     hud -->|yes| wl["overlay.WL (layer-shell)"]
     hud -->|no| noop["overlay.Noop, logged at Warn"]
-    probe --> typ{"config: output.driver"}
+    probe --> typ{"config: output.mode"}
     typ -->|"auto (default)"| auto{"zwp_virtual_keyboard_manager_v1 advertised?"}
     auto -->|yes| wtype["wtype driver"]
     auto -->|no| portal["portal driver (RemoteDesktop + EIS)"]
