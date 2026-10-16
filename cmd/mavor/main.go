@@ -384,7 +384,7 @@ func selectOutput(cfg config.Output, logger *slog.Logger) (output.Dispatcher, fu
 		logger.Info("output: using paste dispatcher", "chord", cfg.PasteChord, "mode", cfg.Mode)
 		p := output.NewPaste(logger)
 		p.Chord, p.CopyCommand = cfg.PasteChord, cfg.CopyCommand
-		p.RestoreSelection, p.Clipboard = cfg.RestoresPrevious(), cfg.LeavesTranscript()
+		p.RestoreSelection, p.Clipboard, p.ClearSelections = cfg.RestoresPrevious(), cfg.LeavesTranscript(), cfg.ClearsSelections()
 		return p, nil, nil
 	}
 	if native, err := output.NewNative(logger); err == nil {

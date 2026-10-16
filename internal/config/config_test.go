@@ -494,15 +494,15 @@ func TestGPUOffIgnoresCaseAndSpacing(t *testing.T) {
 
 func TestOutputModes(t *testing.T) {
 	tests := []struct {
-		mode                              string
-		paste, leaves, restores, copyOnly bool
+		mode                                      string
+		paste, leaves, restores, clears, copyOnly bool
 	}{
-		{OutputModePasteLeaveTranscript, true, true, false, false},
-		{OutputModePasteRestorePrevious, true, false, true, false},
-		{OutputModePasteClear, true, false, false, false},
-		{OutputModeTypeOnly, false, false, false, false},
-		{OutputModeTypeLeaveTranscript, false, true, false, false},
-		{OutputModeCopyOnly, false, true, false, true},
+		{OutputModePasteLeaveTranscript, true, true, false, false, false},
+		{OutputModePasteRestorePrevious, true, false, true, false, false},
+		{OutputModePasteClear, true, false, false, true, false},
+		{OutputModeTypeOnly, false, false, false, false, false},
+		{OutputModeTypeLeaveTranscript, false, true, false, false, false},
+		{OutputModeCopyOnly, false, true, false, false, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.mode, func(t *testing.T) {
@@ -513,8 +513,8 @@ func TestOutputModes(t *testing.T) {
 			if cfg.Output.Mode != tc.mode {
 				t.Fatalf("Mode = %q, want %q", cfg.Output.Mode, tc.mode)
 			}
-			if cfg.Output.PasteDelivered() != tc.paste || cfg.Output.LeavesTranscript() != tc.leaves || cfg.Output.RestoresPrevious() != tc.restores || cfg.Output.CopyOnly() != tc.copyOnly {
-				t.Errorf("mode %q: paste=%v leaves=%v restores=%v copyOnly=%v", tc.mode, cfg.Output.PasteDelivered(), cfg.Output.LeavesTranscript(), cfg.Output.RestoresPrevious(), cfg.Output.CopyOnly())
+			if cfg.Output.PasteDelivered() != tc.paste || cfg.Output.LeavesTranscript() != tc.leaves || cfg.Output.RestoresPrevious() != tc.restores || cfg.Output.ClearsSelections() != tc.clears || cfg.Output.CopyOnly() != tc.copyOnly {
+				t.Errorf("mode %q: paste=%v leaves=%v restores=%v clears=%v copyOnly=%v", tc.mode, cfg.Output.PasteDelivered(), cfg.Output.LeavesTranscript(), cfg.Output.RestoresPrevious(), cfg.Output.ClearsSelections(), cfg.Output.CopyOnly())
 			}
 		})
 	}

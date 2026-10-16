@@ -428,6 +428,29 @@ func TestPasteExternalCopyCancelsRestore(t *testing.T) {
 	}
 }
 
+func TestPasteExternalCopyCancelsLeaveTranscript(t *testing.T) {
+	p := NewPaste(nil)
+	p.Clipboard = true
+	p.LeaseDuration = 10 * time.Millisecond
+	p.RestoreDelay = 1 * time.Millisecond
+	l := newMockLauncher()
+	p.Launcher = l
+	l.externalClip = []byte("user new copy")
+
+	if err := p.Emit(context.Background(), "hello"); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range l.runs {
+		if len(r) > 0 && r[0] == "wl-copy" {
+			for _, a := range r {
+				if a == "(stdin:hello)" {
+					t.Error("transcript written over a newer external copy")
+				}
+			}
+		}
+	}
+}
+
 func TestPasteEmitNoRestore(t *testing.T) {
 	p := NewPaste(nil)
 	p.RestoreSelection = false

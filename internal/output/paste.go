@@ -193,6 +193,12 @@ type Paste struct {
 	// Clipboard ensures the transcript remains on the clipboard after dispatch.
 	Clipboard bool
 
+	// ClearSelections clears both selections after dispatch (the holders
+	// dying is the clear). It exists so the takeover check below runs and
+	// logs in this mode too: a selection a newer copy has taken over is
+	// not ours to clear, and killing our holder cannot clear it.
+	ClearSelections bool
+
 	// Timeout is the maximum time to wait for paste dispatch.
 	Timeout time.Duration
 
@@ -392,11 +398,17 @@ func (p *Paste) Emit(ctx context.Context, text string) (emitErr error) {
 		log.Warn("output: context cancelled during paste lease")
 	}
 
-	if p.Clipboard || p.RestoreSelection {
+	if p.Clipboard || p.RestoreSelection || p.ClearSelections {
 		clipTakenOver = p.selectionTakenOver(ctx, text, "wl-paste", "-n")
+		if clipTakenOver && p.ClearSelections {
+			log.Info("output: CLIPBOARD clear superseded by a newer copy; leaving it alone")
+		}
 	}
-	if p.RestoreSelection {
+	if p.RestoreSelection || p.ClearSelections {
 		primTakenOver = p.selectionTakenOver(ctx, text, "wl-paste", "-p", "-n")
+		if primTakenOver && p.ClearSelections {
+			log.Info("output: PRIMARY clear superseded by a newer copy; leaving it alone")
+		}
 	}
 
 	_ = cmdClip.Kill()

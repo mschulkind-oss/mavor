@@ -232,7 +232,7 @@ manual paste and the missing GNOME HUD. Explicit X11 clipboard mode checks xclip
 DISPLAY and an authorization file; no injected keys or wl-copy are required. It performs no clipboard write and cannot
 verify clipboard readiness. Paste-specific checks below are skipped.
 
-1. **Driver Reporting:** Reports the active output driver (`paste`, `typing`, or `clipboard`) and
+1. **Mode Reporting:** Reports the active output mode and
    configured paste chord.
 2. **Utility Availability:** Verifies `wl-copy` and `wl-paste` exist on `PATH`.
 3. **`--paste-once` Support:** Probes `wl-copy` to verify `--paste-once` is supported

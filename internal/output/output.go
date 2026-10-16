@@ -74,8 +74,9 @@ func CleanText(s string) string {
 //
 // Both run regardless of whether the other succeeds: a copy is still useful
 // when typing did not reach the right window, which is the whole reason the
-// option exists. It is off by default because the recovery is worth less than
-// the clipboard it destroys on every utterance — see config.Output.Clipboard.
+// option exists. It is a mode choice (type-leave-transcript) rather than a
+// default, because the recovery is worth less than the clipboard it
+// destroys on every utterance.
 func (w *Wayland) Emit(ctx context.Context, text string) error {
 	log := w.Logger
 	if log == nil {
