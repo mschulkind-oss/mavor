@@ -495,7 +495,7 @@ HUD/clipboard coexistence and geometry checks. See [HUD QA](docs/qa/gnome-hud-qa
 
 ### Dev container
 
-[`yolo-jail.jsonc`](./yolo-jail.jsonc) is a committed [yolo-jail](https://github.com/mschulkind-oss/yolo-jail)
+[`yolo-jail.toml`](./yolo-jail.toml) is a committed [yolo-jail](https://github.com/mschulkind-oss/yolo-jail)
 definition: `yolo` from the repo root drops you in a container with the whole
 toolchain already present — sway and waybar for the headless integration tests,
 grim for the screenshot assertions, PipeWire and `pulseaudio` utilities for

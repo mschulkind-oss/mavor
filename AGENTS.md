@@ -106,12 +106,12 @@ Two facts about that tree are easy to get wrong:
 
 ## Dev Container
 
-[`yolo-jail.jsonc`](./yolo-jail.jsonc) at the repo root defines the container the project is
+[`yolo-jail.toml`](./yolo-jail.toml) at the repo root defines the container the project is
 developed in, and is committed so it is the same for everyone. It carries the
 integration harness's dependencies — sway, waybar, grim, PipeWire, `wtype`,
 `wl-clipboard`, `whisper-cpp` — which is why `just test-int` and `just storybook`
 work in here with no host setup, and the C toolchain and `pkg-config` the cgo
-build needs. Edit it via the `configuring-the-jail` skill; changing `packages`
+build needs. Edit it via the `configuring-the-jail` skill; changing `install.nix`
 forces an image rebuild and needs a human to restart.
 
 ## Benchmarks
