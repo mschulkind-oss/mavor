@@ -20,19 +20,21 @@ explicit backend after real proof. Parent review/integration is still owed.
 
 ## Behavior and compatibility
 
-Keep `[output] driver = "paste"` as default. Clipboard mode is explicit;
-no compositor detection or automatic fallback enables it. Within clipboard mode,
-`clipboard_backend = "wayland"` is the default, preserving ordinary wl-copy.
-`clipboard_backend = "x11"` explicitly selects xclip; reject unknown values
-and reject X11 with paste or typing rather than silently ignoring it.
+Keep `[output] mode = "paste-leave-transcript"` as the default. Clipboard-only
+output is the explicit `mode = "copy-only"`; no compositor detection or
+automatic fallback enables it. Within copy-only, `clipboard_backend =
+"wayland"` is the default, preserving ordinary wl-copy. `clipboard_backend =
+"x11"` explicitly selects xclip; reject unknown values and reject X11 with a
+paste or typing mode rather than silently ignoring it.
 
 Both clipboard backends normalize whitespace, skip empty transcripts, and pass
 UTF-8 text on stdin to CLIPBOARD only. CLIPBOARD is the ordinary copy selection;
 PRIMARY is the independent selected-text selection, as described by the
 [X selection conventions](https://www.freedesktop.org/wiki/Specifications/ClipboardsWiki/).
 Neither backend injects keys, focuses helpers, reads/restores selections, or
-changes PRIMARY. Copy regardless of `output.clipboard`; ignore paste/typing knobs.
-Leave paste, typing, overlay fallback, history ordering, and silence filtering alone.
+changes PRIMARY. Copy regardless of any other mode setting; a copy-only dispatch
+ignores the paste and typing knobs. Leave overlay fallback, history ordering,
+and silence filtering alone.
 
 ## X11 ownership lifecycle
 

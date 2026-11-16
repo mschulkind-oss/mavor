@@ -116,12 +116,18 @@ If `$SWAYSOCK` is unavailable or the window is unrecognized:
 
 ## 4. Proposed Configuration Schema
 
+> **Shell note (2026-10-16):** this section predates the six-mode
+> [`[output]` change](./output-modes.md). The `driver` key it names was
+> deleted with no alias; routing would land as a mode (or a sibling key) on
+> the shipped shape, not as a revival of `driver`. Only the routing-specific
+> keys below are still proposals.
+
 Users can override or extend application routing in `~/.config/mavor/config.toml`:
 
 ```toml
 [output]
-driver = "auto" # "auto" (detect app) | "paste" | "typing"
-default_paste_chord = "shift+insert"
+mode = "paste-leave-transcript"
+paste_chord = "shift+insert"
 
 # Optional per-application rules
 [output.app_rules]

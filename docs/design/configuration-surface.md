@@ -838,6 +838,12 @@ rejected.
 
 ## Follow-up: `[output]`, added 2026-09-06
 
+> **Superseded 2026-10-16 by [`output-modes.md`](./output-modes.md).** The
+> `clipboard` key below was replaced, with no compatibility alias, by one
+> `[output] mode` key naming six outcomes. The reasoning in this section is
+> retained as the record of why the clipboard became configurable at all;
+> read the newer document for the shape that shipped.
+
 The schema [§8](#8-the-proposed-file) settled had no say over the clipboard, because I never noticed
 mavor was writing to it. It always has: `Emit` ran `wtype` and `wl-copy`
 unconditionally, and the code's own comment gives the reason — a copy is still
