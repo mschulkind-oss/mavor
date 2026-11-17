@@ -63,7 +63,9 @@ builds:
     # fails if it is absent or if the rewrite does not stick.
     hooks:
       post:
-        - cmd: bash scripts/fix-rpath.sh dist/goreleaser/*/mavor
+        # {{ .Path }} is the built binary for this target; the hook's cmd is
+        # run without a shell, so a dist glob would reach the script literal.
+        - cmd: bash scripts/fix-rpath.sh {{ .Path }}
 
 archives:
   - id: default
