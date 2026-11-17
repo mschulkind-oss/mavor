@@ -39,10 +39,26 @@ jobs:
         run: uv build
         working-directory: dist/pypi
 
+      # A re-tag (moving a tag to a fixed commit) rebuilds the wheel from a
+      # different commit, so its hash differs from the version already on
+      # PyPI. `--check-url` treats a hash mismatch as a conflict rather than a
+      # skip and fails the job. The version is already published, so skip the
+      # upload entirely.
+      - name: Check whether this version is already on PyPI
+        id: existing
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if curl -fsS "https://pypi.org/pypi/mavor/${version}/json" >/dev/null; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # `automatic` (the default) falls back to unauthenticated when the OIDC
       # exchange fails and then reports "Missing credentials", which reads as a
       # missing token rather than a publisher mismatch. `always` names the real
       # failure.
       - name: Publish to PyPI
+        if: steps.existing.outputs.already != 'true'
         run: uv publish dist/* --trusted-publishing always --check-url https://pypi.org/simple/
         working-directory: dist/pypi
