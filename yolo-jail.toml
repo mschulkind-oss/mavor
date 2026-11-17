@@ -53,6 +53,11 @@ nix = [
   # sherpa-onnx, whose Go binding vendors its own prebuilt shared objects.
   # A C toolchain and pkg-config have to be here for `just build`.
   "pkg-config",
+  # Rewrites the built binary's RUNPATH: sherpa-onnx-go's cgo directive
+  # bakes its absolute module-cache path into the link, and patchelf removes
+  # it. `just build` and the goreleaser `after` hook both call
+  # scripts/fix-rpath.sh.
+  "patchelf",
   # GTK4 is here for the TESTS, not for mavor. The storybook harness compiles
   # test/gnome/client/consumer.c with `cc` and `pkg-config --cflags --libs
   # gtk4`, then runs that binary as the staged background application. Without

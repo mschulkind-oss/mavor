@@ -115,6 +115,10 @@ build: (_ensure-model default_model)
     mkdir -p bin
     go mod download
     go build -ldflags '{{ldflags}} -r {{rpath}}' -v -o bin/mavor ./cmd/mavor
+    # sherpa-onnx-go-linux's cgo directive adds an absolute -Wl,-rpath, and
+    # the linker concatenates it with the two $ORIGIN entries above. Replace
+    # the whole RUNPATH; the script fails if it did not stick.
+    ./scripts/fix-rpath.sh bin/mavor
     ./scripts/sherpa-libs.sh bin
     echo "built bin/mavor and its sherpa-onnx shared objects"
 

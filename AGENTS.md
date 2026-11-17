@@ -145,9 +145,14 @@ which are vendored in the Go module cache rather than committed here.
 `just install` and the goreleaser `before` hook all call it. The binary is
 linked with `-r '$ORIGIN:$ORIGIN/../lib'`, so it finds those libraries beside
 itself (the release tarball, `bin/`) or one directory up in `lib/`
-(`~/.local/lib`, a Homebrew prefix). Without that rpath the linker bakes in an
-absolute path into the *build host's* module cache and the binary runs
-nowhere else.
+(`~/.local/lib`, a Homebrew prefix). The sherpa-onnx-go module's own cgo
+directive adds a second, absolute `-Wl,-rpath` pointing at the build host's
+module cache, and GNU ld concatenates the two, so
+[`scripts/fix-rpath.sh`](./scripts/fix-rpath.sh) rewrites the RUNPATH to the
+two `$ORIGIN` entries after the link; `just build` and the goreleaser `after`
+hook call it. Without the `$ORIGIN` entries the binary would not find the
+libraries beside it; without the rewrite it would still run, but it would
+carry the path of whichever machine built it.
 
 Three build tags remain, all test-only:
 

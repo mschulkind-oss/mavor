@@ -55,6 +55,15 @@ builds:
     # the PyPI wrapper says so, and an arm64 user builds from source.
     goarch:
       - amd64
+    # Post-link, pre-archive. The cgo directive in sherpa-onnx-go-linux
+    # carries -Wl,-rpath,${SRCDIR}/lib/..., and GNU ld concatenates that
+    # absolute build path with the $ORIGIN entries the ldflags above set.
+    # Replace the whole RUNPATH so the runner's module cache path is not
+    # shipped in the artifact. ubuntu-latest preinstalls patchelf; the script
+    # fails if it is absent or if the rewrite does not stick.
+    hooks:
+      post:
+        - cmd: bash scripts/fix-rpath.sh dist/goreleaser/*/mavor
 
 archives:
   - id: default
