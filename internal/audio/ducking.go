@@ -188,16 +188,22 @@ func (c *CommandDucker) Duck() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.ducked {
-		return nil // already ducked; preserve original saved volume
-	}
-
 	backend := c.resolveBackend()
 
 	var err error
-	if len(c.duckStreams) > 0 {
+	switch {
+	case c.ducked:
+		// Being already ducked does not make this a no-op. The volume to put
+		// back is still the one read before the first Duck — reading it again
+		// now would read the ducked level and adopt it as the baseline, which
+		// is the one way this can lose the user's volume for good — but the
+		// mute itself always goes out, because a ducker that skipped it would
+		// leave the sound down for a whole dictation after a restore that
+		// never landed.
+		err = c.remuteLocked(backend)
+	case len(c.duckStreams) > 0:
 		err = c.duckStreamsInternal(backend)
-	} else {
+	default:
 		err = c.duckSinkInternal(backend)
 	}
 	if err != nil {
@@ -223,13 +229,9 @@ func (c *CommandDucker) Duck() error {
 }
 
 func (c *CommandDucker) duckSinkInternal(backend Backend) error {
-	targetSink := c.duckSink
 	switch backend {
 	case BackendWpctl:
-		if targetSink == "" {
-			targetSink = "@DEFAULT_AUDIO_SINK@"
-		}
-		out, err := c.runner("wpctl", "get-volume", targetSink)
+		out, err := c.runner("wpctl", "get-volume", c.sinkTarget(backend))
 		if err != nil {
 			return fmt.Errorf("ducking: wpctl get-volume: %w (%s)", err, strings.TrimSpace(string(out)))
 		}
@@ -239,21 +241,8 @@ func (c *CommandDucker) duckSinkInternal(backend Backend) error {
 		}
 		c.savedVol = vol
 
-		duckVol := c.duckVolume
-		if duckVol == "" {
-			duckVol = "0.2"
-		}
-		if setOut, err := c.runner("wpctl", "set-volume", targetSink, duckVol); err != nil {
-			return fmt.Errorf("ducking: wpctl set-volume %s: %w (%s)", duckVol, err, strings.TrimSpace(string(setOut)))
-		}
-		c.ducked = true
-		return nil
-
 	case BackendPactl:
-		if targetSink == "" {
-			targetSink = "@DEFAULT_SINK@"
-		}
-		out, err := c.runner("pactl", "get-sink-volume", targetSink)
+		out, err := c.runner("pactl", "get-sink-volume", c.sinkTarget(backend))
 		if err != nil {
 			return fmt.Errorf("ducking: pactl get-sink-volume: %w (%s)", err, strings.TrimSpace(string(out)))
 		}
@@ -263,19 +252,97 @@ func (c *CommandDucker) duckSinkInternal(backend Backend) error {
 		}
 		c.savedVol = vol
 
-		duckVol := c.duckVolume
-		if duckVol == "" {
-			duckVol = "20%"
-		}
-		if setOut, err := c.runner("pactl", "set-sink-volume", targetSink, duckVol); err != nil {
-			return fmt.Errorf("ducking: pactl set-sink-volume %s: %w (%s)", duckVol, err, strings.TrimSpace(string(setOut)))
-		}
-		c.ducked = true
-		return nil
-
 	default:
 		return fmt.Errorf("ducking: unknown backend %q", backend)
 	}
+	if err := c.writeSinkLevelLocked(backend); err != nil {
+		return err
+	}
+	c.ducked = true
+	return nil
+}
+
+// sinkTarget is the sink a command acts on.
+func (c *CommandDucker) sinkTarget(backend Backend) string {
+	if c.duckSink != "" {
+		return c.duckSink
+	}
+	if backend == BackendWpctl {
+		return "@DEFAULT_AUDIO_SINK@"
+	}
+	return "@DEFAULT_SINK@"
+}
+
+// sinkLevel is the volume a sink is ducked to.
+func (c *CommandDucker) sinkLevel(backend Backend) string {
+	if c.duckVolume != "" {
+		return c.duckVolume
+	}
+	if backend == BackendWpctl {
+		return "0.2"
+	}
+	return "20%"
+}
+
+// streamLevel is the volume a stream is ducked to.
+func (c *CommandDucker) streamLevel() string {
+	if c.duckVolume != "" {
+		return c.duckVolume
+	}
+	return "20%"
+}
+
+// writeSinkLevelLocked writes the duck level to the sink and reads nothing, so
+// a dictation that has to mute again can reuse it without adopting the level it
+// wrote as the value to put back.
+func (c *CommandDucker) writeSinkLevelLocked(backend Backend) error {
+	target, level := c.sinkTarget(backend), c.sinkLevel(backend)
+	switch backend {
+	case BackendWpctl:
+		if out, err := c.runner("wpctl", "set-volume", target, level); err != nil {
+			return fmt.Errorf("ducking: wpctl set-volume %s: %w (%s)", level, err, strings.TrimSpace(string(out)))
+		}
+		return nil
+
+	case BackendPactl:
+		if out, err := c.runner("pactl", "set-sink-volume", target, level); err != nil {
+			return fmt.Errorf("ducking: pactl set-sink-volume %s: %w (%s)", level, err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+	return fmt.Errorf("ducking: unknown backend %q", backend)
+}
+
+// remuteLocked re-sends the mute to whatever was ducked, keeping the values
+// saved before the first Duck. A parameter that was never read is left alone —
+// there is nothing Restore could put back — which is the same contract the
+// mixer has.
+func (c *CommandDucker) remuteLocked(backend Backend) error {
+	if len(c.savedStreams) > 0 {
+		var errs []error
+		for _, id := range sortedKeys(c.savedStreams) {
+			if out, err := c.runner("pactl", "set-sink-input-volume", id, c.streamLevel()); err != nil {
+				errs = append(errs, fmt.Errorf("ducking: pactl set-sink-input-volume %s %s: %w (%s)",
+					id, c.streamLevel(), err, strings.TrimSpace(string(out))))
+			}
+		}
+		return errors.Join(errs...)
+	}
+	if c.savedVol == "" {
+		return nil
+	}
+	return c.writeSinkLevelLocked(backend)
+}
+
+// sortedKeys keeps command order deterministic, so logs and fakes read the
+// same way twice.
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (c *CommandDucker) duckStreamsInternal(backend Backend) error {
@@ -285,10 +352,7 @@ func (c *CommandDucker) duckStreamsInternal(backend Backend) error {
 	}
 
 	sinkInputs := parsePactlSinkInputs(string(out))
-	duckVol := c.duckVolume
-	if duckVol == "" {
-		duckVol = "20%"
-	}
+	duckVol := c.streamLevel()
 
 	savedStreams := make(map[string]string)
 	for _, si := range sinkInputs {
@@ -322,10 +386,14 @@ func (c *CommandDucker) Restore() error {
 	if !c.ducked {
 		return nil
 	}
-	was := c.savedVol
 	if err := c.restoreLocked(); err != nil {
 		return err
 	}
+	was := c.savedVol
+	c.ducked = false
+	c.savedVol = ""
+	c.savedStreams = nil
+
 	attrs := []any{"backend", string(c.resolveBackend())}
 	if was != "" {
 		attrs = append(attrs, "volume", was)
@@ -334,57 +402,39 @@ func (c *CommandDucker) Restore() error {
 	return nil
 }
 
-// restoreLocked is Restore's body, for a caller that already holds the lock.
+// restoreLocked puts the saved volume back without changing the ducker's own
+// state. What was saved is forgotten only once the writes have landed, in
+// Restore, so a restore that fails can be retried with the user's volume
+// rather than with the level this ducker wrote over it.
 func (c *CommandDucker) restoreLocked() error {
 	backend := c.resolveBackend()
-	c.ducked = false
 
 	if len(c.savedStreams) > 0 {
-		savedStreams := c.savedStreams
-		c.savedStreams = nil
-
-		// Sort IDs for deterministic execution order
-		ids := make([]string, 0, len(savedStreams))
-		for id := range savedStreams {
-			ids = append(ids, id)
-		}
-		sort.Strings(ids)
-
 		var errs []error
-		for _, id := range ids {
-			saved := savedStreams[id]
+		for _, id := range sortedKeys(c.savedStreams) {
+			saved := c.savedStreams[id]
 			if out, err := c.runner("pactl", "set-sink-input-volume", id, saved); err != nil {
 				errs = append(errs, fmt.Errorf("ducking: pactl restore sink-input %s volume %s: %w (%s)", id, saved, err, strings.TrimSpace(string(out))))
 			}
 		}
-		if len(errs) > 0 {
-			return errors.Join(errs...)
-		}
-		return nil
+		return errors.Join(errs...)
 	}
 
-	// Sink-level restore
+	// Sink-level restore. Nothing was read before the first Duck, so there is
+	// nothing to put back.
 	if c.savedVol == "" {
 		return nil
 	}
 	saved := c.savedVol
-	c.savedVol = ""
-
-	targetSink := c.duckSink
+	targetSink := c.sinkTarget(backend)
 	switch backend {
 	case BackendWpctl:
-		if targetSink == "" {
-			targetSink = "@DEFAULT_AUDIO_SINK@"
-		}
 		if out, err := c.runner("wpctl", "set-volume", targetSink, saved); err != nil {
 			return fmt.Errorf("ducking: wpctl restore volume %s: %w (%s)", saved, err, strings.TrimSpace(string(out)))
 		}
 		return nil
 
 	case BackendPactl:
-		if targetSink == "" {
-			targetSink = "@DEFAULT_SINK@"
-		}
 		if out, err := c.runner("pactl", "set-sink-volume", targetSink, saved); err != nil {
 			return fmt.Errorf("ducking: pactl restore volume %s: %w (%s)", saved, err, strings.TrimSpace(string(out)))
 		}

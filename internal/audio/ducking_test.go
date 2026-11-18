@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -94,12 +95,19 @@ func TestCommandDuckerWpctl(t *testing.T) {
 		t.Errorf("cmd 1 = %v, want wpctl set-volume ... 0.2", executed[1])
 	}
 
-	// Second Duck should be idempotent
+	// A second Duck re-sends the mute and does not read the volume again: the
+	// level to put back is still the one read before the first Duck, and a
+	// fresh read would adopt the ducked level as the baseline. Skipping the
+	// write instead is what left the sound down after a restore that never
+	// landed — see TestCommandDuckerSurvivesAFailedRestore.
 	if err := ducker.Duck(); err != nil {
 		t.Fatalf("second Duck: %v", err)
 	}
-	if len(executed) != 2 {
-		t.Errorf("second Duck should not have executed more commands, got %d", len(executed))
+	if len(executed) != 3 {
+		t.Fatalf("second Duck executed %d commands in total, want 3 (one re-sent set-volume)", len(executed))
+	}
+	if executed[2].name != "wpctl" || executed[2].args[0] != "set-volume" || executed[2].args[2] != "0.2" {
+		t.Errorf("second Duck cmd = %v, want wpctl set-volume ... 0.2", executed[2])
 	}
 
 	// Restore should restore original volume (0.85)
@@ -109,18 +117,18 @@ func TestCommandDuckerWpctl(t *testing.T) {
 	if ducker.IsDucked() {
 		t.Errorf("IsDucked = true, want false after Restore")
 	}
-	if len(executed) != 3 {
-		t.Fatalf("executed %d commands after restore, want 3", len(executed))
+	if len(executed) != 4 {
+		t.Fatalf("executed %d commands after restore, want 4", len(executed))
 	}
-	if executed[2].args[0] != "set-volume" || executed[2].args[2] != "0.85" {
-		t.Errorf("restore cmd = %v, want wpctl set-volume ... 0.85", executed[2])
+	if executed[3].args[0] != "set-volume" || executed[3].args[2] != "0.85" {
+		t.Errorf("restore cmd = %v, want wpctl set-volume ... 0.85", executed[3])
 	}
 
 	// Second Restore should be a safe no-op
 	if err := ducker.Restore(); err != nil {
 		t.Fatalf("second Restore: %v", err)
 	}
-	if len(executed) != 3 {
+	if len(executed) != 4 {
 		t.Errorf("second Restore should not execute command, got %d", len(executed))
 	}
 }
@@ -786,5 +794,75 @@ func TestCommandDuckerSaysWhatItDucked(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "sound server restored") {
 		t.Errorf("Restore did not say what it restored; log:\n%s", buf.String())
+	}
+}
+
+// A restore whose write does not land must not launder the ducked level into
+// the baseline.
+//
+// The sound server had the writing half of the mixer's bug without the
+// re-sending half: Restore cleared the ducker's own state before it ran the
+// command, and Duck returned early on the flag. One failed restore therefore
+// left the next dictation reading the ducked volume as the value to put back,
+// and the user's volume was gone for good — quietly, because every step
+// reported what it was asked to. See TestOSCDuckStillMutesAfterAnUnconfirmedRestore
+// for the mixer's version of the same shape.
+func TestCommandDuckerSurvivesAFailedRestore(t *testing.T) {
+	ducker := NewPactlDucker("0%")
+	var (
+		mu         sync.Mutex
+		volume     = "100%"
+		failWrites bool
+		written    []string
+	)
+	ducker.SetRunner(func(name string, args ...string) ([]byte, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case name == "pactl" && len(args) >= 2 && args[0] == "get-sink-volume":
+			return []byte("Volume: front-left: 65536 / " + volume + " / 0.00 dB\n"), nil
+		case name == "pactl" && len(args) >= 3 && args[0] == "set-sink-volume":
+			if failWrites {
+				return []byte("connection refused"), errors.New("sound server went away")
+			}
+			volume = args[2]
+			written = append(written, args[2])
+			return []byte(""), nil
+		}
+		return nil, errors.New("unexpected command: " + strings.Join(args, " "))
+	})
+
+	if err := ducker.Duck(); err != nil {
+		t.Fatalf("Duck: %v", err)
+	}
+	if volume != "0%" {
+		t.Fatalf("volume = %s after Duck, want 0%%", volume)
+	}
+
+	// The sound server goes away mid-restore: the write never lands.
+	failWrites = true
+	if err := ducker.Restore(); err == nil {
+		t.Fatal("Restore reported success for a write that never landed")
+	}
+	if !ducker.IsDucked() {
+		t.Error("IsDucked = false after a restore that failed; the sound is still down")
+	}
+
+	// The next dictation must mute again rather than trust the flag.
+	failWrites = false
+	before := len(written)
+	if err := ducker.Duck(); err != nil {
+		t.Fatalf("Duck after a failed restore: %v", err)
+	}
+	if len(written) == before {
+		t.Error("the second Duck sent nothing — a stale 'already ducked' left the sound server alone")
+	}
+
+	// And what it puts back is the user's volume, not the one mavor wrote.
+	if err := ducker.Restore(); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if volume != "100%" {
+		t.Errorf("volume = %s after restore, want 100%% — the ducked level was adopted as the baseline", volume)
 	}
 }
