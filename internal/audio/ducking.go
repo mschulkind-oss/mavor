@@ -194,11 +194,32 @@ func (c *CommandDucker) Duck() error {
 
 	backend := c.resolveBackend()
 
+	var err error
 	if len(c.duckStreams) > 0 {
-		return c.duckStreamsInternal(backend)
+		err = c.duckStreamsInternal(backend)
+	} else {
+		err = c.duckSinkInternal(backend)
+	}
+	if err != nil {
+		return err
 	}
 
-	return c.duckSinkInternal(backend)
+	// Say what was ducked, in the terms the config was written in. The
+	// daemon's own line covers the whole set of duckers and a mixer that
+	// ducked nothing can sit beside it, so this is the line that keeps a
+	// silent half of the set from reading as a success.
+	attrs := []any{"backend", string(backend), "volume", c.duckVolume}
+	if c.duckSink != "" {
+		attrs = append(attrs, "sink", c.duckSink)
+	}
+	if len(c.duckStreams) > 0 {
+		attrs = append(attrs, "apps", c.duckStreams)
+	}
+	if c.savedVol != "" {
+		attrs = append(attrs, "was", c.savedVol)
+	}
+	c.logger.Info("ducking: sound server ducked", attrs...)
+	return nil
 }
 
 func (c *CommandDucker) duckSinkInternal(backend Backend) error {
@@ -301,7 +322,20 @@ func (c *CommandDucker) Restore() error {
 	if !c.ducked {
 		return nil
 	}
+	was := c.savedVol
+	if err := c.restoreLocked(); err != nil {
+		return err
+	}
+	attrs := []any{"backend", string(c.resolveBackend())}
+	if was != "" {
+		attrs = append(attrs, "volume", was)
+	}
+	c.logger.Info("ducking: sound server restored", attrs...)
+	return nil
+}
 
+// restoreLocked is Restore's body, for a caller that already holds the lock.
+func (c *CommandDucker) restoreLocked() error {
 	backend := c.resolveBackend()
 	c.ducked = false
 

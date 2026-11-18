@@ -1,7 +1,10 @@
 package audio
 
 import (
+	"bytes"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 )
 
@@ -750,5 +753,38 @@ func TestCommandDuckerHonoursExplicitVolume(t *testing.T) {
 	d := NewCommandDucker(BackendPactl, "35%", "", nil)
 	if d.duckVolume != "35%" {
 		t.Errorf("duckVolume = %q, want the configured 35%%", d.duckVolume)
+	}
+}
+
+// A ducker that says nothing is indistinguishable from one that did nothing.
+// The daemon used to print one "volume ducked" for the whole set, so this line
+// is what makes a mixer that muted nothing impossible to mistake for a success.
+func TestCommandDuckerSaysWhatItDucked(t *testing.T) {
+	ducker := NewPactlDucker("0%")
+	var buf bytes.Buffer
+	ducker.SetLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+	ducker.SetRunner(func(name string, args ...string) ([]byte, error) {
+		if name == "pactl" && len(args) >= 2 && args[0] == "get-sink-volume" {
+			return []byte("Volume: front-left: 65536 / 100% / 0.00 dB\n"), nil
+		}
+		return []byte(""), nil
+	})
+
+	if err := ducker.Duck(); err != nil {
+		t.Fatalf("Duck: %v", err)
+	}
+	log := buf.String()
+	for _, want := range []string{"sound server ducked", "0%", "100%"} {
+		if !strings.Contains(log, want) {
+			t.Errorf("log does not contain %q; log:\n%s", want, log)
+		}
+	}
+
+	ducker.SetLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+	if err := ducker.Restore(); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if !strings.Contains(buf.String(), "sound server restored") {
+		t.Errorf("Restore did not say what it restored; log:\n%s", buf.String())
 	}
 }

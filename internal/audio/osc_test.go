@@ -772,3 +772,125 @@ func TestDuckersRunEveryMemberAndJoinFailures(t *testing.T) {
 		t.Error("a failing ducker stopped the others from restoring")
 	}
 }
+
+// A route that moves under the open socket must not leave the ducker talking
+// into a hole.
+//
+// The socket is held between dictations, and a connected UDP socket pins the
+// local address it was dialed with. When something moves the route underneath
+// — a tailnet or VPN taking the LAN prefix, an interface renumbered, a Wi-Fi
+// roam — the socket goes on sending from an address the device cannot answer,
+// every query times out, and because Duck mutes only what it could read back,
+// the mute stops working while the daemon still looks healthy. That is the
+// 2026-11-18 incident: a tailnet route for 192.168.1.0/24 put the mixer behind
+// the tunnel and two dictations went unmuted before the route went away.
+func TestOSCReopensTheSocketWhenTheRouteMovesUnderIt(t *testing.T) {
+	m := startFakeMixer(t, map[int]int32{15: 1, 16: 1})
+	d := newTestDucker(t, m, []int{15, 16}, 500*time.Millisecond)
+	var buf bytes.Buffer
+	d.SetLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+
+	if err := d.Duck(); err != nil {
+		t.Fatalf("Duck: %v", err)
+	}
+	m.waitForSets(t, 2)
+	if d.dials != 1 {
+		t.Fatalf("dials = %d after one dictation, want 1", d.dials)
+	}
+
+	// The kernel would now pick a different local address to reach the device.
+	d.lookupSource = func(*net.UDPAddr) (string, error) { return "100.64.0.5", nil }
+	if err := d.Duck(); err != nil {
+		t.Fatalf("Duck after the route moved: %v", err)
+	}
+	if d.dials != 2 {
+		t.Errorf("dials = %d after the route moved, want 2 — the ducker kept using "+
+			"a socket pinned to an address the device can no longer answer", d.dials)
+	}
+	log := buf.String()
+	if !strings.Contains(log, "route to the device changed") {
+		t.Errorf("reopening the socket was not explained; log:\n%s", log)
+	}
+	if !strings.Contains(log, "100.64.0.5") {
+		t.Errorf("the log does not name the address the route now picks; log:\n%s", log)
+	}
+}
+
+// A socket that has produced a timeout is not reused. Nothing proves a wedged
+// socket healed, and the next dictation is the only chance to find out.
+func TestOSCReopensTheSocketAfterAQueryWentUnanswered(t *testing.T) {
+	m := startFakeMixer(t, map[int]int32{15: 1})
+	d := newTestDucker(t, m, []int{15}, 100*time.Millisecond)
+
+	if err := d.Duck(); err != nil {
+		t.Fatalf("Duck: %v", err)
+	}
+	m.waitForSets(t, 1)
+	if err := d.Restore(); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	m.waitForSets(t, 2)
+	if d.dials != 1 {
+		t.Fatalf("dials = %d, want 1 — nothing has gone wrong yet", d.dials)
+	}
+
+	m.goSilent()
+	if err := d.Duck(); err != nil {
+		t.Fatalf("Duck against a silent device: %v", err)
+	}
+	if err := d.Restore(); err != nil {
+		t.Fatalf("Restore after a silent Duck: %v", err)
+	}
+
+	m.unsilent()
+	if err := d.Duck(); err != nil {
+		t.Fatalf("Duck after the device came back: %v", err)
+	}
+	if d.dials != 2 {
+		t.Errorf("dials = %d after a query went unanswered, want 2 — the ducker "+
+			"trusted a socket that had already produced a timeout", d.dials)
+	}
+	m.waitForSets(t, 3)
+}
+
+// The line a dictation leaves behind must say what was muted. A single
+// "volume ducked" covering every ducker is how a mixer that muted nothing read
+// as a success on 2026-11-18: the warning that said otherwise sat beside it and
+// was read as noise.
+func TestOSCDuckSaysWhatItMuted(t *testing.T) {
+	m := startFakeMixer(t, map[int]int32{15: 1, 16: 1})
+	d := newTestDucker(t, m, []int{15, 16}, 500*time.Millisecond)
+	var buf bytes.Buffer
+	d.SetLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+
+	if err := d.Duck(); err != nil {
+		t.Fatalf("Duck: %v", err)
+	}
+	m.waitForSets(t, 2)
+
+	log := buf.String()
+	for _, want := range []string{"osc: muted", "/ch/15/mix/on", "/ch/16/mix/on"} {
+		if !strings.Contains(log, want) {
+			t.Errorf("log does not contain %q; log:\n%s", want, log)
+		}
+	}
+}
+
+func TestOSCDuckSaysWhenItMutedNothing(t *testing.T) {
+	m := startFakeMixer(t, map[int]int32{15: 1})
+	m.goSilent()
+	d := newTestDucker(t, m, []int{15}, 100*time.Millisecond)
+	var buf bytes.Buffer
+	d.SetLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+
+	if err := d.Duck(); err != nil {
+		t.Fatalf("Duck: %v", err)
+	}
+	log := buf.String()
+	if !strings.Contains(log, "nothing muted") {
+		t.Errorf("a dictation that muted nothing did not say so; log:\n%s", log)
+	}
+	if strings.Contains(log, "osc: muted") {
+		t.Errorf("log claims a mute that never happened; log:\n%s", log)
+	}
+}

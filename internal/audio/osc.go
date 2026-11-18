@@ -120,6 +120,48 @@ type OSCDucker struct {
 	// saved is each path's value as it was before Duck. Nil when not ducked.
 	saved  map[string]int32
 	ducked bool
+
+	// ua is the device address, resolved once so reopening the socket costs a
+	// dial rather than a DNS query.
+	ua *net.UDPAddr
+	// pin is the local address the held socket was dialed from, without its
+	// port. A connected UDP socket goes on using it for as long as it lives,
+	// whatever the route does afterwards; a fresh dial picks a new port every
+	// time, so the port is not part of what a route pins.
+	pin string
+	// dials counts the sockets opened to the device, so a test can tell a
+	// reopened socket from the one it replaced.
+	dials int
+	// missed records that the last query left a parameter unanswered, so the
+	// next operation does not trust a socket that has already timed out.
+	missed bool
+	// lookupSource reports the local address the kernel would choose to reach
+	// ua right now. A field rather than a call so a test can move the route
+	// without a routing daemon; the default dials a throwaway UDP socket,
+	// which is a route lookup and sends nothing.
+	lookupSource func(*net.UDPAddr) (string, error)
+}
+
+// routeSource is the local address the kernel would pick to reach ua, without
+// its port: the port is chosen per socket and says nothing about the route.
+func routeSource(ua *net.UDPAddr) (string, error) {
+	c, err := net.DialUDP("udp", nil, ua)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = c.Close() }()
+	return hostOf(c.LocalAddr()), nil
+}
+
+// hostOf is the address part of a host:port.
+func hostOf(a net.Addr) string {
+	if a == nil {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(a.String()); err == nil {
+		return host
+	}
+	return a.String()
 }
 
 // NewOSCDucker builds a ducker for the device at host (an IP or hostname)
@@ -162,11 +204,12 @@ func NewOSCDucker(host string, port int, paths []string, mutedValue int32, timeo
 	}
 
 	return &OSCDucker{
-		addr:    net.JoinHostPort(host, fmt.Sprint(port)),
-		paths:   clean,
-		muted:   mutedValue,
-		timeout: timeout,
-		log:     slog.Default(),
+		addr:         net.JoinHostPort(host, fmt.Sprint(port)),
+		paths:        clean,
+		muted:        mutedValue,
+		timeout:      timeout,
+		log:          slog.Default(),
+		lookupSource: routeSource,
 	}, nil
 }
 
@@ -262,6 +305,22 @@ func (x *OSCDucker) Duck() error {
 	if err := x.muteSaved(); err != nil {
 		errs = append(errs, err)
 	}
+
+	// Say what actually went out. The daemon's own line covers the whole set
+	// of duckers, so a mixer that muted nothing has to speak for itself or a
+	// skipped mute reads as a successful one.
+	muted := make([]string, 0, len(x.paths))
+	for _, p := range x.paths {
+		if _, ok := x.saved[p]; ok {
+			muted = append(muted, p)
+		}
+	}
+	if len(muted) == 0 {
+		x.log.Warn("osc: nothing muted — the device did not report any of these parameters",
+			"paths", x.paths, "addr", x.addr)
+	} else {
+		x.log.Info("osc: muted", "paths", muted, "muted_value", x.muted, "addr", x.addr)
+	}
 	return errors.Join(errs...)
 }
 
@@ -293,8 +352,8 @@ func (x *OSCDucker) muteSaved() error {
 // send-and-confirm cycle restoreAttempts times.
 // If the device still disagrees after the last attempt, Restore returns an
 // error and remains ducked with the original values saved. That is the state
-// the next cycle needs: Duck on a ducked ducker is a no-op that keeps the
-// saved values, and the next Restore retries them — so a mute orphaned while
+// the next cycle needs: Duck on a ducked ducker re-sends the mute while keeping
+// the saved values, and the next Restore retries them — so a mute orphaned while
 // the device was offline heals itself on the first cycle after it comes
 // back, with the values from before the duck rather than the muted ones a
 // fresh Duck would otherwise have adopted as the baseline.
@@ -350,6 +409,7 @@ func (x *OSCDucker) Restore() error {
 		if len(unconfirmed) == 0 {
 			x.ducked = false
 			x.saved = nil
+			x.log.Info("osc: restored", "paths", savedPaths, "addr", x.addr)
 			return nil
 		}
 		x.log.Debug("osc: restore not confirmed yet",
@@ -393,23 +453,61 @@ func (x *OSCDucker) closeConn() error {
 	return err
 }
 
-// dial makes sure there is a socket. Held open between dictations: a
-// connected UDP socket costs nothing to keep and saves resolving the address
-// on the hot path.
+// dial makes sure there is a socket, and that the socket's route is still the
+// one the kernel would choose now.
+//
+// Held open between dictations: a connected UDP socket costs nothing to keep
+// and saves resolving the address on the hot path. Holding it is also why this
+// check exists — a connected socket pins the local address it was dialed with
+// and goes on using it for as long as it lives, so when the route moves
+// underneath (a VPN or tailnet taking the LAN prefix, an interface renumbered,
+// a Wi-Fi roam) the socket keeps sending from an address the device can no
+// longer answer, and every query times out. The daemon would then quietly stop
+// muting anything until it was restarted.
 func (x *OSCDucker) dial() error {
+	if x.conn != nil {
+		if x.missed {
+			x.log.Debug("osc: reopening the socket after a query went unanswered", "addr", x.addr)
+			_ = x.closeConn()
+		} else {
+			x.checkRoute()
+		}
+	}
 	if x.conn != nil {
 		return nil
 	}
-	ua, err := net.ResolveUDPAddr("udp", x.addr)
-	if err != nil {
-		return fmt.Errorf("osc: resolve %s: %w", x.addr, err)
+	if x.ua == nil {
+		ua, err := net.ResolveUDPAddr("udp", x.addr)
+		if err != nil {
+			return fmt.Errorf("osc: resolve %s: %w", x.addr, err)
+		}
+		x.ua = ua
 	}
-	c, err := net.DialUDP("udp", nil, ua)
+	c, err := net.DialUDP("udp", nil, x.ua)
 	if err != nil {
 		return fmt.Errorf("osc: dial %s: %w", x.addr, err)
 	}
 	x.conn = c
+	x.pin = hostOf(c.LocalAddr())
+	x.dials++
+	x.missed = false
 	return nil
+}
+
+// checkRoute drops the socket when the route to the device no longer agrees
+// with the address it was dialed with, which is the one way a stale socket
+// announces itself before it has already cost a dictation.
+func (x *OSCDucker) checkRoute() {
+	if x.conn == nil || x.ua == nil || x.pin == "" || x.lookupSource == nil {
+		return
+	}
+	now, err := x.lookupSource(x.ua)
+	if err != nil || now == "" || now == x.pin {
+		return
+	}
+	x.log.Warn("osc: the route to the device changed under the open socket — reopening it",
+		"addr", x.addr, "was", x.pin, "now", now)
+	_ = x.closeConn()
 }
 
 // queryPaths asks for the current value of each of paths and returns what
@@ -455,6 +553,10 @@ func (x *OSCDucker) queryPaths(paths []string) (map[string]int32, []string) {
 			missing = append(missing, p)
 		}
 	}
+	// A query that went unanswered is the one piece of evidence there is that
+	// this socket may be finished, so the next operation opens a new one
+	// rather than trusting it again.
+	x.missed = len(missing) > 0
 	return got, missing
 }
 

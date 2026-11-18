@@ -695,10 +695,12 @@ func (d *Daemon) startRecording() state.State {
 	// The snapshot now names this recording, so the derived stack paints the
 	// recording row ahead of any earlier cycle still awaiting output.
 	d.showDerived()
+	// Each ducker says what it did, at info: this line used to claim the whole
+	// set had ducked, which a mixer that muted nothing sat quietly beside.
 	if err := d.ducker.Duck(); err != nil {
 		d.logger.Warn("ducking: duck failed", "err", err)
 	} else {
-		d.logger.Info("ducking: volume ducked")
+		d.logger.Debug("ducking: complete")
 	}
 	d.logger.Info("pipeline: starting recorder", "cycle", id)
 	if err := d.recorder.Start(ctx); err != nil {
@@ -760,7 +762,7 @@ func (d *Daemon) stopRecording() state.State {
 	if rerr := d.ducker.Restore(); rerr != nil {
 		d.logger.Warn("ducking: restore failed", "err", rerr)
 	} else {
-		d.logger.Info("ducking: volume restored")
+		d.logger.Debug("ducking: restore complete")
 	}
 	if started := cycle.startedAt; !started.IsZero() {
 		d.logPerf("stop", id, "recording_ms", time.Since(started).Milliseconds())

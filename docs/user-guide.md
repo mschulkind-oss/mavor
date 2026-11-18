@@ -550,6 +550,33 @@ restored on leaving it, including when transcription errors out. Naming `apps`
 narrows it to those streams, which is how you duck music without ducking a
 voice call; leaving the key out ducks everything.
 
+**A mixer on the network** is ducked separately, over OSC — Open Sound Control,
+a UDP message format of an address and typed arguments:
+
+```toml
+[ducking.osc]
+enabled = true
+address = "192.168.1.6"       # the device's IP; give it a static address
+paths   = ["/ch/15/mix/on"]   # the parameters that mean "off"
+# port = 10024                # an X Air listens here; an X32 or M32 uses 10023
+# muted_value = 0             # on an X Air, mix/on means exactly what it says
+# timeout_ms = 200
+```
+
+It sits beside `enabled` rather than under it: a mixer like a Behringer XR18 has
+its own inputs and its own monitor mix, so what plays through it never passes
+through PipeWire and `pactl` cannot turn it down. Either, both or neither.
+
+Nothing here is mixer-specific: give it any OSC address and the integer that
+means off. Before muting, mavor reads each parameter and mutes only what the
+device reported, because a value that was never read is one the restore could
+only guess at — not muting is the safe failure. Each dictation logs what went
+out: `osc: muted` with the paths, or `osc: nothing muted` when the device
+answered none of them. `mavor doctor`'s `OSC device ducking` line probes the
+device and prints what each path currently holds; OSC is UDP and mavor never
+waits for an acknowledgement, so until something asks the device a question a
+wrong address and a switched-off mixer look identical.
+
 ### 7.4 `[vocabulary]` — words the model gets wrong
 
 One runtime-neutral table for names, jargon and commands. `words` and `file`
@@ -938,6 +965,7 @@ There is one build and it is cgo, so there is no `build-sherpa` recipe and no
 | `toggle: connect: no such file or directory` | Daemon is not running or socket mismatch | Run `mavor daemon -v` or `mavor doctor` to inspect status |
 | Overlay does not appear | Selected presentation backend is unavailable | Run `mavor doctor` and inspect daemon logs. GNOME needs XWayland, current session DISPLAY/XAUTHORITY and D-Bus; other desktops need `wlr-layer-shell` |
 | Audio volume does not duck | Ducking is off by default | Set `enabled = true` under `[ducking]`, and check `apps` if you narrowed it |
+| The mixer stopped muting, and the log says `osc: nothing muted` | The device stopped answering mavor's queries, and mavor never mutes a parameter it could not read back | `mavor doctor`'s `OSC device ducking` line probes the device and names each parameter's value. `osc: the route to the device changed under the open socket` means a VPN or tailnet took the LAN prefix: check `ip route get <device>` and `ip route show table 52`, because a route installed by another routing agent wins over the one written by hand |
 | No text in the overlay while speaking | The preview is off, or fell back to phrase mode | `mavor doctor`'s `Live preview source` line names the mode and the reason; pull `zipformer-streaming` for the live preview |
 | Preview shows words that were never said | Phrase mode feeding whisper short clips, which it fills with plausible text | Pull `zipformer-streaming` so `auto` uses the companion instead, or turn the preview off with `enabled = false` |
 | Vocabulary words still misheard | The model cannot be biased at all | `mavor doctor`'s `Vocabulary biasing` line says which mechanism applies; CTC, paraformer, moonshine and sensevoice have none |
