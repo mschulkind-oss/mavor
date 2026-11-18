@@ -92,9 +92,11 @@ enabled = %t
 
 [logging]
 # Debug-level detail: overlay surface sizes and repaint timings, preview
-# chunk cadence and text growth, and how long each stage of a dictation
-# took. Noisy — the preview alone logs on a 30 ms tick — so it is off
-# until something is wrong. `+"`mavor daemon -v`"+` does the same for one run.
+# chunk cadence and text growth, how long each stage of a dictation took,
+# and a reading of the machine around each dictation — host load, the
+# GPU's utilization and memory, and where the model's weights sit. Noisy
+# — the preview alone logs on a 30 ms tick — so it is off until something
+# is wrong. `+"`mavor daemon -v`"+` does the same for one run.
 # Output goes wherever paths.log points.
 verbose = %t
 

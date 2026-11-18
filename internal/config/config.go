@@ -83,7 +83,12 @@ type Logging struct {
 	// Verbose drops the daemon to debug level, which turns on the
 	// per-frame and per-chunk detail the quiet levels leave out: overlay
 	// surface sizes and repaint timings, preview chunk cadence and text
-	// growth, and how long each stage of a dictation took.
+	// growth, how long each stage of a dictation took, and — around every
+	// dictation, plus once every ten seconds — a reading of the machine it
+	// ran on: host load and available memory, the GPU's utilization, clock
+	// and memory counters, and where the main model's own weights sit. That
+	// last part is what a slow dictation is diagnosed from; see the `perf:
+	// machine` lines.
 	//
 	// Off by default because it is genuinely noisy — the preview alone logs
 	// on a 30 ms tick. Turn it on when something is wrong and you want the

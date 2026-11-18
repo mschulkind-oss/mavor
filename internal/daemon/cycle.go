@@ -1,5 +1,7 @@
 package daemon
 
+import "time"
+
 // dictationCycle is one key-down..emit run. Exactly one may be Recording; any
 // number may await transcription. It owns the per-recording facts that used to
 // be daemon fields when only one cycle could exist: the capture file, this
@@ -8,6 +10,10 @@ package daemon
 type dictationCycle struct {
 	id  uint64
 	wav string
+
+	// startedAt is when capture opened, so the stop reading can say how long
+	// the recording ran rather than only how long the whole cycle took.
+	startedAt time.Time
 
 	// hadSpeech is this recording's recognition evidence for the energy filter,
 	// and drain closes when its preview recognizer (or companion finalization)

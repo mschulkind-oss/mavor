@@ -29,6 +29,7 @@ import (
 	"github.com/mschulkind-oss/mavor/internal/models"
 	"github.com/mschulkind-oss/mavor/internal/output"
 	"github.com/mschulkind-oss/mavor/internal/overlay"
+	"github.com/mschulkind-oss/mavor/internal/perf"
 	"github.com/mschulkind-oss/mavor/internal/speech"
 	"github.com/mschulkind-oss/mavor/internal/state"
 )
@@ -77,6 +78,16 @@ type Daemon struct {
 	minPhraseDuration time.Duration
 	binaryPath        string
 	upgradeInterval   time.Duration
+	procRoot          string
+	sysRoot           string
+	perfInterval      time.Duration
+
+	// perf reads the machine's own counters for the verbose log: host load,
+	// memory, and the card's utilization and memory, written around each
+	// dictation and on a timer. It is nil unless verbose logging is on, and nil
+	// means every caller writes nothing rather than reading a counter nobody
+	// would see. Written once in Run, before the IPC server accepts a request.
+	perf *perf.Sampler
 
 	// controlMu keeps concurrent IPC control requests from advancing the FSM
 	// while the previous transition is still starting or stopping capture.
@@ -202,6 +213,17 @@ type Config struct {
 	// UpgradeCheckInterval is how often BinaryPath is stat'd, defaulting to
 	// defaultUpgradeInterval.
 	UpgradeCheckInterval time.Duration
+
+	// ProcRoot and SysRoot locate the process table and sysfs the verbose
+	// performance log samples. Empty means /proc and /sys; a test points them
+	// at a fixture tree.
+	ProcRoot string
+	SysRoot  string
+
+	// PerfInterval is how often that log writes a periodic reading, defaulting
+	// to perfInterval. It has no configuration key: the cadence belongs to the
+	// log, and ten seconds is a page of lines a day rather than a stream.
+	PerfInterval time.Duration
 }
 
 func New(c Config) *Daemon {
@@ -228,6 +250,17 @@ func New(c Config) *Daemon {
 	if upgradeInterval <= 0 {
 		upgradeInterval = defaultUpgradeInterval
 	}
+	procRoot, sysRoot := c.ProcRoot, c.SysRoot
+	if procRoot == "" {
+		procRoot = "/proc"
+	}
+	if sysRoot == "" {
+		sysRoot = "/sys"
+	}
+	perfEvery := c.PerfInterval
+	if perfEvery <= 0 {
+		perfEvery = perfInterval
+	}
 	return &Daemon{
 		initialize:        c.Initialize,
 		socket:            c.Socket,
@@ -251,6 +284,9 @@ func New(c Config) *Daemon {
 		minPhraseDuration: minPhrase,
 		binaryPath:        c.BinaryPath,
 		upgradeInterval:   upgradeInterval,
+		procRoot:          procRoot,
+		sysRoot:           sysRoot,
+		perfInterval:      perfEvery,
 		residencyKick:     make(chan struct{}, 1),
 	}
 }
@@ -267,6 +303,14 @@ func (d *Daemon) Run(ctx context.Context) error {
 	var replaced atomic.Bool
 	if d.binaryPath != "" {
 		go d.watchBinary(ctx, &replaced, stop)
+	}
+
+	// The performance log is on only when a debug line would be kept: it reads
+	// /proc and sysfs around every dictation, and a run that is not logging
+	// debug detail should touch neither.
+	if d.logger.Enabled(ctx, slog.LevelDebug) {
+		d.perf = perf.New(d.procRoot, d.sysRoot)
+		go d.watchPerf(ctx)
 	}
 
 	// One residency sampler for the daemon's life, not one per dictation: the
@@ -662,6 +706,11 @@ func (d *Daemon) startRecording() state.State {
 		return d.machine.State()
 	}
 	d.startLevelMonitoring(ctx)
+	cycle.startedAt = time.Now()
+	// The reading at capture start is what a surprising transcribe_ms has to be
+	// read against: it says what the machine was doing when the user began
+	// speaking, not only what it was doing once the decode got there.
+	d.logPerf("start", id)
 	// A later recording gets a live preview only when no earlier cycle is still
 	// awaiting output. That is the ruled feel (§5.5, OQ-6): capture is never
 	// delayed for a preview, and the single recognizer is never fed a new stream
@@ -712,6 +761,11 @@ func (d *Daemon) stopRecording() state.State {
 		d.logger.Warn("ducking: restore failed", "err", rerr)
 	} else {
 		d.logger.Info("ducking: volume restored")
+	}
+	if started := cycle.startedAt; !started.IsZero() {
+		d.logPerf("stop", id, "recording_ms", time.Since(started).Milliseconds())
+	} else {
+		d.logPerf("stop", id)
 	}
 	if err != nil {
 		d.reportCycleError(d.runCtx, cycle, "pipeline: recorder.Stop failed — aborting", err)
@@ -1581,11 +1635,13 @@ func (d *Daemon) decodeCycle(ctx context.Context, c *dictationCycle) {
 
 	// The overlay stays up for the whole emit span, so "it lingered" is a
 	// question about which stage was slow rather than about the overlay.
+	totalMS := time.Since(cycleStart).Milliseconds()
 	d.logger.Info("pipeline: cycle complete",
 		"cycle", c.id,
 		"chars", len(text),
 		"transcribe_ms", transcribeMS,
-		"total_ms", time.Since(cycleStart).Milliseconds())
+		"total_ms", totalMS)
+	d.logPerf("done", c.id, "transcribe_ms", transcribeMS, "total_ms", totalMS)
 }
 
 // completeCycle queues a finished cycle with the dispatcher. The dispatcher,
