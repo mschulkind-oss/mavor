@@ -231,8 +231,29 @@ func runDaemon(verbose bool, logFile string) error {
 		MinPhraseDuration: time.Duration(cfg.Preview.MinPhraseMS) * time.Millisecond,
 	})
 
-	logger.Info("daemon starting", "socket", cfg.Paths.Socket, "model", cfg.Model, "gpu", cfg.Advanced.GPU, "cpu_fallback", cfg.Advanced.CPUFallback, "final_mode", cfg.Advanced.FinalMode)
+	logDaemonStart(logger, cfg)
 	return d.Run(ctx)
+}
+
+// logDaemonStart writes the one line that answers "which build is this?".
+//
+// Nothing else in the log does. A pid and a start time say when the process
+// began, and `mavor version` asks whichever binary is on PATH now, which after
+// an install is not the one the daemon is running: that gap is how a three
+// hour old process got mistaken for a freshly built one. The version, the
+// commit and the build time are compiled into the process, so logging them
+// here is the only account that cannot drift.
+func logDaemonStart(logger *slog.Logger, cfg config.Config) {
+	logger.Info("daemon starting",
+		"version", Version,
+		"commit", Commit,
+		"built", BuildTime,
+		"socket", cfg.Paths.Socket,
+		"model", cfg.Model,
+		"gpu", cfg.Advanced.GPU,
+		"cpu_fallback", cfg.Advanced.CPUFallback,
+		"final_mode", cfg.Advanced.FinalMode,
+	)
 }
 
 func runToggle() error {
