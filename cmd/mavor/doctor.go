@@ -842,7 +842,8 @@ func checkOSCDucking() (bool, string) {
 	return true, msg + fmt.Sprintf("; muted with %d while recording", d.MutedValue())
 }
 
-// checkResidency reports where the running daemon's main model currently lives.
+// checkResidency reports where the running daemon's main model currently lives,
+// and how much of it is in each kind of memory.
 //
 // It is a report, not a gate. A model that has been pushed into system RAM
 // still transcribes; it is slower than the configuration promised, which is
@@ -855,19 +856,50 @@ func checkResidency() (bool, string) {
 	if err != nil {
 		return true, "unknown — the daemon is not running, so no model is loaded"
 	}
-	return residencyVerdict(resp.Residency)
+	return residencyVerdict(resp)
 }
 
 // residencyVerdict is checkResidency minus the socket, so the wording of each
 // outcome can be tested without a daemon.
-func residencyVerdict(residency string) (bool, string) {
-	switch residency {
+//
+// The footprint is printed beside the verdict because the verdict is one word
+// about the weights and the numbers are about the whole allocation: a model
+// whose weights still fit on the card reads "vram" while its working set sits
+// in system RAM, which is slower for the same reason an eviction is. When the
+// daemon reports no bytes — an older daemon, a kernel without the counters —
+// the verdict is printed on its own rather than with invented zeros.
+func residencyVerdict(resp ipc.Response) (bool, string) {
+	footprint := residencyFootprint(resp)
+	withFootprint := func(msg string) string {
+		if footprint == "" {
+			return msg
+		}
+		return msg + " — " + footprint
+	}
+	switch resp.Residency {
 	case "vram":
-		return true, "the model the daemon loaded is resident in VRAM"
+		return true, withFootprint("the model the daemon loaded is resident in VRAM")
 	case "gtt":
-		return true, "the model the daemon loaded is in system RAM (GTT), not VRAM — GPU acceleration is degraded, and the overlay says so while recording (close what else is using the card, or run a smaller model)"
+		return true, withFootprint("the model the daemon loaded is in system RAM (GTT), not VRAM — GPU acceleration is degraded, and the overlay says so while recording (close what else is using the card, or run a smaller model)")
 	}
 	return true, "unknown — there is no GPU-resident model to report on (no daemon, no amdgpu, or a runtime that runs in-process on the CPU)"
+}
+
+// residencyFootprint describes one residency reading in human units: device
+// memory, system memory, and — when the kernel reports it — how much of the
+// device memory the driver pushed out. Empty when there is nothing to say.
+func residencyFootprint(resp ipc.Response) string {
+	if resp.ResidencyVRAM == 0 && resp.ResidencyGTT == 0 {
+		return ""
+	}
+	parts := []string{
+		formatFileSize(int64(resp.ResidencyVRAM)) + " in device memory",
+		formatFileSize(int64(resp.ResidencyGTT)) + " in system RAM",
+	}
+	if resp.ResidencyEvicted > 0 {
+		parts = append(parts, formatFileSize(int64(resp.ResidencyEvicted))+" of it evicted")
+	}
+	return strings.Join(parts, ", ")
 }
 
 func checkDaemon() (bool, string) {

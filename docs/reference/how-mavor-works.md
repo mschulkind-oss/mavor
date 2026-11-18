@@ -358,6 +358,17 @@ warm GPU child (sherpa, subprocess, remote); the daemon then paints nothing, and
 never fails a dictation over it. The same fact is in the daemon's status reply,
 which is what `mavor doctor`'s `GPU model residency` line reports.
 
+The status reply carries the footprint, not only the verdict: `residency` names
+the state and `residency_vram_bytes`, `residency_gtt_bytes` and
+`residency_evicted_bytes` are what the reading behind it saw, and `mavor doctor`
+prints them after the verdict. That is deliberate, because the rule above
+answers a narrower question than the one a slow dictation asks. It asks whether
+the *weights* are still on the card, and they stay there while the compute
+buffers and KV cache the decode actually streams from are pushed into system
+RAM — the same PCIe-bound slowness with the same symptom, reported as `vram`.
+The byte counts are what tell the two apart, and they cost the probe nothing: it
+has already summed them.
+
 > [!WARNING]
 > Provisional preview never emits. Successful main results remain authoritative.
 > Only a failed supervised local GPU-enabled main request may use finalized,

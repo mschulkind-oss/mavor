@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/mschulkind-oss/mavor/internal/config"
+	"github.com/mschulkind-oss/mavor/internal/ipc"
 	"github.com/mschulkind-oss/mavor/internal/speech"
 )
 
@@ -331,12 +332,23 @@ func TestResidencyVerdict(t *testing.T) {
 	tests := []struct {
 		name      string
 		residency string
+		mem       ipc.Response
 		wantMsg   []string
+		notWant   []string
 	}{
 		{
 			name:      "a model on the card",
 			residency: "vram",
 			wantMsg:   []string{"VRAM"},
+		},
+		{
+			// The same word with the numbers beside it: resident weights, and
+			// how little of the model is actually in system RAM.
+			name:      "a resident model reports its own footprint",
+			residency: "vram",
+			mem:       ipc.Response{ResidencyVRAM: 3542 << 20, ResidencyGTT: 2 << 20},
+			wantMsg:   []string{"VRAM", "3.46 GB in device memory", "2.0 MB in system RAM"},
+			notWant:   []string{"evicted"},
 		},
 		{
 			// The fact the overlay shows while recording, in the line a user reads
@@ -346,9 +358,23 @@ func TestResidencyVerdict(t *testing.T) {
 			wantMsg:   []string{"system RAM", "GTT", "overlay", "degraded"},
 		},
 		{
+			name:      "an evicted model reports what moved and what was pushed out",
+			residency: "gtt",
+			mem:       ipc.Response{ResidencyVRAM: 300 << 20, ResidencyGTT: 3300 << 20, ResidencyEvicted: 3100 << 20},
+			wantMsg:   []string{"300.0 MB in device memory", "3.22 GB in system RAM", "3.03 GB of it evicted"},
+		},
+		{
 			name:      "a model with no GPU footprint has nothing to report",
 			residency: "",
 			wantMsg:   []string{"unknown", "no amdgpu"},
+		},
+		{
+			// A daemon that reports the word but no bytes keeps the verdict and
+			// must not print invented zeros for them.
+			name:      "a verdict without bytes says nothing about bytes",
+			residency: "vram",
+			wantMsg:   []string{"VRAM"},
+			notWant:   []string{"device memory", "system RAM"},
 		},
 		{
 			name:      "a value from a newer daemon is unknown, not a crash",
@@ -358,13 +384,20 @@ func TestResidencyVerdict(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			ok, msg := residencyVerdict(tc.residency)
+			resp := tc.mem
+			resp.Residency = tc.residency
+			ok, msg := residencyVerdict(resp)
 			if !ok {
 				t.Errorf("residencyVerdict(%q) failed the run: %q — a residency fact is never something the config can fix", tc.residency, msg)
 			}
 			for _, want := range tc.wantMsg {
 				if !strings.Contains(msg, want) {
 					t.Errorf("residencyVerdict(%q) = %q, want it to mention %q", tc.residency, msg, want)
+				}
+			}
+			for _, unwanted := range tc.notWant {
+				if strings.Contains(msg, unwanted) {
+					t.Errorf("residencyVerdict(%q) = %q, want it not to mention %q", tc.residency, msg, unwanted)
 				}
 			}
 		})

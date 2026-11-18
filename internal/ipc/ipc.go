@@ -31,6 +31,17 @@ type Response struct {
 	// GPU-resident weights to track, or the probe could not read the child.
 	// See speech.Residency for the states themselves.
 	Residency string `json:"residency,omitempty"`
+	// ResidencyVRAM, ResidencyGTT and ResidencyEvicted are the model's own
+	// footprint in bytes, as the reading behind Residency saw it: what the
+	// child holds in device memory, what it holds in system RAM, and how much
+	// of the first the driver says it pushed out. They are zero whenever
+	// Residency is empty, and on a kernel that does not print the evicted
+	// counter. A model still "vram" by the residency rule can be carrying most
+	// of its working set in GTT, which is what these numbers answer and the one
+	// word cannot.
+	ResidencyVRAM    uint64 `json:"residency_vram_bytes,omitempty"`
+	ResidencyGTT     uint64 `json:"residency_gtt_bytes,omitempty"`
+	ResidencyEvicted uint64 `json:"residency_evicted_bytes,omitempty"`
 	// Recording is true while a capture is active. State already derives to
 	// "recording" in that case; this makes the stack explicit for a caller that
 	// wants to render each row rather than the coarse word.

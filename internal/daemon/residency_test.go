@@ -116,14 +116,23 @@ func TestNoNoticeUnlessTheWeightsWereEvicted(t *testing.T) {
 // without the HUD on screen finds it.
 func TestStatusReportsTheResidency(t *testing.T) {
 	tests := []struct {
-		name  string
-		probe func() (speech.Residency, speech.GPUMemory)
-		want  string
+		name        string
+		probe       func() (speech.Residency, speech.GPUMemory)
+		want        string
+		wantVRAM    uint64
+		wantGTT     uint64
+		wantEvicted uint64
 	}{
-		{name: "evicted", probe: evicted, want: "gtt"},
+		{name: "evicted", probe: evicted, want: "gtt", wantVRAM: 300 << 20, wantGTT: 3300 << 20},
 		{name: "resident", probe: func() (speech.Residency, speech.GPUMemory) {
-			return speech.ResidencyVRAM, speech.GPUMemory{VRAM: 3400 << 20}
-		}, want: "vram"},
+			return speech.ResidencyVRAM, speech.GPUMemory{VRAM: 3400 << 20, GTT: 2 << 20}
+		}, want: "vram", wantVRAM: 3400 << 20, wantGTT: 2 << 20},
+		// The counts ride along with the word, including the kernel's own
+		// evicted counter: the word asks about the weights, the numbers are what
+		// a user reads when the word says resident and the dictation is slow.
+		{name: "counts and an eviction", probe: func() (speech.Residency, speech.GPUMemory) {
+			return speech.ResidencyVRAM, speech.GPUMemory{VRAM: 3400 << 20, GTT: 512 << 20, Evicted: 480 << 20}
+		}, want: "vram", wantVRAM: 3400 << 20, wantGTT: 512 << 20, wantEvicted: 480 << 20},
 		{name: "nothing to track", probe: nil, want: ""},
 	}
 	for _, tc := range tests {
@@ -138,6 +147,11 @@ func TestStatusReportsTheResidency(t *testing.T) {
 			for {
 				got := sendWithRetry(t, sock, "status")
 				if got.Residency == tc.want {
+					if got.ResidencyVRAM != tc.wantVRAM || got.ResidencyGTT != tc.wantGTT || got.ResidencyEvicted != tc.wantEvicted {
+						t.Fatalf("status footprint = vram %d, gtt %d, evicted %d; want %d/%d/%d",
+							got.ResidencyVRAM, got.ResidencyGTT, got.ResidencyEvicted,
+							tc.wantVRAM, tc.wantGTT, tc.wantEvicted)
+					}
 					return
 				}
 				if time.Now().After(deadline) {

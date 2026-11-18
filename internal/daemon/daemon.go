@@ -470,7 +470,7 @@ func (d *Daemon) handleRequest(req ipc.Request) (resp ipc.Response) {
 		resp.Recording = snap.RecordingID != 0
 		resp.Transcribing = len(snap.Pending)
 		resp.Source, resp.Warning = d.statusProvenance()
-		resp.Residency = d.statusResidency()
+		d.fillStatusResidency(&resp)
 		if resp.State == "failed" {
 			d.provenanceMu.Lock()
 			resp.Error = d.startupError
@@ -1009,16 +1009,28 @@ func residencyNotice(recording bool, r speech.Residency) string {
 	return ""
 }
 
-// statusResidency names where the main model's weights live, for the daemon's
-// status reply and the `mavor doctor` line built from it. Unknown is reported
-// as absent: there is nothing a caller can do with it.
-func (d *Daemon) statusResidency() string {
+// fillStatusResidency copies the last residency reading onto a status reply:
+// where the main model's weights live, and the footprint that decision was made
+// from. Unknown is reported as absent — there is nothing a caller can do with it
+// — and the byte counts stay zero with it.
+//
+// The counts are the model's own, summed over the child's DRM files, so they
+// distinguish a model whose weights are in VRAM from one whose working set has
+// spilled into system RAM. That distinction is invisible to the name: the rule
+// behind it only asks whether the weights still fit on the card
+// (speech.Residency), which stays true while the buffers the decode actually
+// streams from have moved. `mavor doctor` prints these numbers for exactly that
+// case; the reading is at most one poll interval old.
+func (d *Daemon) fillStatusResidency(resp *ipc.Response) {
 	d.residencyMu.Lock()
 	defer d.residencyMu.Unlock()
 	if d.residency == speech.ResidencyUnknown {
-		return ""
+		return
 	}
-	return d.residency.String()
+	resp.Residency = d.residency.String()
+	resp.ResidencyVRAM = d.residencyMem.VRAM
+	resp.ResidencyGTT = d.residencyMem.GTT
+	resp.ResidencyEvicted = d.residencyMem.Evicted
 }
 
 // startStreamingMonitoring drives the overlay's live text preview while the
