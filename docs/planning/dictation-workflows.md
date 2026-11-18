@@ -254,7 +254,7 @@ Two terms recur, and both are defined in
 
 1. Derek finds `mavor` in a curated list of minimalist Wayland utilities. Seeing one daemon with no Python, Node or Electron anywhere near it, he downloads the pre-built release tarball. A release is a directory, not a file: the binary plus the two sherpa-onnx shared objects it links against, which have to travel together. `linux/amd64` only for now — mavor is a cgo program, so a release for another architecture needs a cross toolchain rather than a `GOARCH` flag:
    ```console
-   $ tar -xzf mavor_v0.1.0_linux_amd64.tar.gz
+   $ tar -xzf mavor_0.5.2_linux_amd64.tar.gz
    $ install -m 0755 mavor ~/.local/bin/mavor
    $ install -m 0644 -D -t ~/.local/lib lib*.so
    ```

@@ -134,8 +134,11 @@ The tarball holds three files, and `mavor` needs the other two: it is
 dynamically linked against sherpa-onnx. Keep them together — either beside the
 binary, or one directory up in `lib/`, which is where the binary looks.
 
+The archive carries its version without the tag's `v`, so tag `vX.Y.Z` publishes
+`mavor_X.Y.Z_linux_amd64.tar.gz`:
+
 ```bash
-tar -xzf mavor_v0.1.0_linux_amd64.tar.gz
+tar -xzf mavor_<version>_linux_amd64.tar.gz   # the version without its v, e.g. 0.5.2
 install -m 0755 mavor ~/.local/bin/mavor
 install -m 0644 -D -t ~/.local/lib lib*.so     # ~/.local/bin/../lib
 ```
