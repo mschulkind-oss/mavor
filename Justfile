@@ -14,9 +14,21 @@ bench_gpu_bin := bench_gpu_dir + "/whisper.cpp/build-vulkan/bin"
 
 # Build stamp baked into `mavor version`. Several clones of this repo install to
 # the same ~/.local/bin/mavor, so the commit is how you tell them apart.
-commit := `git describe --always --dirty --match 'v[0-9]*' 2>/dev/null || echo unknown`
+#
+# goreleaser stamps the release tag itself. A local build has no tag handed to
+# it, so it derives both from the same description rather than leaving the
+# compiled-in default to claim a release that never happened:
+#
+#   --tags      this repo's tags are lightweight, and `git describe` sees only
+#               annotated ones unless told otherwise — which is why the stamp
+#               used to be a bare hash
+#   --always    a commit that no tag can reach still gets named
+#   --abbrev=0  the nearest tag alone, for the version; the commit column
+#               beside it carries the distance and the dirty marker
+version := `git describe --tags --abbrev=0 2>/dev/null || echo dev`
+commit := `git describe --tags --always --dirty 2>/dev/null || echo unknown`
 build_time := `date -u +%Y-%m-%dT%H:%M:%SZ`
-ldflags := "-X main.Commit=" + commit + " -X main.BuildTime=" + build_time
+ldflags := "-X main.Version=" + version + " -X main.Commit=" + commit + " -X main.BuildTime=" + build_time
 
 # RUNPATH baked into the binary. mavor links sherpa-onnx through cgo, and the
 # two shared objects that comes with are vendored in the Go module cache — so

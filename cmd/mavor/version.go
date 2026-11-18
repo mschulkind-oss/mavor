@@ -5,10 +5,12 @@ import (
 	"runtime"
 )
 
-// Build metadata. Commit and BuildTime are injected at link time by the
-// Justfile's -ldflags and stay "unknown" under a plain `go build`.
+// Build metadata, injected at link time: the Justfile's -ldflags for a local
+// build, goreleaser's for a release. Under a plain `go build` none of it is
+// set, and the honest reading is "dev / unknown" rather than the number of a
+// release this binary is not.
 var (
-	Version   = "v0.1.0"
+	Version   = "dev"
 	Commit    = "unknown"
 	BuildTime = "unknown"
 	BuildTags = defaultBuildTags()
