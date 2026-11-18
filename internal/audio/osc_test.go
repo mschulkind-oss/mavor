@@ -773,84 +773,79 @@ func TestDuckersRunEveryMemberAndJoinFailures(t *testing.T) {
 	}
 }
 
-// A route that moves under the open socket must not leave the ducker talking
-// into a hole.
+// Every operation opens its own socket, so it sends from the source address
+// the kernel would pick now rather than from one chosen by an older view of
+// the route.
 //
-// The socket is held between dictations, and a connected UDP socket pins the
-// local address it was dialed with. When something moves the route underneath
-// — a tailnet or VPN taking the LAN prefix, an interface renumbered, a Wi-Fi
-// roam — the socket goes on sending from an address the device cannot answer,
-// every query times out, and because Duck mutes only what it could read back,
-// the mute stops working while the daemon still looks healthy. That is the
-// 2026-11-18 incident: a tailnet route for 192.168.1.0/24 put the mixer behind
-// the tunnel and two dictations went unmuted before the route went away.
-func TestOSCReopensTheSocketWhenTheRouteMovesUnderIt(t *testing.T) {
-	m := startFakeMixer(t, map[int]int32{15: 1, 16: 1})
-	d := newTestDucker(t, m, []int{15, 16}, 500*time.Millisecond)
+// 2026-11-18: the daemon held one connected socket for its whole life, a
+// tailnet route moved the viable source address underneath it, and the mixer
+// stopped answering a socket that went on claiming an address on a path that
+// was itself fine. Nothing reopened it, so nothing recovered until a restart.
+func TestOSCOpensAFreshSocketForEveryOperation(t *testing.T) {
+	m := startFakeMixer(t, map[int]int32{15: 1})
+	d := newTestDucker(t, m, []int{15}, 500*time.Millisecond)
+
+	if err := d.Duck(); err != nil {
+		t.Fatalf("Duck: %v", err)
+	}
+	m.waitForSets(t, 1)
+	if d.dials != 1 {
+		t.Fatalf("dials = %d after one dictation, want 1", d.dials)
+	}
+
+	// A later dictation may be a different network, so it does not inherit the
+	// first one's address.
+	if err := d.Duck(); err != nil {
+		t.Fatalf("second Duck: %v", err)
+	}
+	if d.dials != 2 {
+		t.Errorf("dials = %d after a second dictation, want 2 — a socket outlived the "+
+			"operation that opened it, so its source address was chosen by an older "+
+			"view of the route", d.dials)
+	}
+
+	if err := d.Restore(); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if d.dials != 3 {
+		t.Errorf("dials = %d after Restore, want 3", d.dials)
+	}
+	if _, _, err := d.Probe(); err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if d.dials != 4 {
+		t.Errorf("dials = %d after Probe, want 4", d.dials)
+	}
+}
+
+// A change of source address between dictations is worth saying out loud: it
+// is what a mute going missing looks like from the machine's side, and opening
+// the next socket is the only moment the ducker can see it.
+func TestOSCSaysWhenTheSourceAddressChanges(t *testing.T) {
+	m := startFakeMixer(t, map[int]int32{15: 1})
+	d := newTestDucker(t, m, []int{15}, 500*time.Millisecond)
 	var buf bytes.Buffer
 	d.SetLogger(slog.New(slog.NewTextHandler(&buf, nil)))
 
 	if err := d.Duck(); err != nil {
 		t.Fatalf("Duck: %v", err)
 	}
-	m.waitForSets(t, 2)
-	if d.dials != 1 {
-		t.Fatalf("dials = %d after one dictation, want 1", d.dials)
+	m.waitForSets(t, 1)
+	if strings.Contains(buf.String(), "source address") {
+		t.Fatalf("claimed a change before there was one; log:\n%s", buf.String())
 	}
 
-	// The kernel would now pick a different local address to reach the device.
-	d.lookupSource = func(*net.UDPAddr) (string, error) { return "100.64.0.5", nil }
+	// The kernel would now pick a different address to reach the device.
+	d.sourceOf = func(net.Conn) string { return "100.64.0.5" }
 	if err := d.Duck(); err != nil {
-		t.Fatalf("Duck after the route moved: %v", err)
-	}
-	if d.dials != 2 {
-		t.Errorf("dials = %d after the route moved, want 2 — the ducker kept using "+
-			"a socket pinned to an address the device can no longer answer", d.dials)
+		t.Fatalf("second Duck: %v", err)
 	}
 	log := buf.String()
-	if !strings.Contains(log, "route to the device changed") {
-		t.Errorf("reopening the socket was not explained; log:\n%s", log)
+	for _, want := range []string{"source address", "127.0.0.1", "100.64.0.5"} {
+		if !strings.Contains(log, want) {
+			t.Errorf("log does not contain %q; log:\n%s", want, log)
+		}
 	}
-	if !strings.Contains(log, "100.64.0.5") {
-		t.Errorf("the log does not name the address the route now picks; log:\n%s", log)
-	}
-}
-
-// A socket that has produced a timeout is not reused. Nothing proves a wedged
-// socket healed, and the next dictation is the only chance to find out.
-func TestOSCReopensTheSocketAfterAQueryWentUnanswered(t *testing.T) {
-	m := startFakeMixer(t, map[int]int32{15: 1})
-	d := newTestDucker(t, m, []int{15}, 100*time.Millisecond)
-
-	if err := d.Duck(); err != nil {
-		t.Fatalf("Duck: %v", err)
-	}
-	m.waitForSets(t, 1)
-	if err := d.Restore(); err != nil {
-		t.Fatalf("Restore: %v", err)
-	}
-	m.waitForSets(t, 2)
-	if d.dials != 1 {
-		t.Fatalf("dials = %d, want 1 — nothing has gone wrong yet", d.dials)
-	}
-
-	m.goSilent()
-	if err := d.Duck(); err != nil {
-		t.Fatalf("Duck against a silent device: %v", err)
-	}
-	if err := d.Restore(); err != nil {
-		t.Fatalf("Restore after a silent Duck: %v", err)
-	}
-
-	m.unsilent()
-	if err := d.Duck(); err != nil {
-		t.Fatalf("Duck after the device came back: %v", err)
-	}
-	if d.dials != 2 {
-		t.Errorf("dials = %d after a query went unanswered, want 2 — the ducker "+
-			"trusted a socket that had already produced a timeout", d.dials)
-	}
-	m.waitForSets(t, 3)
 }
 
 // The line a dictation leaves behind must say what was muted. A single
